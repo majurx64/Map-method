@@ -1,87 +1,106 @@
-import { useEffect, useRef, useState } from "react";
-
+import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
-
-import Auth from "./Auth";
-
 import { supabase } from "./lib/supabase";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
 const LANGUAGE_KEY = "mm-language";
 const CURRENT_SCREEN_KEY = "mm-current-screen";
+const CUSTOM_COLORS_KEY = "mm-custom-colors";
+const SCROLL_POSITIONS_KEY = "mm-scroll-positions";
+
+const BASIC_COLORS = [
+  "#111111",
+  "#ffffff",
+  "#ff3b30",
+  "#ff9500",
+  "#ffcc00",
+  "#34c759",
+  "#00c7be",
+  "#007aff",
+  "#5856d6",
+  "#FF47CA",
+];
 
 const translations = {
   ru: {
     myMaps: "Мои карты",
-    editor: "MM / редактор",
-    save: "Сохранить карту",
-    mapData: "ДАННЫЕ КАРТЫ",
+    editor: "редактор",
+    save: "Сохранить",
+    mapData: "Данные карты",
     name: "Название",
     description: "Описание",
-    mapDescription: "Карта прогресса в клетках",
+    mapDescription: "Описание карты",
     new: "Новая",
     edit: "Изменить",
     delete: "Удалить",
-    canvasSize: "РАЗМЕР ХОЛСТА",
+    canvasSize: "Размер холста",
     auto: "Авто",
     manual: "Вручную",
     cells: "клеток",
     rows: "Строки",
     columns: "Столбцы",
     grid: "Сетка",
-    tools: "ИНСТРУМЕНТЫ",
+    tools: "Инструменты",
     brush: "Кисть",
     image: "Изображение",
     undo: "Отменить",
     redo: "Повторить",
     uploadImage: "Загрузить изображение",
     replaceImage: "Заменить изображение",
-    clearImage: "Очистить изображение",
+    clearImage: "Удалить изображение",
     showImage: "Показывать изображение",
-    palette: "ПАЛИТРА",
+    palette: "Палитра",
     brushColor: "Цвет кисти",
-    newCells: "Для новых клеток",
+    newCells: "Новые клетки",
     myColors: "Мои цвета",
     addColor: "Добавить",
-    imageMap: "КАРТА ПО ИЗОБРАЖЕНИЮ",
-    freeDrawing: "СВОБОДНОЕ РИСОВАНИЕ",
+    imageMap: "Карта из изображения",
+    freeDrawing: "Свободный рисунок",
     newMap: "Новая карта",
-    preview: "ПРЕДПРОСМОТР",
+    preview: "Предпросмотр",
     filled: "заполнено",
     painted: "Закрашено",
     total: "Всего",
     clearProgress: "Очистить прогресс",
     drawHint: "ЛКМ — рисовать · ПКМ — стирать",
-    mapsEmpty: "Пока нет созданных карт",
+    mapsEmpty: "У тебя пока нет карт",
     open: "Открыть",
     createMap: "Создать карту",
     renameMap: "Переименовать карту",
     newName: "Новое название",
     mapType: "Тип карты",
     cancel: "Отмена",
-    deleteMap: "Удалить карту?",
+    deleteMap: "Удалить карту",
+    account: "Личный кабинет",
+    logout: "Выйти",
+    accountMaps: "Карт создано",
+    accountCells: "Клеток закрашено",
+    accountDescription:
+      "Здесь будет собираться твоя статистика, карты и будущие достижения.",
+    accountProgress: "Прогресс",
+    accountMember: "Профиль",
   },
 
   en: {
-    myMaps: "My Maps",
-    editor: "MM / Editor",
-    save: "Save map",
-    mapData: "MAP DATA",
+    myMaps: "My maps",
+    editor: "editor",
+    save: "Save",
+    mapData: "Map data",
     name: "Name",
     description: "Description",
-    mapDescription: "Progress map in cells",
+    mapDescription: "Map description",
     new: "New",
     edit: "Edit",
     delete: "Delete",
-    canvasSize: "CANVAS SIZE",
+    canvasSize: "Canvas size",
     auto: "Auto",
     manual: "Manual",
     cells: "cells",
     rows: "Rows",
     columns: "Columns",
     grid: "Grid",
-    tools: "TOOLS",
+    tools: "Tools",
     brush: "Brush",
     image: "Image",
     undo: "Undo",
@@ -90,89 +109,105 @@ const translations = {
     replaceImage: "Replace image",
     clearImage: "Clear image",
     showImage: "Show image",
-    palette: "PALETTE",
+    palette: "Palette",
     brushColor: "Brush color",
-    newCells: "For new cells",
+    newCells: "New cells",
     myColors: "My colors",
     addColor: "Add",
-    imageMap: "IMAGE MAP",
-    freeDrawing: "FREE DRAWING",
+    imageMap: "Image map",
+    freeDrawing: "Free drawing",
     newMap: "New map",
-    preview: "PREVIEW",
+    preview: "Preview",
     filled: "filled",
     painted: "Painted",
     total: "Total",
     clearProgress: "Clear progress",
-    drawHint: "Left click — draw · Right click — erase",
-    mapsEmpty: "No maps yet",
+    drawHint: "LMB — draw · RMB — erase",
+    mapsEmpty: "You don't have any maps yet",
     open: "Open",
     createMap: "Create map",
     renameMap: "Rename map",
     newName: "New name",
     mapType: "Map type",
     cancel: "Cancel",
-    deleteMap: "Delete map?",
+    deleteMap: "Delete map",
+    account: "Personal account",
+    logout: "Log out",
+    accountMaps: "Maps created",
+    accountCells: "Cells filled",
+    accountDescription:
+      "Your statistics, maps and future achievements will appear here.",
+    accountProgress: "Progress",
+    accountMember: "Profile",
   },
 
   es: {
     myMaps: "Mis mapas",
-    editor: "MM / editor",
-    save: "Guardar mapa",
-    mapData: "DATOS DEL MAPA",
+    editor: "editor",
+    save: "Guardar",
+    mapData: "Datos del mapa",
     name: "Nombre",
     description: "Descripción",
-    mapDescription: "Mapa de progreso por celdas",
+    mapDescription: "Descripción del mapa",
     new: "Nuevo",
     edit: "Editar",
     delete: "Eliminar",
-    canvasSize: "TAMAÑO DEL LIENZO",
+    canvasSize: "Tamaño del lienzo",
     auto: "Auto",
     manual: "Manual",
     cells: "celdas",
     rows: "Filas",
     columns: "Columnas",
     grid: "Cuadrícula",
-    tools: "HERRAMIENTAS",
+    tools: "Herramientas",
     brush: "Pincel",
     image: "Imagen",
     undo: "Deshacer",
     redo: "Rehacer",
     uploadImage: "Subir imagen",
     replaceImage: "Cambiar imagen",
-    clearImage: "Borrar imagen",
+    clearImage: "Eliminar imagen",
     showImage: "Mostrar imagen",
-    palette: "PALETA",
+    palette: "Paleta",
     brushColor: "Color del pincel",
-    newCells: "Para celdas nuevas",
+    newCells: "Nuevas celdas",
     myColors: "Mis colores",
     addColor: "Añadir",
-    imageMap: "MAPA DE IMAGEN",
-    freeDrawing: "DIBUJO LIBRE",
+    imageMap: "Mapa de imagen",
+    freeDrawing: "Dibujo libre",
     newMap: "Nuevo mapa",
-    preview: "VISTA PREVIA",
+    preview: "Vista previa",
     filled: "completado",
     painted: "Pintadas",
     total: "Total",
-    clearProgress: "Borrar progreso",
-    drawHint: "Clic izq. — dibujar · Clic der. — borrar",
-    mapsEmpty: "Aún no hay mapas",
+    clearProgress: "Limpiar progreso",
+    drawHint: "Clic izq. — dibujar · clic der. — borrar",
+    mapsEmpty: "Todavía no tienes mapas",
     open: "Abrir",
     createMap: "Crear mapa",
     renameMap: "Renombrar mapa",
     newName: "Nuevo nombre",
     mapType: "Tipo de mapa",
     cancel: "Cancelar",
-    deleteMap: "¿Eliminar mapa?",
+    deleteMap: "Eliminar mapa",
+    account: "Cuenta personal",
+    logout: "Cerrar sesión",
+    accountMaps: "Mapas creados",
+    accountCells: "Celdas rellenadas",
+    accountDescription:
+      "Aquí aparecerán tus estadísticas, mapas y futuros logros.",
+    accountProgress: "Progreso",
+    accountMember: "Perfil",
   },
 
   ja: {
     myMaps: "マイマップ",
-    editor: "MM / エディター",
-    save: "マップを保存",
+    editor: "エディター",
+    save: "保存",
     mapData: "マップ情報",
     name: "名前",
     description: "説明",
-    mapDescription: "セルで進捗を管理するマップ",
+    mapDescription: "マップの説明",
     new: "新規",
     edit: "編集",
     delete: "削除",
@@ -190,51 +225,59 @@ const translations = {
     redo: "やり直す",
     uploadImage: "画像をアップロード",
     replaceImage: "画像を変更",
-    clearImage: "画像を消去",
+    clearImage: "画像を削除",
     showImage: "画像を表示",
     palette: "パレット",
     brushColor: "ブラシの色",
-    newCells: "新しいセル用",
+    newCells: "新しいセル",
     myColors: "マイカラー",
     addColor: "追加",
     imageMap: "画像マップ",
-    freeDrawing: "フリードローイング",
+    freeDrawing: "フリードロー",
     newMap: "新しいマップ",
     preview: "プレビュー",
     filled: "完了",
-    painted: "塗りつぶし",
+    painted: "塗ったセル",
     total: "合計",
-    clearProgress: "進捗を消去",
-    drawHint: "左クリック：描画 ・ 右クリック：消去",
-    mapsEmpty: "マップはまだありません",
+    clearProgress: "進捗をクリア",
+    drawHint: "左クリック — 描く · 右クリック — 消す",
+    mapsEmpty: "まだマップがありません",
     open: "開く",
     createMap: "マップを作成",
-    renameMap: "マップ名を変更",
+    renameMap: "名前を変更",
     newName: "新しい名前",
-    mapType: "マップの種類",
+    mapType: "マップタイプ",
     cancel: "キャンセル",
-    deleteMap: "マップを削除しますか？",
+    deleteMap: "マップを削除",
+    account: "マイアカウント",
+    logout: "ログアウト",
+    accountMaps: "作成したマップ",
+    accountCells: "塗ったセル",
+    accountDescription:
+      "ここに統計、マップ、今後の実績が表示されます。",
+    accountProgress: "進捗",
+    accountMember: "プロフィール",
   },
 
   de: {
     myMaps: "Meine Karten",
-    editor: "MM / Editor",
-    save: "Karte speichern",
-    mapData: "KARTENDATEN",
+    editor: "Editor",
+    save: "Speichern",
+    mapData: "Kartendaten",
     name: "Name",
     description: "Beschreibung",
-    mapDescription: "Fortschrittskarte in Zellen",
+    mapDescription: "Kartenbeschreibung",
     new: "Neu",
     edit: "Bearbeiten",
     delete: "Löschen",
-    canvasSize: "LEINWANDGRÖSSE",
+    canvasSize: "Leinwandgröße",
     auto: "Auto",
     manual: "Manuell",
     cells: "Zellen",
     rows: "Zeilen",
     columns: "Spalten",
     grid: "Raster",
-    tools: "WERKZEUGE",
+    tools: "Werkzeuge",
     brush: "Pinsel",
     image: "Bild",
     undo: "Rückgängig",
@@ -242,18 +285,18 @@ const translations = {
     uploadImage: "Bild hochladen",
     replaceImage: "Bild ersetzen",
     clearImage: "Bild löschen",
-    showImage: "Bild zeigen",
-    palette: "PALETTE",
+    showImage: "Bild anzeigen",
+    palette: "Palette",
     brushColor: "Pinselfarbe",
-    newCells: "Für neue Zellen",
+    newCells: "Neue Zellen",
     myColors: "Meine Farben",
     addColor: "Hinzufügen",
-    imageMap: "BILDKARTE",
-    freeDrawing: "FREIES ZEICHNEN",
+    imageMap: "Bildkarte",
+    freeDrawing: "Freie Zeichnung",
     newMap: "Neue Karte",
-    preview: "VORSCHAU",
-    filled: "ausgefüllt",
-    painted: "Ausgemalt",
+    preview: "Vorschau",
+    filled: "gefüllt",
+    painted: "Ausgefüllt",
     total: "Gesamt",
     clearProgress: "Fortschritt löschen",
     drawHint: "Linksklick — zeichnen · Rechtsklick — löschen",
@@ -264,174 +307,206 @@ const translations = {
     newName: "Neuer Name",
     mapType: "Kartentyp",
     cancel: "Abbrechen",
-    deleteMap: "Karte löschen?",
+    deleteMap: "Karte löschen",
+    account: "Persönliches Konto",
+    logout: "Abmelden",
+    accountMaps: "Erstellte Karten",
+    accountCells: "Ausgefüllte Zellen",
+    accountDescription:
+      "Hier werden deine Statistiken, Karten und zukünftigen Erfolge angezeigt.",
+    accountProgress: "Fortschritt",
+    accountMember: "Profil",
   },
 
   fr: {
     myMaps: "Mes cartes",
-    editor: "MM / éditeur",
+    editor: "éditeur",
     save: "Enregistrer",
-    mapData: "DONNÉES DE LA CARTE",
+    mapData: "Données de la carte",
     name: "Nom",
     description: "Description",
-    mapDescription: "Carte de progression en cellules",
+    mapDescription: "Description de la carte",
     new: "Nouveau",
     edit: "Modifier",
     delete: "Supprimer",
-    canvasSize: "TAILLE DU CANEVAS",
+    canvasSize: "Taille du canevas",
     auto: "Auto",
     manual: "Manuel",
     cells: "cellules",
     rows: "Lignes",
     columns: "Colonnes",
     grid: "Grille",
-    tools: "OUTILS",
+    tools: "Outils",
     brush: "Pinceau",
     image: "Image",
     undo: "Annuler",
     redo: "Rétablir",
-    uploadImage: "Téléverser une image",
+    uploadImage: "Télécharger une image",
     replaceImage: "Remplacer l’image",
-    clearImage: "Effacer l’image",
+    clearImage: "Supprimer l’image",
     showImage: "Afficher l’image",
-    palette: "PALETTE",
+    palette: "Palette",
     brushColor: "Couleur du pinceau",
-    newCells: "Pour les nouvelles cellules",
+    newCells: "Nouvelles cellules",
     myColors: "Mes couleurs",
     addColor: "Ajouter",
-    imageMap: "CARTE D’IMAGE",
-    freeDrawing: "DESSIN LIBRE",
+    imageMap: "Carte image",
+    freeDrawing: "Dessin libre",
     newMap: "Nouvelle carte",
-    preview: "APERÇU",
+    preview: "Aperçu",
     filled: "rempli",
-    painted: "Colorées",
+    painted: "Peintes",
     total: "Total",
     clearProgress: "Effacer la progression",
     drawHint: "Clic gauche — dessiner · clic droit — effacer",
-    mapsEmpty: "Aucune carte",
+    mapsEmpty: "Aucune carte pour le moment",
     open: "Ouvrir",
-    createMap: "Créer la carte",
-    renameMap: "Renommer la carte",
+    createMap: "Créer une carte",
+    renameMap: "Renommer",
     newName: "Nouveau nom",
     mapType: "Type de carte",
     cancel: "Annuler",
-    deleteMap: "Supprimer la carte ?",
+    deleteMap: "Supprimer la carte",
+    account: "Compte personnel",
+    logout: "Se déconnecter",
+    accountMaps: "Cartes créées",
+    accountCells: "Cellules remplies",
+    accountDescription:
+      "Tes statistiques, cartes et futurs succès apparaîtront ici.",
+    accountProgress: "Progression",
+    accountMember: "Profil",
   },
 
   it: {
     myMaps: "Le mie mappe",
-    editor: "MM / editor",
-    save: "Salva mappa",
-    mapData: "DATI DELLA MAPPA",
+    editor: "editor",
+    save: "Salva",
+    mapData: "Dati mappa",
     name: "Nome",
     description: "Descrizione",
-    mapDescription: "Mappa dei progressi a celle",
+    mapDescription: "Descrizione della mappa",
     new: "Nuova",
     edit: "Modifica",
     delete: "Elimina",
-    canvasSize: "DIMENSIONE TELA",
+    canvasSize: "Dimensioni tela",
     auto: "Auto",
     manual: "Manuale",
     cells: "celle",
     rows: "Righe",
     columns: "Colonne",
     grid: "Griglia",
-    tools: "STRUMENTI",
+    tools: "Strumenti",
     brush: "Pennello",
     image: "Immagine",
     undo: "Annulla",
     redo: "Ripeti",
     uploadImage: "Carica immagine",
     replaceImage: "Sostituisci immagine",
-    clearImage: "Cancella immagine",
+    clearImage: "Rimuovi immagine",
     showImage: "Mostra immagine",
-    palette: "TAVOLOZZA",
+    palette: "Tavolozza",
     brushColor: "Colore pennello",
-    newCells: "Per nuove celle",
+    newCells: "Nuove celle",
     myColors: "I miei colori",
     addColor: "Aggiungi",
-    imageMap: "MAPPA IMMAGINE",
-    freeDrawing: "DISEGNO LIBERO",
+    imageMap: "Mappa immagine",
+    freeDrawing: "Disegno libero",
     newMap: "Nuova mappa",
-    preview: "ANTEPRIMA",
+    preview: "Anteprima",
     filled: "completato",
     painted: "Colorate",
     total: "Totale",
     clearProgress: "Cancella progresso",
-    drawHint: "Clic sinistro — disegna · destro — cancella",
-    mapsEmpty: "Nessuna mappa",
+    drawHint: "Clic sinistro — disegna · clic destro — cancella",
+    mapsEmpty: "Non hai ancora mappe",
     open: "Apri",
     createMap: "Crea mappa",
     renameMap: "Rinomina mappa",
     newName: "Nuovo nome",
     mapType: "Tipo di mappa",
     cancel: "Annulla",
-    deleteMap: "Eliminare la mappa?",
+    deleteMap: "Elimina mappa",
+    account: "Account personale",
+    logout: "Esci",
+    accountMaps: "Mappe create",
+    accountCells: "Celle colorate",
+    accountDescription:
+      "Qui appariranno le tue statistiche, mappe e futuri risultati.",
+    accountProgress: "Progresso",
+    accountMember: "Profilo",
   },
 
   pt: {
     myMaps: "Meus mapas",
-    editor: "MM / editor",
-    save: "Salvar mapa",
-    mapData: "DADOS DO MAPA",
+    editor: "editor",
+    save: "Salvar",
+    mapData: "Dados do mapa",
     name: "Nome",
     description: "Descrição",
-    mapDescription: "Mapa de progresso em células",
+    mapDescription: "Descrição do mapa",
     new: "Novo",
     edit: "Editar",
     delete: "Excluir",
-    canvasSize: "TAMANHO DA TELA",
+    canvasSize: "Tamanho da tela",
     auto: "Auto",
     manual: "Manual",
     cells: "células",
     rows: "Linhas",
     columns: "Colunas",
     grid: "Grade",
-    tools: "FERRAMENTAS",
+    tools: "Ferramentas",
     brush: "Pincel",
     image: "Imagem",
     undo: "Desfazer",
     redo: "Refazer",
     uploadImage: "Enviar imagem",
-    replaceImage: "Substituir imagem",
-    clearImage: "Limpar imagem",
+    replaceImage: "Trocar imagem",
+    clearImage: "Remover imagem",
     showImage: "Mostrar imagem",
-    palette: "PALETA",
+    palette: "Paleta",
     brushColor: "Cor do pincel",
-    newCells: "Para novas células",
+    newCells: "Novas células",
     myColors: "Minhas cores",
     addColor: "Adicionar",
-    imageMap: "MAPA DE IMAGEM",
-    freeDrawing: "DESENHO LIVRE",
+    imageMap: "Mapa de imagem",
+    freeDrawing: "Desenho livre",
     newMap: "Novo mapa",
-    preview: "PRÉVIA",
+    preview: "Pré-visualização",
     filled: "preenchido",
     painted: "Pintadas",
     total: "Total",
     clearProgress: "Limpar progresso",
     drawHint: "Clique esquerdo — desenhar · direito — apagar",
-    mapsEmpty: "Ainda não há mapas",
+    mapsEmpty: "Você ainda não tem mapas",
     open: "Abrir",
     createMap: "Criar mapa",
     renameMap: "Renomear mapa",
     newName: "Novo nome",
     mapType: "Tipo de mapa",
     cancel: "Cancelar",
-    deleteMap: "Excluir mapa?",
+    deleteMap: "Excluir mapa",
+    account: "Conta pessoal",
+    logout: "Sair",
+    accountMaps: "Mapas criados",
+    accountCells: "Células preenchidas",
+    accountDescription:
+      "Aqui aparecerão suas estatísticas, mapas e futuras conquistas.",
+    accountProgress: "Progresso",
+    accountMember: "Perfil",
   },
 
   zh: {
     myMaps: "我的地图",
-    editor: "MM / 编辑器",
-    save: "保存地图",
-    mapData: "地图信息",
+    editor: "编辑器",
+    save: "保存",
+    mapData: "地图数据",
     name: "名称",
     description: "描述",
-    mapDescription: "单元格进度地图",
+    mapDescription: "地图描述",
     new: "新建",
     edit: "编辑",
     delete: "删除",
-    canvasSize: "画布尺寸",
+    canvasSize: "画布大小",
     auto: "自动",
     manual: "手动",
     cells: "格",
@@ -445,47 +520,54 @@ const translations = {
     redo: "重做",
     uploadImage: "上传图片",
     replaceImage: "替换图片",
-    clearImage: "清除图片",
+    clearImage: "删除图片",
     showImage: "显示图片",
     palette: "调色板",
     brushColor: "画笔颜色",
-    newCells: "用于新单元格",
+    newCells: "新格子",
     myColors: "我的颜色",
     addColor: "添加",
     imageMap: "图片地图",
-    freeDrawing: "自由绘制",
+    freeDrawing: "自由绘图",
     newMap: "新地图",
     preview: "预览",
-    filled: "已填充",
-    painted: "已涂色",
-    total: "总数",
+    filled: "已完成",
+    painted: "已填充",
+    total: "总计",
     clearProgress: "清除进度",
-    drawHint: "左键绘制 · 右键擦除",
-    mapsEmpty: "尚无地图",
+    drawHint: "左键 — 绘制 · 右键 — 擦除",
+    mapsEmpty: "还没有地图",
     open: "打开",
     createMap: "创建地图",
     renameMap: "重命名地图",
     newName: "新名称",
     mapType: "地图类型",
     cancel: "取消",
-    deleteMap: "删除地图？",
+    deleteMap: "删除地图",
+    account: "个人账户",
+    logout: "退出",
+    accountMaps: "创建的地图",
+    accountCells: "已填充格子",
+    accountDescription: "这里将显示你的统计数据、地图和未来成就。",
+    accountProgress: "进度",
+    accountMember: "个人资料",
   },
 
   ko: {
     myMaps: "내 지도",
-    editor: "MM / 편집기",
-    save: "지도 저장",
+    editor: "에디터",
+    save: "저장",
     mapData: "지도 정보",
     name: "이름",
     description: "설명",
-    mapDescription: "셀 기반 진행 지도",
+    mapDescription: "지도 설명",
     new: "새로 만들기",
     edit: "편집",
     delete: "삭제",
     canvasSize: "캔버스 크기",
     auto: "자동",
     manual: "수동",
-    cells: "셀",
+    cells: "칸",
     rows: "행",
     columns: "열",
     grid: "격자",
@@ -495,31 +577,39 @@ const translations = {
     undo: "실행 취소",
     redo: "다시 실행",
     uploadImage: "이미지 업로드",
-    replaceImage: "이미지 교체",
-    clearImage: "이미지 지우기",
+    replaceImage: "이미지 변경",
+    clearImage: "이미지 삭제",
     showImage: "이미지 표시",
     palette: "팔레트",
     brushColor: "브러시 색상",
-    newCells: "새 셀용",
+    newCells: "새 칸",
     myColors: "내 색상",
     addColor: "추가",
     imageMap: "이미지 지도",
     freeDrawing: "자유 그리기",
     newMap: "새 지도",
     preview: "미리보기",
-    filled: "채움",
-    painted: "칠한 셀",
+    filled: "완료",
+    painted: "칠한 칸",
     total: "전체",
-    clearProgress: "진행 상황 지우기",
+    clearProgress: "진행률 초기화",
     drawHint: "왼쪽 클릭 — 그리기 · 오른쪽 클릭 — 지우기",
     mapsEmpty: "아직 지도가 없습니다",
     open: "열기",
     createMap: "지도 만들기",
-    renameMap: "지도 이름 바꾸기",
+    renameMap: "지도 이름 변경",
     newName: "새 이름",
     mapType: "지도 유형",
     cancel: "취소",
-    deleteMap: "지도를 삭제할까요?",
+    deleteMap: "지도 삭제",
+    account: "개인 계정",
+    logout: "로그아웃",
+    accountMaps: "생성한 지도",
+    accountCells: "채운 칸",
+    accountDescription:
+      "여기에 통계, 지도 및 앞으로의 성과가 표시됩니다.",
+    accountProgress: "진행",
+    accountMember: "프로필",
   },
 };
 
@@ -635,227 +725,99 @@ const additionalTranslations = {
   },
 };
 
-const BASIC_COLORS = [
-  "#111111",
-  "#ffffff",
-  "#ff3b30",
-  "#ff9500",
-  "#ffcc00",
-  "#34c759",
-  "#00c7be",
-  "#007aff",
-  "#5856d6",
-  "#ff2d55",
-];
-
 function createMapId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  return (
-    Date.now().toString(36) +
-    Math.random().toString(36).slice(2, 8)
-  );
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-function normalizeHexColor(color) {
-  if (typeof color !== "string") {
-    return null;
-  }
+function normalizeHexColor(c) {
+  if (typeof c !== "string") return null;
 
-  const value = color.trim().toLowerCase();
+  const v = c.trim().toLowerCase();
 
-  if (/^#[0-9a-f]{6}$/i.test(value)) {
-    return value;
-  }
-
-  return null;
+  return /^#[0-9a-f]{6}$/i.test(v) ? v : null;
 }
 
-function normalizeMap(map) {
+function normalizeMap(map = {}) {
+  const custom = [
+    ...new Set(
+      (Array.isArray(map.customColors) ? map.customColors : [])
+        .map(normalizeHexColor)
+        .filter(Boolean)
+        .filter((c) => !BASIC_COLORS.includes(c))
+    ),
+  ];
+
   return {
-    ...map,
-
-    customColors: Array.isArray(map.customColors)
-      ? map.customColors
-          .map(normalizeHexColor)
-          .filter(Boolean)
-          .filter(
-            (color, index, array) =>
-              array.indexOf(color) === index
-          )
-          .filter(
-            (color) => !BASIC_COLORS.includes(color)
-          )
-      : [],
-
-    drawColor:
-      normalizeHexColor(map.drawColor) ||
-      BASIC_COLORS[0],
-
-    completed: Array.isArray(map.completed)
-      ? [...new Set(map.completed)]
-      : [],
-
-    colors: Array.isArray(map.colors)
-      ? map.colors
-      : [],
-
-    mapType:
-      map.mapType === "image" ||
-      map.mapType === "free"
-        ? map.mapType
-        : "free",
-
-    gridMode:
-      map.gridMode === "manual"
-        ? "manual"
-        : "auto",
-
-    image:
-      typeof map.image === "string"
-        ? map.image
-        : null,
-
-    imageRatio:
-      typeof map.imageRatio === "number"
-        ? map.imageRatio
-        : 1,
-
+    id: map.id || createMapId(),
+    name: typeof map.name === "string" ? map.name : "Моя карта",
+    mapType: map.mapType === "image" ? "image" : "free",
+    gridMode: map.gridMode === "manual" ? "manual" : "auto",
+    completed: [
+      ...new Set(
+        (Array.isArray(map.completed) ? map.completed : [])
+          .map(Number)
+          .filter(Number.isInteger)
+          .filter((i) => i >= 0)
+      ),
+    ],
+    image: typeof map.image === "string" ? map.image : null,
+    colors: Array.isArray(map.colors) ? map.colors : [],
+    customColors: custom,
+    drawColor: normalizeHexColor(map.drawColor) || BASIC_COLORS[0],
+    imageRatio: Number(map.imageRatio) > 0 ? Number(map.imageRatio) : 1,
     totalCells:
       typeof map.totalCells === "string"
         ? map.totalCells
-        : String(map.totalCells ?? 500),
-
+        : String(map.totalCells || 500),
     manualRows:
       typeof map.manualRows === "string"
         ? map.manualRows
-        : String(map.manualRows ?? 20),
-
+        : String(map.manualRows || 20),
     manualCols:
       typeof map.manualCols === "string"
         ? map.manualCols
-        : String(map.manualCols ?? 25),
-
+        : String(map.manualCols || 25),
     showImage:
-      typeof map.showImage === "boolean"
-        ? map.showImage
-        : true,
-
+      typeof map.showImage === "boolean" ? map.showImage : true,
     description:
-      typeof map.description === "string"
-        ? map.description
-        : "",
+      typeof map.description === "string" ? map.description : "",
   };
+}
+
+function saveMapsLocally(maps) {
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(maps.map(normalizeMap))
+  );
 }
 
 function getInitialData() {
   try {
-    const savedMaps = localStorage.getItem(STORAGE_KEY);
-    const activeMapId = localStorage.getItem(ACTIVE_MAP_KEY);
+    const maps = JSON.parse(
+      localStorage.getItem(STORAGE_KEY) || "[]"
+    ).map(normalizeMap);
 
-    if (savedMaps) {
-      const maps = JSON.parse(savedMaps);
+    const active = localStorage.getItem(ACTIVE_MAP_KEY);
 
-      if (Array.isArray(maps) && maps.length > 0) {
-        const normalizedMaps = maps.map(normalizeMap);
-
-        const activeMap =
-          normalizedMaps.find(
-            (map) => map.id === activeMapId
-          ) || normalizedMaps[0];
-
-        return {
-          maps: normalizedMaps,
-          activeMap,
-        };
-      }
-    }
-
-    const oldMap = localStorage.getItem("mm-current-map");
-
-    if (oldMap) {
-      const parsed = JSON.parse(oldMap);
-
-      const migratedMap = normalizeMap({
-        id: createMapId(),
-        name: "Моя карта",
-        mapType:
-          parsed.mapType === "image" ||
-          parsed.mapType === "free"
-            ? parsed.mapType
-            : parsed.image
-              ? "image"
-              : "free",
-        gridMode: "auto",
-        completed: Array.isArray(parsed.completed)
-          ? parsed.completed
-          : [],
-        image:
-          typeof parsed.image === "string"
-            ? parsed.image
-            : null,
-        colors: Array.isArray(parsed.colors)
-          ? parsed.colors
-          : [],
-        customColors: [],
-        drawColor:
-          normalizeHexColor(parsed.drawColor) ||
-          BASIC_COLORS[0],
-        imageRatio:
-          typeof parsed.imageRatio === "number"
-            ? parsed.imageRatio
-            : 1,
-        totalCells:
-          typeof parsed.totalCells === "string"
-            ? parsed.totalCells
-            : "500",
-        manualRows: "20",
-        manualCols: "25",
-        showImage:
-          typeof parsed.showImage === "boolean"
-            ? parsed.showImage
-            : true,
-        description: "",
-      });
-
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify([migratedMap])
-      );
-
-      localStorage.setItem(
-        ACTIVE_MAP_KEY,
-        migratedMap.id
-      );
-
-      return {
-        maps: [migratedMap],
-        activeMap: migratedMap,
-      };
-    }
-  } catch (error) {
-    console.error(
-      "Не удалось загрузить локальные карты:",
-      error
-    );
+    return {
+      maps,
+      activeMap:
+        maps.find((m) => m.id === active)?.id ||
+        maps[0]?.id ||
+        null,
+    };
+  } catch {
+    return {
+      maps: [],
+      activeMap: null,
+    };
   }
-
-  return {
-    maps: [],
-    activeMap: null,
-  };
 }
 
-const initialData = getInitialData();
-
 function mapToSupabaseRow(map, userId) {
-  const {
-    id,
-    name,
-    ...data
-  } = normalizeMap(map);
+  const { id, name, ...data } = normalizeMap(map);
 
   return {
     id,
@@ -867,7 +829,7 @@ function mapToSupabaseRow(map, userId) {
 
 function mapFromSupabaseRow(row) {
   return normalizeMap({
-    ...(row.data || {}),
+    ...row.data,
     id: row.id,
     name: row.name,
   });
@@ -881,15 +843,8 @@ function getGridDimensions(
   manualCols = 25
 ) {
   if (gridMode === "manual") {
-    const rows = Math.max(
-      1,
-      Number(manualRows) || 1
-    );
-
-    const cols = Math.max(
-      1,
-      Number(manualCols) || 1
-    );
+    const rows = Math.max(1, Number(manualRows) || 1);
+    const cols = Math.max(1, Number(manualCols) || 1);
 
     return {
       rows,
@@ -900,9 +855,7 @@ function getGridDimensions(
 
   const cols = Math.max(
     1,
-    Math.round(
-      Math.sqrt(total * ratio)
-    )
+    Math.round(Math.sqrt(total * ratio))
   );
 
   const rows = Math.max(
@@ -917,99 +870,363 @@ function getGridDimensions(
   };
 }
 
-function getLineCells(
-  startIndex,
-  endIndex,
-  cols,
-  rows
-) {
-  const startRow =
-    Math.floor(startIndex / cols);
+function getLineCells(a, b, cols, rows) {
+  const sr = Math.floor(a / cols);
+  const sc = a % cols;
+  const er = Math.floor(b / cols);
+  const ec = b % cols;
 
-  const startCol =
-    startIndex % cols;
+  const dx = ec - sc;
+  const dy = er - sr;
+  const steps = Math.max(Math.abs(dx), Math.abs(dy));
 
-  const endRow =
-    Math.floor(endIndex / cols);
+  if (!steps) return [a];
 
-  const endCol =
-    endIndex % cols;
+  const out = new Set();
 
-  const cells = new Set();
-
-  const dx = endCol - startCol;
-  const dy = endRow - startRow;
-
-  const steps = Math.max(
-    Math.abs(dx),
-    Math.abs(dy)
-  );
-
-  if (steps === 0) {
-    return [startIndex];
-  }
-
-  for (
-    let step = 0;
-    step <= steps;
-    step++
-  ) {
-    const progress = step / steps;
-
-    const col = Math.round(
-      startCol + dx * progress
-    );
-
-    const row = Math.round(
-      startRow + dy * progress
-    );
+  for (let s = 0; s <= steps; s++) {
+    const c = Math.round(sc + (dx * s) / steps);
+    const r = Math.round(sr + (dy * s) / steps);
 
     if (
-      col >= 0 &&
-      col < cols &&
-      row >= 0 &&
-      row < rows
+      c >= 0 &&
+      c < cols &&
+      r >= 0 &&
+      r < rows
     ) {
-      cells.add(
-        row * cols + col
-      );
+      out.add(r * cols + c);
     }
   }
 
-  return [...cells];
+  return [...out];
 }
 
-function App() {
+function sameState(a, b) {
+  return (
+    JSON.stringify(a.completed) ===
+      JSON.stringify(b.completed) &&
+    JSON.stringify(a.colors) ===
+      JSON.stringify(b.colors)
+  );
+}
+
+export default function App() {
+  const initial = getInitialData();
+
   const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] =
-    useState(true);
-  const [mapsLoading, setMapsLoading] =
-    useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [mapsLoading, setMapsLoading] = useState(true);
+  const [isMapInitialized, setIsMapInitialized] = useState(false);
+
+  const [language, setLanguage] = useState(
+    () => localStorage.getItem(LANGUAGE_KEY) || "ru"
+  );
+
+  const [screen, setScreen] = useState(() => {
+    const saved = localStorage.getItem(CURRENT_SCREEN_KEY);
+
+    return [
+      "home",
+      "maps",
+      "editor",
+      "account",
+    ].includes(saved)
+      ? saved
+      : "home";
+  });
+
+  const [maps, setMaps] = useState(initial.maps);
+  const [activeMapId, setActiveMapId] = useState(
+    initial.activeMap
+  );
+  const [saveStatus, setSaveStatus] = useState("");
+
+  const activeMap =
+    maps.find((m) => m.id === activeMapId) || null;
+
+  const [
+    mapType,
+    setMapType,
+  ] = useState("free");
+
+  const [
+    gridMode,
+    setGridMode,
+  ] = useState("auto");
+
+  const [
+    completed,
+    setCompleted,
+  ] = useState([]);
+
+  const [image, setImage] = useState(null);
+  const [colors, setColors] = useState([]);
+  const [imageRatio, setImageRatio] = useState(1);
+
+  const [
+    drawColor,
+    setDrawColor,
+  ] = useState(BASIC_COLORS[0]);
+
+  const [
+    customColors,
+    setCustomColors,
+  ] = useState(() => {
+    try {
+      return JSON.parse(
+        localStorage.getItem(CUSTOM_COLORS_KEY) || "[]"
+      ).filter(Boolean);
+    } catch {
+      return [];
+    }
+  });
+
+  const [
+    newColor,
+    setNewColor,
+  ] = useState(BASIC_COLORS[0]);
+
+  const [
+    totalCells,
+    setTotalCells,
+  ] = useState("500");
+
+  const [
+    manualRows,
+    setManualRows,
+  ] = useState("20");
+
+  const [
+    manualCols,
+    setManualCols,
+  ] = useState("25");
+
+  const [
+    showImage,
+    setShowImage,
+  ] = useState(true);
+
+  const [
+    description,
+    setDescription,
+  ] = useState("");
+
+  const [
+    isDrawing,
+    setIsDrawing,
+  ] = useState(false);
+
+  const [
+    drawMode,
+    setDrawMode,
+  ] = useState("draw");
+
+  const [
+    isCreateOpen,
+    setIsCreateOpen,
+  ] = useState(false);
+
+  const [
+    isRenameOpen,
+    setIsRenameOpen,
+  ] = useState(false);
+
+  const [
+    isDeleteOpen,
+    setIsDeleteOpen,
+  ] = useState(false);
+
+  const [
+    newMapName,
+    setNewMapName,
+  ] = useState("");
+
+  const [
+    newMapType,
+    setNewMapType,
+  ] = useState("free");
+
+  const [
+    newMapGridMode,
+    setNewMapGridMode,
+  ] = useState("auto");
+
+  const [
+    newMapCells,
+    setNewMapCells,
+  ] = useState("500");
+
+  const [
+    newMapRows,
+    setNewMapRows,
+  ] = useState("20");
+
+  const [
+    newMapCols,
+    setNewMapCols,
+  ] = useState("25");
+
+  const [
+    renameValue,
+    setRenameValue,
+  ] = useState("");
+
+  const [
+    renameMapId,
+    setRenameMapId,
+  ] = useState(null);
+
+  const [
+    mapToDelete,
+    setMapToDelete,
+  ] = useState(null);
+
+  const [
+    mapZoom,
+    setMapZoom,
+  ] = useState(1);
+
+  const [
+    isAccountOpen,
+    setIsAccountOpen,
+  ] = useState(false);
+
+  const canvasRef = useRef(null);
+  const viewportRef = useRef(null);
+  const accountRef = useRef(null);
+
+  const isDrawingRef = useRef(false);
+  const drawModeRef = useRef("draw");
+  const previousCellRef = useRef(null);
+  const activePointerIdRef = useRef(null);
+
+  const completedRef = useRef(new Set());
+  const colorsRef = useRef([]);
+  const drawColorRef = useRef(drawColor);
+
+  const strokeBeforeRef = useRef(null);
+  const strokeColorsBeforeRef = useRef([]);
+  const strokeVisitedRef = useRef(new Set());
+
+  const undoStackRef = useRef([]);
+  const redoStackRef = useRef([]);
+
+  const hydratingRef = useRef(true);
+  const saveTimerRef = useRef(null);
+  const remoteSaveQueueRef = useRef(Promise.resolve());
+  const activeMapRef = useRef(activeMap);
+  const hydrationReleaseTimerRef = useRef(null);
+
+  const requestedTotal = Math.max(
+    1,
+    Number(totalCells) || 1
+  );
+
+  const {
+    rows,
+    cols,
+    actualTotal,
+  } = getGridDimensions(
+    requestedTotal,
+    imageRatio,
+    gridMode,
+    manualRows,
+    manualCols
+  );
+
+  const progress = actualTotal
+    ? Math.min(
+        100,
+        Math.round(
+          (completed.length / actualTotal) * 100
+        )
+      )
+    : 0;
+
+  const t = (key) =>
+    additionalTranslations[language]?.[key] ??
+    translations[language]?.[key] ??
+    translations.ru[key] ??
+    key;
+
+  const accountName =
+    user?.user_metadata?.username ||
+    user?.user_metadata?.user_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "majurx64";
+
+  const accountEmail = user?.email || "";
+
+  const accountInitial =
+    accountName.trim().charAt(0).toUpperCase() || "M";
+
+  useEffect(() => {
+    localStorage.setItem(LANGUAGE_KEY, language);
+  }, [language]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      CUSTOM_COLORS_KEY,
+      JSON.stringify(customColors)
+    );
+  }, [customColors]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      CURRENT_SCREEN_KEY,
+      screen
+    );
+
+    if (
+      screen === "editor" &&
+      !activeMapId
+    ) {
+      setScreen("maps");
+    }
+  }, [screen, activeMapId]);
+
+  useEffect(() => {
+    if (!isMapInitialized) return;
+
+    saveMapsLocally(maps);
+  }, [maps, isMapInitialized]);
+
+  useEffect(() => {
+    drawColorRef.current = drawColor;
+  }, [drawColor]);
+
+  useEffect(() => {
+    activeMapRef.current = activeMap;
+  }, [activeMap]);
+
+  useEffect(() => {
+    completedRef.current = new Set(completed);
+  }, [completed]);
+
+  useEffect(() => {
+    colorsRef.current = colors;
+  }, [colors]);
 
   useEffect(() => {
     let mounted = true;
 
-    async function loadSession() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
+    supabase.auth.getSession().then(({ data }) => {
       if (mounted) {
-        setUser(session?.user ?? null);
+        setUser(data.session?.user || null);
         setAuthLoading(false);
       }
-    }
-
-    loadSession();
+    });
 
     const {
       data: { subscription },
-    } =
-      supabase.auth.onAuthStateChange(
-        (_event, session) => {
-          setUser(session?.user ?? null);
+    } = supabase.auth.onAuthStateChange(
+      (_e, session) => {
+        if (mounted) {
+          setUser(session?.user || null);
         }
-      );
+      }
+    );
 
     return () => {
       mounted = false;
@@ -1017,336 +1234,45 @@ function App() {
     };
   }, []);
 
-  const canvasRef = useRef(null);
-
-  const [language, setLanguage] =
-    useState(() => {
-      const savedLanguage =
-        localStorage.getItem(
-          LANGUAGE_KEY
-        );
-
-      return translations[savedLanguage]
-        ? savedLanguage
-        : "ru";
-    });
-
-  const [screen, setScreen] =
-    useState(() => {
-      const savedScreen =
-        localStorage.getItem(
-          CURRENT_SCREEN_KEY
-        );
-
-      return [
-        "home",
-        "maps",
-        "editor",
-      ].includes(savedScreen)
-        ? savedScreen
-        : "home";
-    });
-
-  const [saveStatus, setSaveStatus] =
-    useState("");
-
-  const [maps, setMaps] =
-    useState(initialData.maps);
-
-  const [activeMapId, setActiveMapId] =
-    useState(
-      initialData.activeMap?.id ||
-        null
-    );
-
-  const activeMap =
-    maps.find(
-      (map) =>
-        map.id === activeMapId
-    ) || null;
-
-  const t = (key) =>
-    additionalTranslations[
-      language
-    ]?.[key] ||
-    translations[language]?.[key] ||
-    additionalTranslations.ru[key] ||
-    translations.ru[key] ||
-    key;
-
-  const [mapType, setMapType] =
-    useState(
-      activeMap?.mapType || "free"
-    );
-
-  const [gridMode, setGridMode] =
-    useState(
-      activeMap?.gridMode === "manual"
-        ? "manual"
-        : "auto"
-    );
-
-  const [completed, setCompleted] =
-    useState(
-      Array.isArray(
-        activeMap?.completed
-      )
-        ? activeMap.completed
-        : []
-    );
-
-  const [image, setImage] =
-    useState(
-      typeof activeMap?.image ===
-        "string"
-        ? activeMap.image
-        : null
-    );
-
-  const [colors, setColors] =
-    useState(
-      Array.isArray(
-        activeMap?.colors
-      )
-        ? activeMap.colors
-        : []
-    );
-
-  const [imageRatio, setImageRatio] =
-    useState(
-      typeof activeMap?.imageRatio ===
-        "number"
-        ? activeMap.imageRatio
-        : 1
-    );
-
-  const [drawColor, setDrawColor] =
-    useState(
-      normalizeHexColor(
-        activeMap?.drawColor
-      ) || BASIC_COLORS[0]
-    );
-
-  const [customColors, setCustomColors] =
-    useState(
-      Array.isArray(
-        activeMap?.customColors
-      )
-        ? activeMap.customColors
-        : []
-    );
-
-  const [newColor, setNewColor] =
-    useState(
-      normalizeHexColor(
-        activeMap?.drawColor
-      ) || BASIC_COLORS[0]
-    );
-
-  const [isDrawing, setIsDrawing] =
-    useState(false);
-
-  const [drawMode, setDrawMode] =
-    useState("draw");
-
-  const [totalCells, setTotalCells] =
-    useState(
-      typeof activeMap?.totalCells ===
-        "string"
-        ? activeMap.totalCells
-        : "500"
-    );
-
-  const [manualRows, setManualRows] =
-    useState(
-      typeof activeMap?.manualRows ===
-        "string"
-        ? activeMap.manualRows
-        : "20"
-    );
-
-  const [manualCols, setManualCols] =
-    useState(
-      typeof activeMap?.manualCols ===
-        "string"
-        ? activeMap.manualCols
-        : "25"
-    );
-
-  const [showImage, setShowImage] =
-    useState(
-      typeof activeMap?.showImage ===
-        "boolean"
-        ? activeMap.showImage
-        : true
-    );
-
-  const [description, setDescription] =
-    useState(
-      typeof activeMap?.description ===
-        "string"
-        ? activeMap.description
-        : ""
-    );
-
-  const [isCreateOpen, setIsCreateOpen] =
-    useState(false);
-
-  const [newMapName, setNewMapName] =
-    useState("");
-
-  const [newMapType, setNewMapType] =
-    useState("free");
-
-  const [
-    newMapGridMode,
-    setNewMapGridMode,
-  ] = useState("auto");
-
-  const [newMapCells, setNewMapCells] =
-    useState("500");
-
-  const [newMapRows, setNewMapRows] =
-    useState("20");
-
-  const [newMapCols, setNewMapCols] =
-    useState("25");
-
-  const [isRenameOpen, setIsRenameOpen] =
-    useState(false);
-
-  const [renameValue, setRenameValue] =
-    useState("");
-
-  const [renameMapId, setRenameMapId] =
-    useState(null);
-
-  const [isDeleteOpen, setIsDeleteOpen] =
-    useState(false);
-
-  const [mapToDelete, setMapToDelete] =
-    useState(null);
-
-  const isDrawingRef =
-    useRef(false);
-
-  const drawModeRef =
-    useRef("draw");
-
-  const previousCellRef =
-    useRef(null);
-
-  const activePointerIdRef =
-    useRef(null);
-
-  const completedRef =
-    useRef(
-      new Set(
-        Array.isArray(completed)
-          ? completed
-          : []
-      )
-    );
-
-  const drawColorRef =
-    useRef(
-      normalizeHexColor(
-        activeMap?.drawColor
-      ) || BASIC_COLORS[0]
-    );
-
-  const undoStackRef =
-    useRef([]);
-
-  const redoStackRef =
-    useRef([]);
-
-  const strokeBeforeRef =
-    useRef(null);
-
-  const strokeVisitedRef =
-    useRef(new Set());
-
-  const requestedTotal =
-    Math.max(
-      1,
-      Number(totalCells) || 1
-    );
-
-  const {
-    rows,
-    cols,
-    actualTotal,
-  } =
-    getGridDimensions(
-      requestedTotal,
-      imageRatio,
-      gridMode,
-      manualRows,
-      manualCols
-    );
-
-  const progress =
-    actualTotal > 0
-      ? Math.min(
-          100,
-          Math.round(
-            (completed.length /
-              actualTotal) *
-              100
-          )
-        )
-      : 0;
-
   useEffect(() => {
-    localStorage.setItem(
-      LANGUAGE_KEY,
-      language
-    );
-  }, [language]);
-
-  useEffect(() => {
-    if (
-      screen === "editor" &&
-      !activeMap
-    ) {
-      setScreen("maps");
-      return;
-    }
-
-    localStorage.setItem(
-      CURRENT_SCREEN_KEY,
-      screen
-    );
-  }, [screen, activeMap]);
-
-  useEffect(() => {
-    drawColorRef.current =
-      drawColor;
-  }, [drawColor]);
-
-  /*
-   * Загрузка карт из Supabase.
-   *
-   * Если в Supabase пока нет карт, но в старом
-   * localStorage есть карты, переносим их туда.
-   */
-  useEffect(() => {
-    if (authLoading) {
-      return;
-    }
-
-    if (!user) {
-      setMapsLoading(false);
-      setMaps([]);
-      setActiveMapId(null);
-      return;
-    }
-
     let cancelled = false;
 
-    async function loadMaps() {
+    async function load() {
       setMapsLoading(true);
+      setIsMapInitialized(false);
+      hydratingRef.current = true;
+
+      if (!user) {
+        if (!cancelled) {
+          setMaps(initial.maps);
+          setActiveMapId(initial.activeMap);
+
+          const localActive =
+            initial.maps.find(
+              (m) => m.id === initial.activeMap
+            ) || initial.maps[0];
+
+          if (localActive) {
+            openMap(localActive);
+          }
+
+          setMapsLoading(false);
+          setIsMapInitialized(true);
+
+          clearTimeout(
+            hydrationReleaseTimerRef.current
+          );
+
+          hydrationReleaseTimerRef.current =
+            setTimeout(() => {
+              if (!cancelled) {
+                hydratingRef.current = false;
+              }
+            }, 0);
+        }
+
+        return;
+      }
 
       const {
         data,
@@ -1354,452 +1280,149 @@ function App() {
       } = await supabase
         .from("maps")
         .select(
-          "id, user_id, name, data, created_at, updated_at"
+          "id,user_id,name,data,created_at,updated_at"
         )
         .eq("user_id", user.id)
         .order("created_at", {
           ascending: true,
         });
 
+      if (cancelled) return;
+
+      let loadedMaps = [];
+      let loadedActiveId = null;
+
       if (error) {
-        console.error(
-          "Не удалось загрузить карты из Supabase:",
-          error
-        );
+        console.error(error);
 
-        if (!cancelled) {
-          setMaps(
-            initialData.maps
-          );
+        loadedMaps = initial.maps;
+        loadedActiveId = initial.activeMap;
+      } else if (data?.length) {
+        loadedMaps = data.map(mapFromSupabaseRow);
 
-          setActiveMapId(
-            initialData.activeMap?.id ||
-              null
-          );
+        const saved =
+          localStorage.getItem(ACTIVE_MAP_KEY);
 
-          setMapsLoading(false);
-        }
+        loadedActiveId =
+          loadedMaps.find(
+            (m) => m.id === saved
+          )?.id ||
+          loadedMaps[0]?.id ||
+          null;
+      } else if (initial.maps.length) {
+        const migrated = [];
 
-        return;
-      }
-
-      let remoteMaps =
-        Array.isArray(data)
-          ? data.map(mapFromSupabaseRow)
-          : [];
-
-      /*
-       * Одноразовая миграция старых локальных карт.
-       *
-       * Важно: старые ID могли быть не UUID,
-       * поэтому для Supabase создаём новые UUID.
-       */
-      if (
-        remoteMaps.length === 0 &&
-        initialData.maps.length > 0
-      ) {
-        const oldMaps =
-          initialData.maps;
-
-        const oldActiveId =
-          localStorage.getItem(
-            ACTIVE_MAP_KEY
-          );
-
-        const idMap = new Map();
-
-        const mapsForInsert =
-          oldMaps.map((oldMap) => {
-            const newId =
-              createMapId();
-
-            idMap.set(
-              oldMap.id,
-              newId
-            );
-
-            return normalizeMap({
-              ...oldMap,
-              id: newId,
-            });
+        for (const old of initial.maps) {
+          const fresh = normalizeMap({
+            ...old,
+            id: createMapId(),
           });
 
-        const rowsToInsert =
-          mapsForInsert.map(
-            (map) =>
-              mapToSupabaseRow(
-                map,
-                user.id
-              )
-          );
+          const { error: e } =
+            await supabase
+              .from("maps")
+              .upsert(
+                mapToSupabaseRow(
+                  fresh,
+                  user.id
+                ),
+                {
+                  onConflict: "id",
+                }
+              );
 
-        const {
-          data: insertedData,
-          error: insertError,
-        } =
-          await supabase
-            .from("maps")
-            .insert(rowsToInsert)
-            .select(
-              "id, user_id, name, data, created_at, updated_at"
-            );
-
-        if (insertError) {
-          console.error(
-            "Не удалось перенести локальные карты в Supabase:",
-            insertError
-          );
-
-          if (!cancelled) {
-            setMaps(oldMaps);
-            setActiveMapId(
-              oldActiveId ||
-                oldMaps[0]?.id ||
-                null
-            );
-            setMapsLoading(false);
+          if (!e) {
+            migrated.push(fresh);
           }
-
-          return;
         }
 
-        remoteMaps =
-          Array.isArray(
-            insertedData
-          )
-            ? insertedData.map(
-                mapFromSupabaseRow
-              )
-            : mapsForInsert;
+        loadedMaps = migrated.length
+          ? migrated
+          : initial.maps;
 
-        const newActiveId =
-          idMap.get(oldActiveId) ||
-          remoteMaps[0]?.id ||
+        loadedActiveId =
+          migrated[0]?.id ||
+          initial.activeMap ||
           null;
-
-        if (newActiveId) {
-          localStorage.setItem(
-            ACTIVE_MAP_KEY,
-            newActiveId
-          );
-        }
-
-        localStorage.removeItem(
-          STORAGE_KEY
-        );
-
-        localStorage.removeItem(
-          "mm-current-map"
-        );
-
-        if (!cancelled) {
-          setMaps(remoteMaps);
-          setActiveMapId(
-            newActiveId
-          );
-          setMapsLoading(false);
-        }
-
-        return;
       }
 
-      const savedActiveId =
-        localStorage.getItem(
-          ACTIVE_MAP_KEY
-        );
+      setMaps(loadedMaps);
+      setActiveMapId(loadedActiveId);
 
-      const activeRemoteMap =
-        remoteMaps.find(
-          (map) =>
-            map.id ===
-            savedActiveId
-        ) ||
-        remoteMaps[0] ||
-        null;
+      const loadedActive =
+        loadedMaps.find(
+          (m) => m.id === loadedActiveId
+        ) || null;
 
-      if (
-        !cancelled
-      ) {
-        setMaps(remoteMaps);
-
-        setActiveMapId(
-          activeRemoteMap?.id ||
-            null
-        );
-
-        if (
-          activeRemoteMap?.id
-        ) {
-          localStorage.setItem(
-            ACTIVE_MAP_KEY,
-            activeRemoteMap.id
-          );
-        } else {
-          localStorage.removeItem(
-            ACTIVE_MAP_KEY
-          );
-        }
-
-        setMapsLoading(false);
+      if (loadedActive) {
+        openMap(loadedActive);
       }
+
+      setMapsLoading(false);
+      setIsMapInitialized(true);
+
+      clearTimeout(
+        hydrationReleaseTimerRef.current
+      );
+
+      hydrationReleaseTimerRef.current =
+        setTimeout(() => {
+          if (!cancelled) {
+            hydratingRef.current = false;
+          }
+        }, 0);
     }
 
-    loadMaps();
+    load();
 
     return () => {
       cancelled = true;
+
+      clearTimeout(
+        hydrationReleaseTimerRef.current
+      );
+
+      clearTimeout(saveTimerRef.current);
     };
-  }, [user, authLoading]);
+  }, [user]);
 
-  function clearHistory() {
-    undoStackRef.current = [];
-    redoStackRef.current = [];
-  }
-
-  function sameCells(a, b) {
-    if (a.length !== b.length) {
-      return false;
-    }
-
-    const aSet = new Set(a);
-    const bSet = new Set(b);
-
-    if (aSet.size !== bSet.size) {
-      return false;
-    }
-
-    for (const value of aSet) {
-      if (!bSet.has(value)) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  function pushHistory(before, after) {
-    const beforeArray = [...before];
-    const afterArray = [...after];
-
+  useEffect(() => {
     if (
-      sameCells(
-        beforeArray,
-        afterArray
-      )
+      !isMapInitialized ||
+      !activeMapId
     ) {
       return;
     }
 
-    undoStackRef.current.push({
-      before: beforeArray,
-      after: afterArray,
+    const next = normalizeMap({
+      ...activeMap,
+      mapType,
+      gridMode,
+      completed,
+      image,
+      colors,
+      imageRatio,
+      totalCells,
+      manualRows,
+      manualCols,
+      showImage,
+      description,
+      drawColor,
+      customColors,
     });
 
-    if (
-      undoStackRef.current.length >
-      50
-    ) {
-      undoStackRef.current.shift();
-    }
-
-    redoStackRef.current = [];
-  }
-
-  function setCompletedDirectly(
-    nextCompleted
-  ) {
-    const normalized = [
-      ...new Set(nextCompleted),
-    ];
-
-    completedRef.current =
-      new Set(normalized);
-
-    setCompleted(normalized);
-  }
-
-  function selectDrawColor(color) {
-    const normalizedColor =
-      normalizeHexColor(color);
-
-    if (!normalizedColor) {
-      return;
-    }
-
-    setDrawColor(
-      normalizedColor
-    );
-
-    setNewColor(
-      normalizedColor
-    );
-
-    drawColorRef.current =
-      normalizedColor;
-  }
-
-  function addCustomColor() {
-    const color =
-      normalizeHexColor(
-        newColor
-      );
-
-    if (!color) {
-      return;
-    }
-
-    if (
-      BASIC_COLORS.includes(color)
-    ) {
-      selectDrawColor(color);
-      return;
-    }
-
-    setCustomColors(
-      (previousColors) => {
-        if (
-          previousColors.includes(
-            color
-          )
-        ) {
-          return previousColors;
-        }
-
-        return [
-          ...previousColors,
-          color,
-        ];
-      }
-    );
-
-    selectDrawColor(color);
-  }
-
-  function deleteCustomColor(color) {
-    if (
-      BASIC_COLORS.includes(color)
-    ) {
-      return;
-    }
-
-    setCustomColors(
-      (previousColors) =>
-        previousColors.filter(
-          (item) =>
-            item !== color
-        )
-    );
-
-    if (
-      drawColor === color
-    ) {
-      const fallback =
-        BASIC_COLORS[0];
-
-      setDrawColor(
-        fallback
-      );
-
-      setNewColor(
-        fallback
-      );
-
-      drawColorRef.current =
-        fallback;
-    }
-  }
-
-  function handleCustomColorContextMenu(
-    event,
-    color
-  ) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    deleteCustomColor(color);
-  }
-
-  function undo() {
-    if (
-      mapType !== "free" ||
-      isDrawingRef.current
-    ) {
-      return;
-    }
-
-    const action =
-      undoStackRef.current.pop();
-
-    if (!action) {
-      return;
-    }
-
-    redoStackRef.current.push(
-      action
-    );
-
-    setCompletedDirectly(
-      action.before
-    );
-  }
-
-  function redo() {
-    if (
-      mapType !== "free" ||
-      isDrawingRef.current
-    ) {
-      return;
-    }
-
-    const action =
-      redoStackRef.current.pop();
-
-    if (!action) {
-      return;
-    }
-
-    undoStackRef.current.push(
-      action
-    );
-
-    setCompletedDirectly(
-      action.after
-    );
-  }
-
-  /*
-   * Синхронизируем текущий редактор с объектом карты
-   * в памяти React.
-   */
-  useEffect(() => {
-    if (!activeMapId) {
-      return;
-    }
-
-    setMaps((prevMaps) =>
-      prevMaps.map((map) =>
-        map.id === activeMapId
-          ? {
-              ...map,
-              mapType,
-              gridMode,
-              completed,
-              image,
-              colors,
-              imageRatio,
-              totalCells,
-              manualRows,
-              manualCols,
-              showImage,
-              description,
-              drawColor,
-              customColors,
-            }
-          : map
+    setMaps((prev) =>
+      prev.some(
+        (m) => m.id === activeMapId
       )
+        ? prev.map((m) =>
+            m.id === activeMapId
+              ? next
+              : m
+          )
+        : prev
     );
   }, [
-    activeMapId,
     mapType,
     gridMode,
     completed,
@@ -1815,1164 +1438,387 @@ function App() {
     customColors,
   ]);
 
+  const buildCurrentMap = useCallback(
+    () =>
+      activeMapId
+        ? normalizeMap({
+            ...activeMapRef.current,
+            mapType,
+            gridMode,
+            completed: [
+              ...completedRef.current,
+            ],
+            image,
+            colors,
+            imageRatio,
+            totalCells,
+            manualRows,
+            manualCols,
+            showImage,
+            description,
+            drawColor,
+            customColors,
+          })
+        : null,
+    [
+      activeMapId,
+      mapType,
+      gridMode,
+      image,
+      colors,
+      imageRatio,
+      totalCells,
+      manualRows,
+      manualCols,
+      showImage,
+      description,
+      drawColor,
+      customColors,
+    ]
+  );
+
+  const remoteSave = useCallback(
+    (map) => {
+      if (!user || !map) {
+        return Promise.resolve(null);
+      }
+
+      const run = async () => {
+        try {
+          const { error } =
+            await supabase
+              .from("maps")
+              .upsert(
+                mapToSupabaseRow(
+                  map,
+                  user.id
+                ),
+                {
+                  onConflict: "id",
+                }
+              );
+
+          if (error) {
+            console.error(
+              "Ошибка автосохранения:",
+              error
+            );
+
+            return error;
+          }
+
+          return null;
+        } catch (error) {
+          console.error(
+            "Ошибка автосохранения:",
+            error
+          );
+
+          return error;
+        }
+      };
+
+      const request =
+        remoteSaveQueueRef.current.then(
+          run,
+          run
+        );
+
+      remoteSaveQueueRef.current =
+        request.catch(() => null);
+
+      return request;
+    },
+    [user]
+  );
+
   useEffect(() => {
-    if (activeMapId) {
-      localStorage.setItem(
-        ACTIVE_MAP_KEY,
-        activeMapId
-      );
-    } else {
-      localStorage.removeItem(
-        ACTIVE_MAP_KEY
-      );
+    if (
+      !isMapInitialized ||
+      hydratingRef.current ||
+      !activeMapId ||
+      !user
+    ) {
+      return;
     }
-  }, [activeMapId]);
 
-  useEffect(() => {
-    completedRef.current =
-      new Set(completed);
+    clearTimeout(saveTimerRef.current);
 
-    drawCanvas();
+    saveTimerRef.current = setTimeout(() => {
+      const map = buildCurrentMap();
+
+      if (map) {
+        remoteSave(map);
+      }
+    }, 700);
+
+    return () =>
+      clearTimeout(saveTimerRef.current);
   }, [
-    completed,
-    colors,
-    showImage,
     mapType,
+    gridMode,
+    completed,
     image,
-    rows,
-    cols,
+    colors,
+    imageRatio,
+    totalCells,
+    manualRows,
+    manualCols,
+    showImage,
+    description,
     drawColor,
+    customColors,
+    isMapInitialized,
+    user,
+    activeMapId,
+    buildCurrentMap,
+    remoteSave,
   ]);
 
   useEffect(() => {
-    const handlePointerUp = () => {
-      finishStroke();
+    const handleOutsideClick = (e) => {
+      if (
+        accountRef.current &&
+        !accountRef.current.contains(e.target)
+      ) {
+        setIsAccountOpen(false);
+      }
     };
 
-    const handlePointerCancel = () => {
-      finishStroke();
-    };
-
-    window.addEventListener(
-      "pointerup",
-      handlePointerUp
-    );
-
-    window.addEventListener(
-      "pointercancel",
-      handlePointerCancel
+    document.addEventListener(
+      "mousedown",
+      handleOutsideClick
     );
 
     return () => {
-      window.removeEventListener(
-        "pointerup",
-        handlePointerUp
-      );
-
-      window.removeEventListener(
-        "pointercancel",
-        handlePointerCancel
+      document.removeEventListener(
+        "mousedown",
+        handleOutsideClick
       );
     };
   }, []);
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      const target =
-        event.target;
+  async function handleSignOut() {
+    setIsAccountOpen(false);
 
-      const isTextField =
-        target instanceof
-          HTMLInputElement ||
-        target instanceof
-          HTMLTextAreaElement ||
-        target?.isContentEditable;
+    const { error } =
+      await supabase.auth.signOut();
 
-      if (isTextField) {
-        return;
-      }
-
-      if (
-        event.ctrlKey &&
-        event.key.toLowerCase() ===
-          "z"
-      ) {
-        event.preventDefault();
-        undo();
-        return;
-      }
-
-      if (
-        event.ctrlKey &&
-        event.key.toLowerCase() ===
-          "y"
-      ) {
-        event.preventDefault();
-        redo();
-      }
-    };
-
-    window.addEventListener(
-      "keydown",
-      handleKeyDown
-    );
-
-    return () => {
-      window.removeEventListener(
-        "keydown",
-        handleKeyDown
+    if (error) {
+      console.error(
+        "Ошибка выхода:",
+        error
       );
-    };
-  }, [mapType]);
 
-  useEffect(() => {
-    if (!isRenameOpen) {
       return;
     }
 
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        closeRenameModal();
-      }
-
-      if (event.key === "Enter") {
-        saveRename();
-      }
-    };
-
-    window.addEventListener(
-      "keydown",
-      handleKeyDown
+    setScreen("home");
+    localStorage.setItem(
+      CURRENT_SCREEN_KEY,
+      "home"
     );
-
-    return () => {
-      window.removeEventListener(
-        "keydown",
-        handleKeyDown
-      );
-    };
-  }, [
-    isRenameOpen,
-    renameValue,
-  ]);
-
-  useEffect(() => {
-    if (!isDeleteOpen) {
-      return;
-    }
-
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        closeDeleteModal();
-      }
-
-      if (event.key === "Enter") {
-        confirmDeleteMap();
-      }
-    };
-
-    window.addEventListener(
-      "keydown",
-      handleKeyDown
-    );
-
-    return () => {
-      window.removeEventListener(
-        "keydown",
-        handleKeyDown
-      );
-    };
-  }, [
-    isDeleteOpen,
-    mapToDelete,
-  ]);
-
-  function drawGridLines(
-    ctx,
-    rect,
-    cellWidth,
-    cellHeight
-  ) {
-    ctx.save();
-
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle =
-      "rgba(0, 0, 0, 0.14)";
-    ctx.lineWidth = 1;
-
-    ctx.beginPath();
-
-    for (
-      let col = 1;
-      col < cols;
-      col++
-    ) {
-      const x =
-        col * cellWidth;
-
-      ctx.moveTo(x, 0);
-      ctx.lineTo(
-        x,
-        rect.height
-      );
-    }
-
-    for (
-      let row = 1;
-      row < rows;
-      row++
-    ) {
-      const y =
-        row * cellHeight;
-
-      ctx.moveTo(0, y);
-      ctx.lineTo(
-        rect.width,
-        y
-      );
-    }
-
-    ctx.stroke();
-    ctx.restore();
   }
 
-  function drawCanvas() {
-    const canvas =
-      canvasRef.current;
+  function selectDrawColor(c) {
+    const v = normalizeHexColor(c);
 
-    if (!canvas) {
-      return;
-    }
+    if (!v) return;
 
-    const rect =
-      canvas.getBoundingClientRect();
-
-    if (
-      !rect.width ||
-      !rect.height
-    ) {
-      return;
-    }
-
-    const dpr =
-      window.devicePixelRatio ||
-      1;
-
-    const targetWidth =
-      Math.round(
-        rect.width * dpr
-      );
-
-    const targetHeight =
-      Math.round(
-        rect.height * dpr
-      );
-
-    if (
-      canvas.width !==
-        targetWidth ||
-      canvas.height !==
-        targetHeight
-    ) {
-      canvas.width =
-        targetWidth;
-
-      canvas.height =
-        targetHeight;
-    }
-
-    const ctx =
-      canvas.getContext("2d");
-
-    if (!ctx) {
-      return;
-    }
-
-    ctx.setTransform(
-      dpr,
-      0,
-      0,
-      dpr,
-      0,
-      0
-    );
-
-    ctx.clearRect(
-      0,
-      0,
-      rect.width,
-      rect.height
-    );
-
-    const cellWidth =
-      rect.width / cols;
-
-    const cellHeight =
-      rect.height / rows;
-
-    const activeCells =
-      completedRef.current;
-
-    for (
-      let index = 0;
-      index < actualTotal;
-      index++
-    ) {
-      const row =
-        Math.floor(
-          index / cols
-        );
-
-      const col =
-        index % cols;
-
-      const x =
-        col * cellWidth;
-
-      const y =
-        row * cellHeight;
-
-      const isActive =
-        activeCells.has(index);
-
-      if (
-        mapType === "free"
-      ) {
-        ctx.globalAlpha = 1;
-
-        const color =
-          colors[index] ||
-          BASIC_COLORS[0];
-
-        ctx.fillStyle =
-          isActive
-            ? color
-            : "#eeeeee";
-
-        ctx.fillRect(
-          x,
-          y,
-          cellWidth,
-          cellHeight
-        );
-
-        continue;
-      }
-
-      let color = "#e5e5e5";
-      let alpha = 1;
-
-      if (
-        mapType === "image" &&
-        image &&
-        colors[index]
-      ) {
-        if (isActive) {
-          color = colors[index];
-        } else if (
-          showImage
-        ) {
-          color = colors[index];
-          alpha = 0.35;
-        }
-      }
-
-      ctx.fillStyle = color;
-      ctx.globalAlpha = alpha;
-
-      ctx.fillRect(
-        x,
-        y,
-        cellWidth,
-        cellHeight
-      );
-    }
-
-    ctx.globalAlpha = 1;
-
-    drawGridLines(
-      ctx,
-      rect,
-      cellWidth,
-      cellHeight
-    );
-
-    ctx.globalAlpha = 1;
+    setDrawColor(v);
+    setNewColor(v);
+    drawColorRef.current = v;
   }
 
-  useEffect(() => {
-    drawCanvas();
+  function addCustomColor() {
+    const c = normalizeHexColor(newColor);
 
-    const handleResize = () => {
-      drawCanvas();
-    };
+    if (!c) return;
 
-    window.addEventListener(
-      "resize",
-      handleResize
-    );
-
-    return () => {
-      window.removeEventListener(
-        "resize",
-        handleResize
-      );
-    };
-  }, [
-    rows,
-    cols,
-    actualTotal,
-    colors,
-    image,
-    showImage,
-    mapType,
-    drawColor,
-  ]);
-
-  function drawSingleCell(
-    index,
-    mode
-  ) {
-    const canvas =
-      canvasRef.current;
-
-    if (!canvas) {
+    if (BASIC_COLORS.includes(c)) {
+      selectDrawColor(c);
       return;
     }
 
-    const rect =
-      canvas.getBoundingClientRect();
-
-    if (
-      !rect.width ||
-      !rect.height
-    ) {
-      return;
-    }
-
-    const ctx =
-      canvas.getContext("2d");
-
-    if (!ctx) {
-      return;
-    }
-
-    const dpr =
-      window.devicePixelRatio ||
-      1;
-
-    const cellWidth =
-      rect.width / cols;
-
-    const cellHeight =
-      rect.height / rows;
-
-    const row =
-      Math.floor(
-        index / cols
-      );
-
-    const col =
-      index % cols;
-
-    if (
-      row < 0 ||
-      row >= rows ||
-      col < 0 ||
-      col >= cols
-    ) {
-      return;
-    }
-
-    const x =
-      col * cellWidth;
-
-    const y =
-      row * cellHeight;
-
-    ctx.setTransform(
-      dpr,
-      0,
-      0,
-      dpr,
-      0,
-      0
+    setCustomColors((p) =>
+      p.includes(c) ? p : [...p, c]
     );
 
-    if (
-      mapType === "free"
-    ) {
-      ctx.globalAlpha = 1;
-
-      if (mode === "draw") {
-        ctx.fillStyle =
-          drawColorRef.current;
-
-        ctx.fillRect(
-          x,
-          y,
-          cellWidth,
-          cellHeight
-        );
-      } else {
-        ctx.fillStyle =
-          "#eeeeee";
-
-        ctx.fillRect(
-          x,
-          y,
-          cellWidth,
-          cellHeight
-        );
-      }
-    } else {
-      let color = "#e5e5e5";
-      let alpha = 1;
-
-      if (
-        image &&
-        colors[index]
-      ) {
-        if (
-          mode === "draw"
-        ) {
-          color = colors[index];
-        } else if (
-          showImage
-        ) {
-          color = colors[index];
-          alpha = 0.35;
-        }
-      }
-
-      ctx.fillStyle = color;
-      ctx.globalAlpha = alpha;
-
-      ctx.fillRect(
-        x,
-        y,
-        cellWidth,
-        cellHeight
-      );
-    }
-
-    ctx.globalAlpha = 1;
-
-    ctx.save();
-
-    ctx.strokeStyle =
-      "rgba(0, 0, 0, 0.14)";
-
-    ctx.lineWidth = 1;
-
-    ctx.beginPath();
-
-    ctx.moveTo(x, y);
-    ctx.lineTo(
-      x + cellWidth,
-      y
-    );
-
-    ctx.moveTo(x, y);
-    ctx.lineTo(
-      x,
-      y + cellHeight
-    );
-
-    ctx.moveTo(
-      x + cellWidth,
-      y
-    );
-
-    ctx.lineTo(
-      x + cellWidth,
-      y + cellHeight
-    );
-
-    ctx.moveTo(
-      x,
-      y + cellHeight
-    );
-
-    ctx.lineTo(
-      x + cellWidth,
-      y + cellHeight
-    );
-
-    ctx.stroke();
-    ctx.restore();
+    selectDrawColor(c);
   }
 
-  function processImage(
-    img,
-    cellCount = requestedTotal,
-    ratio = imageRatio,
-    processGridMode = gridMode,
-    processRows = manualRows,
-    processCols = manualCols
-  ) {
-    const {
-      rows: imageRows,
-      cols: imageCols,
-    } =
-      getGridDimensions(
-        cellCount,
-        ratio,
-        processGridMode,
-        processRows,
-        processCols
-      );
+  function deleteCustomColor(c) {
+    if (BASIC_COLORS.includes(c)) return;
 
-    const canvas =
-      document.createElement(
-        "canvas"
-      );
-
-    canvas.width =
-      imageCols;
-
-    canvas.height =
-      imageRows;
-
-    const ctx =
-      canvas.getContext("2d");
-
-    if (!ctx) {
-      return;
-    }
-
-    ctx.drawImage(
-      img,
-      0,
-      0,
-      imageCols,
-      imageRows
+    setCustomColors((p) =>
+      p.filter((x) => x !== c)
     );
 
-    const imageData =
-      ctx.getImageData(
-        0,
-        0,
-        imageCols,
-        imageRows
+    if (drawColor === c) {
+      selectDrawColor(
+        BASIC_COLORS[0]
       );
-
-    const newColors =
-      new Array(
-        imageCols *
-          imageRows
-      );
-
-    for (
-      let i = 0;
-      i < newColors.length;
-      i++
-    ) {
-      const pixel =
-        i * 4;
-
-      newColors[i] =
-        `rgb(${imageData.data[pixel]}, ${imageData.data[pixel + 1]}, ${imageData.data[pixel + 2]})`;
-    }
-
-    setColors(newColors);
-  }
-
-  function handleMapTypeChange(
-    type
-  ) {
-    finishStroke();
-
-    setMapType(type);
-
-    setCompletedDirectly([]);
-
-    clearHistory();
-
-    if (type === "free") {
-      setShowImage(false);
-      setColors([]);
-    } else {
-      setShowImage(true);
     }
   }
 
-  function handleGridModeChange(
-    mode
-  ) {
-    finishStroke();
+  function clearHistory() {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+  }
 
-    const nextMode =
-      mode === "manual"
-        ? "manual"
-        : "auto";
+  function pushHistory(
+    before,
+    after,
+    beforeColors,
+    afterColors
+  ) {
+    const b = {
+      completed: [...before],
+      colors: [...beforeColors],
+    };
+
+    const a = {
+      completed: [...after],
+      colors: [...afterColors],
+    };
+
+    if (sameState(b, a)) return;
+
+    undoStackRef.current.push({
+      before: b,
+      after: a,
+    });
 
     if (
-      nextMode === "manual"
+      undoStackRef.current.length > 100
     ) {
-      setManualRows(
-        String(rows)
-      );
-
-      setManualCols(
-        String(cols)
-      );
+      undoStackRef.current.shift();
     }
+  }
 
-    setGridMode(nextMode);
-
-    const nextRows =
-      nextMode === "manual"
-        ? rows
-        : manualRows;
-
-    const nextCols =
-      nextMode === "manual"
-        ? cols
-        : manualCols;
-
-    const newDimensions =
-      getGridDimensions(
-        requestedTotal,
-        imageRatio,
-        nextMode,
-        nextRows,
-        nextCols
-      );
-
-    const nextCompleted =
-      [
-        ...completedRef.current,
-      ].filter(
-        (index) =>
-          index <
-          newDimensions.actualTotal
-      );
-
+  function setSnapshot(s) {
     completedRef.current =
-      new Set(nextCompleted);
+      new Set(s.completed);
 
-    setCompleted(
-      nextCompleted
-    );
+    colorsRef.current = [
+      ...s.colors,
+    ];
 
-    clearHistory();
+    setCompleted([
+      ...s.completed,
+    ]);
 
-    if (
-      mapType === "image" &&
-      image
-    ) {
-      const img =
-        new Image();
-
-      img.onload = () => {
-        processImage(
-          img,
-          requestedTotal,
-          imageRatio,
-          nextMode,
-          nextRows,
-          nextCols
-        );
-      };
-
-      img.src = image;
-    }
+    setColors([
+      ...s.colors,
+    ]);
   }
 
-  function handleManualRowsChange(
-    event
-  ) {
-    const value =
-      event.target.value;
-
-    setManualRows(value);
-
-    const newRows =
-      Math.max(
-        1,
-        Number(value) || 1
-      );
-
-    const newCols =
-      Math.max(
-        1,
-        Number(manualCols) || 1
-      );
-
-    const newActualTotal =
-      newRows * newCols;
-
-    const nextCompleted =
-      [
-        ...completedRef.current,
-      ].filter(
-        (index) =>
-          index <
-          newActualTotal
-      );
-
-    completedRef.current =
-      new Set(nextCompleted);
-
-    setCompleted(
-      nextCompleted
-    );
-
-    clearHistory();
-
+  function undo() {
     if (
-      mapType === "image" &&
-      image
+      isDrawingRef.current ||
+      mapType !== "free"
     ) {
-      const img =
-        new Image();
-
-      img.onload = () => {
-        processImage(
-          img,
-          requestedTotal,
-          imageRatio,
-          "manual",
-          newRows,
-          newCols
-        );
-      };
-
-      img.src = image;
-    }
-  }
-
-  function handleManualColsChange(
-    event
-  ) {
-    const value =
-      event.target.value;
-
-    setManualCols(value);
-
-    const newCols =
-      Math.max(
-        1,
-        Number(value) || 1
-      );
-
-    const newRows =
-      Math.max(
-        1,
-        Number(manualRows) || 1
-      );
-
-    const newActualTotal =
-      newRows * newCols;
-
-    const nextCompleted =
-      [
-        ...completedRef.current,
-      ].filter(
-        (index) =>
-          index <
-          newActualTotal
-      );
-
-    completedRef.current =
-      new Set(nextCompleted);
-
-    setCompleted(
-      nextCompleted
-    );
-
-    clearHistory();
-
-    if (
-      mapType === "image" &&
-      image
-    ) {
-      const img =
-        new Image();
-
-      img.onload = () => {
-        processImage(
-          img,
-          requestedTotal,
-          imageRatio,
-          "manual",
-          newRows,
-          newCols
-        );
-      };
-
-      img.src = image;
-    }
-  }
-
-  function handleImageChange(
-    event
-  ) {
-    const file =
-      event.target.files?.[0];
-
-    if (!file) {
       return;
     }
 
-    const reader =
-      new FileReader();
+    const a =
+      undoStackRef.current.pop();
 
-    reader.onload = (e) => {
-      const img =
-        new Image();
+    if (!a) return;
 
-      img.onload = () => {
-        const ratio =
-          img.width /
-          img.height;
-
-        finishStroke();
-
-        setMapType("image");
-
-        setImage(
-          e.target.result
-        );
-
-        setImageRatio(
-          ratio
-        );
-
-        setCompletedDirectly([]);
-
-        clearHistory();
-
-        setShowImage(true);
-
-        processImage(
-          img,
-          requestedTotal,
-          ratio,
-          gridMode,
-          manualRows,
-          manualCols
-        );
-      };
-
-      img.src =
-        e.target.result;
-    };
-
-    reader.readAsDataURL(file);
+    redoStackRef.current.push(a);
+    setSnapshot(a.before);
   }
 
-  function clearImage() {
-    finishStroke();
-
-    setImage(null);
-    setColors([]);
-    setImageRatio(1);
-    setCompletedDirectly([]);
-    setShowImage(true);
-
-    clearHistory();
-  }
-
-  function handleTotalCellsChange(
-    event
-  ) {
-    const value =
-      event.target.value;
-
-    setTotalCells(value);
-
-    const newTotal =
-      Math.max(
-        1,
-        Number(value) || 1
-      );
-
+  function redo() {
     if (
-      gridMode === "manual"
+      isDrawingRef.current ||
+      mapType !== "free"
     ) {
-      clearHistory();
       return;
     }
 
-    const {
-      actualTotal:
-        newActualTotal,
-    } =
-      getGridDimensions(
-        newTotal,
-        imageRatio,
-        "auto",
-        manualRows,
-        manualCols
-      );
+    const a =
+      redoStackRef.current.pop();
 
-    const next =
-      [
-        ...completedRef.current,
-      ].filter(
-        (index) =>
-          index <
-          newActualTotal
-      );
+    if (!a) return;
 
-    completedRef.current =
-      new Set(next);
-
-    setCompleted(next);
-
-    clearHistory();
-
-    if (
-      mapType === "image" &&
-      image
-    ) {
-      const img =
-        new Image();
-
-      img.onload = () => {
-        processImage(
-          img,
-          newTotal,
-          imageRatio,
-          "auto",
-          manualRows,
-          manualCols
-        );
-      };
-
-      img.src = image;
-    }
+    undoStackRef.current.push(a);
+    setSnapshot(a.after);
   }
 
-  function getCellFromPointerEvent(
-    event
-  ) {
-    const canvas =
-      canvasRef.current;
+  function getCellFromPointerEvent(e) {
+    const c = canvasRef.current;
 
-    if (!canvas) {
-      return null;
-    }
+    if (!c) return null;
 
-    const rect =
-      canvas.getBoundingClientRect();
+    const r =
+      c.getBoundingClientRect();
 
-    const x =
-      event.clientX -
-      rect.left;
-
-    const y =
-      event.clientY -
-      rect.top;
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
 
     if (
       x < 0 ||
       y < 0 ||
-      x >= rect.width ||
-      y >= rect.height
+      x >= r.width ||
+      y >= r.height
     ) {
       return null;
     }
 
-    const cellWidth =
-      rect.width / cols;
-
-    const cellHeight =
-      rect.height / rows;
-
-    const col =
+    const col = Math.min(
+      cols - 1,
       Math.floor(
-        x / cellWidth
-      );
+        (x / r.width) * cols
+      )
+    );
 
-    const row =
+    const row = Math.min(
+      rows - 1,
       Math.floor(
-        y / cellHeight
-      );
+        (y / r.height) * rows
+      )
+    );
 
-    if (
-      col < 0 ||
-      col >= cols ||
-      row < 0 ||
-      row >= rows
-    ) {
-      return null;
-    }
-
-    const index =
-      row * cols + col;
-
-    if (
-      index < 0 ||
-      index >= actualTotal
-    ) {
-      return null;
-    }
-
-    return index;
+    return row * cols + col;
   }
 
-  function applyCells(
-    indices,
-    mode
-  ) {
-    if (
-      !indices ||
-      indices.length === 0
-    ) {
-      return;
-    }
+  function applyCells(indices, mode) {
+    if (!indices?.length) return;
 
     const nextSet =
-      new Set(
-        completedRef.current
-      );
+      new Set(completedRef.current);
 
-    for (
-      const index of indices
-    ) {
+    const nextColors =
+      mapType === "free"
+        ? [...colorsRef.current]
+        : null;
+
+    for (const i of indices) {
       if (mode === "draw") {
-        nextSet.add(index);
+        nextSet.add(i);
+
+        if (nextColors) {
+          nextColors[i] =
+            drawColorRef.current;
+        }
       } else {
-        nextSet.delete(index);
+        nextSet.delete(i);
+
+        if (nextColors) {
+          delete nextColors[i];
+        }
       }
     }
 
-    if (
-      mapType === "free"
-    ) {
-      setColors(
-        (previousColors) => {
-          const nextColors = [
-            ...previousColors,
-          ];
+    completedRef.current = nextSet;
+    setCompleted([...nextSet]);
 
-          for (
-            const index of indices
-          ) {
-            if (
-              mode === "draw"
-            ) {
-              nextColors[index] =
-                drawColorRef.current;
-            } else {
-              delete nextColors[index];
-            }
-          }
-
-          return nextColors;
-        }
-      );
+    if (nextColors) {
+      colorsRef.current = nextColors;
+      setColors(nextColors);
     }
-
-    completedRef.current =
-      nextSet;
-
-    setCompleted([
-      ...nextSet,
-    ]);
   }
 
   function startStroke(
@@ -2980,21 +1826,13 @@ function App() {
     mode,
     pointerId
   ) {
-    if (
-      isDrawingRef.current
-    ) {
+    if (isDrawingRef.current) {
       finishStroke();
     }
 
-    isDrawingRef.current =
-      true;
-
-    drawModeRef.current =
-      mode;
-
-    previousCellRef.current =
-      index;
-
+    isDrawingRef.current = true;
+    drawModeRef.current = mode;
+    previousCellRef.current = index;
     activePointerIdRef.current =
       pointerId;
 
@@ -3003,22 +1841,16 @@ function App() {
         completedRef.current
       );
 
+    strokeColorsBeforeRef.current =
+      [...colorsRef.current];
+
     strokeVisitedRef.current =
-      new Set();
+      new Set([index]);
 
     redoStackRef.current = [];
 
-    strokeVisitedRef.current.add(
-      index
-    );
-
     applyCells(
       [index],
-      mode
-    );
-
-    drawSingleCell(
-      index,
       mode
     );
 
@@ -3026,76 +1858,44 @@ function App() {
     setDrawMode(mode);
   }
 
-  function continueStroke(
-    index
-  ) {
-    if (
-      !isDrawingRef.current
-    ) {
+  function continueStroke(index) {
+    if (!isDrawingRef.current)
       return;
-    }
 
-    const previousIndex =
+    const p =
       previousCellRef.current;
 
-    if (
-      previousIndex === null
-    ) {
+    if (p === null) {
       previousCellRef.current =
         index;
-
       return;
     }
 
-    if (
-      index === previousIndex
-    ) {
-      return;
-    }
+    if (index === p) return;
 
-    const lineCells =
-      getLineCells(
-        previousIndex,
-        index,
-        cols,
-        rows
-      );
+    const line = getLineCells(
+      p,
+      index,
+      cols,
+      rows
+    );
 
-    const newCells =
-      lineCells.filter(
-        (cell) =>
-          !strokeVisitedRef.current.has(
-            cell
-          )
-      );
+    const fresh = line.filter(
+      (i) =>
+        !strokeVisitedRef.current.has(
+          i
+        )
+    );
 
-    for (
-      const cell of lineCells
-    ) {
-      strokeVisitedRef.current.add(
-        cell
-      );
-    }
+    line.forEach((i) =>
+      strokeVisitedRef.current.add(i)
+    );
 
-    if (
-      newCells.length > 0
-    ) {
-      const mode =
-        drawModeRef.current;
-
+    if (fresh.length) {
       applyCells(
-        newCells,
-        mode
+        fresh,
+        drawModeRef.current
       );
-
-      for (
-        const cell of newCells
-      ) {
-        drawSingleCell(
-          cell,
-          mode
-        );
-      }
     }
 
     previousCellRef.current =
@@ -3103,19 +1903,11 @@ function App() {
   }
 
   function finishStroke() {
-    if (
-      !isDrawingRef.current
-    ) {
+    if (!isDrawingRef.current)
       return;
-    }
 
-    isDrawingRef.current =
-      false;
-
+    isDrawingRef.current = false;
     setIsDrawing(false);
-
-    previousCellRef.current =
-      null;
 
     const before =
       strokeBeforeRef.current;
@@ -3128,209 +1920,129 @@ function App() {
 
       pushHistory(
         before,
-        after
+        after,
+        strokeColorsBeforeRef.current,
+        colorsRef.current
       );
     }
 
     strokeBeforeRef.current =
       null;
 
+    strokeColorsBeforeRef.current =
+      [];
+
     strokeVisitedRef.current =
       new Set();
+
+    previousCellRef.current =
+      null;
 
     activePointerIdRef.current =
       null;
   }
 
-  function handlePointerDown(
-    event
-  ) {
-    event.preventDefault();
+  function handlePointerDown(e) {
+    e.preventDefault();
 
-    const canvas =
-      canvasRef.current;
+    const i =
+      getCellFromPointerEvent(e);
 
-    if (!canvas) {
-      return;
-    }
-
-    const index =
-      getCellFromPointerEvent(
-        event
-      );
-
-    if (index === null) {
-      return;
-    }
+    if (i === null) return;
 
     const mode =
-      event.button === 2
+      e.button === 2
         ? "erase"
         : "draw";
 
-    if (
-      canvas.setPointerCapture
-    ) {
-      try {
-        canvas.setPointerCapture(
-          event.pointerId
-        );
-      } catch {
-        // Ничего не делаем.
-      }
-    }
+    try {
+      canvasRef.current?.setPointerCapture(
+        e.pointerId
+      );
+    } catch {}
 
     startStroke(
-      index,
+      i,
       mode,
-      event.pointerId
+      e.pointerId
     );
   }
 
-  function handlePointerMove(
-    event
-  ) {
+  function handlePointerMove(e) {
+    if (!isDrawingRef.current)
+      return;
+
     if (
-      !isDrawingRef.current
+      activePointerIdRef.current !==
+        null &&
+      e.pointerId !==
+        activePointerIdRef.current
     ) {
       return;
     }
 
-    const activePointerId =
-      activePointerIdRef.current;
-
-    if (
-      activePointerId !== null &&
-      event.pointerId !==
-        activePointerId
-    ) {
-      return;
-    }
-
-    let events = [];
-
-    if (
-      typeof event.getCoalescedEvents ===
+    const events =
+      typeof e.getCoalescedEvents ===
       "function"
-    ) {
-      const coalesced =
-        event.getCoalescedEvents();
+        ? e.getCoalescedEvents()
+        : [];
 
-      if (
-        coalesced &&
-        coalesced.length > 0
-      ) {
-        events = coalesced;
+    let last = null;
+
+    for (const x of events) {
+      const i =
+        getCellFromPointerEvent(x);
+
+      if (i !== null) {
+        continueStroke(i);
+        last = i;
       }
     }
 
-    let lastProcessedIndex =
-      null;
-
-    for (
-      const moveEvent of events
-    ) {
-      const index =
-        getCellFromPointerEvent(
-          moveEvent
-        );
-
-      if (index !== null) {
-        continueStroke(index);
-        lastProcessedIndex =
-          index;
-      }
-    }
-
-    const currentIndex =
-      getCellFromPointerEvent(
-        event
-      );
+    const i =
+      getCellFromPointerEvent(e);
 
     if (
-      currentIndex !== null &&
-      currentIndex !==
-        lastProcessedIndex
+      i !== null &&
+      i !== last
     ) {
-      continueStroke(
-        currentIndex
-      );
+      continueStroke(i);
     }
   }
 
-  function handlePointerUp(
-    event
-  ) {
-    const activePointerId =
-      activePointerIdRef.current;
-
+  function handlePointerUp(e) {
     if (
-      activePointerId !== null &&
-      event.pointerId !==
-        activePointerId
+      activePointerIdRef.current !==
+        null &&
+      e.pointerId !==
+        activePointerIdRef.current
     ) {
       return;
     }
 
-    const index =
-      getCellFromPointerEvent(
-        event
-      );
+    const i =
+      getCellFromPointerEvent(e);
 
-    if (index !== null) {
-      continueStroke(index);
+    if (i !== null) {
+      continueStroke(i);
     }
 
-    const canvas =
-      canvasRef.current;
-
-    if (
-      canvas &&
-      canvas.releasePointerCapture
-    ) {
-      try {
-        if (
-          canvas.hasPointerCapture?.(
-            event.pointerId
-          )
-        ) {
-          canvas.releasePointerCapture(
-            event.pointerId
-          );
-        }
-      } catch {
-        // Ничего не делаем.
+    try {
+      if (
+        canvasRef.current?.hasPointerCapture?.(
+          e.pointerId
+        )
+      ) {
+        canvasRef.current.releasePointerCapture(
+          e.pointerId
+        );
       }
-    }
+    } catch {}
 
     finishStroke();
   }
 
-  function handlePointerCancel(
-    event
-  ) {
-    const canvas =
-      canvasRef.current;
-
-    if (
-      canvas &&
-      canvas.releasePointerCapture
-    ) {
-      try {
-        if (
-          canvas.hasPointerCapture?.(
-            event.pointerId
-          )
-        ) {
-          canvas.releasePointerCapture(
-            event.pointerId
-          );
-        }
-      } catch {
-        // Ничего не делаем.
-      }
-    }
-
+  function handlePointerCancel() {
     finishStroke();
   }
 
@@ -3342,207 +2054,790 @@ function App() {
         completedRef.current
       );
 
-    if (
-      before.size === 0
-    ) {
-      return;
-    }
+    if (!before.size) return;
 
-    setCompletedDirectly([]);
+    const beforeColors = [
+      ...colorsRef.current,
+    ];
 
-    if (
-      mapType === "free"
-    ) {
-      setColors(
-        (previousColors) => {
-          const nextColors = [
-            ...previousColors,
-          ];
+    const after = new Set();
 
-          for (
-            const index of before
-          ) {
-            delete nextColors[index];
-          }
-
-          return nextColors;
-        }
-      );
-    }
+    setSnapshot({
+      completed: [],
+      colors:
+        mapType === "free"
+          ? []
+          : colors,
+    });
 
     pushHistory(
       before,
-      new Set()
+      after,
+      beforeColors,
+      mapType === "free"
+        ? []
+        : colors
     );
   }
 
-  function downloadMap() {
-    if (!activeMap) {
-      return;
-    }
+  function drawCanvas() {
+    const c = canvasRef.current;
 
-    const canvas =
-      canvasRef.current;
+    if (!c) return;
 
-    if (!canvas) {
-      return;
-    }
+    const rect =
+      c.getBoundingClientRect();
 
-    const safeName =
-      (activeMap.name ||
-        "MM-map")
-        .replace(
-          /[\\/:*?"<>|]/g,
-          ""
-        )
-        .trim();
+    const dpr =
+      window.devicePixelRatio || 1;
 
-    const link =
-      document.createElement("a");
+    c.width = Math.max(
+      1,
+      Math.round(rect.width * dpr)
+    );
 
-    link.download =
-      `${safeName || "MM-map"}.png`;
+    c.height = Math.max(
+      1,
+      Math.round(rect.height * dpr)
+    );
 
-    link.href =
-      canvas.toDataURL(
-        "image/png"
+    const ctx =
+      c.getContext("2d");
+
+    ctx.setTransform(
+      dpr,
+      0,
+      0,
+      dpr,
+      0,
+      0
+    );
+
+    const cw =
+      rect.width / cols;
+
+    const ch =
+      rect.height / rows;
+
+    for (
+      let i = 0;
+      i < actualTotal;
+      i++
+    ) {
+      const r =
+        Math.floor(i / cols);
+
+      const col =
+        i % cols;
+
+      const x =
+        col * cw;
+
+      const y =
+        r * ch;
+
+      const active =
+        completedRef.current.has(
+          i
+        );
+
+      let fill;
+
+      if (mapType === "free") {
+        fill = active
+          ? colors[i] ||
+            drawColorRef.current
+          : "#eeeeee";
+      } else {
+        fill =
+          colors[i] ||
+          "#e5e5e5";
+      }
+
+      ctx.fillStyle = fill;
+
+      ctx.fillRect(
+        x,
+        y,
+        cw + 0.5,
+        ch + 0.5
       );
 
-    link.click();
+      if (
+        mapType === "image" &&
+        !active &&
+        showImage &&
+        image
+      ) {
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle =
+          colors[i] ||
+          "#dcdcdc";
+
+        ctx.fillRect(
+          x,
+          y,
+          cw + 0.5,
+          ch + 0.5
+        );
+
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    ctx.strokeStyle =
+      "#d8d4cc";
+
+    ctx.lineWidth = 1;
+
+    for (
+      let r = 0;
+      r <= rows;
+      r++
+    ) {
+      const y =
+        Math.round(r * ch) +
+        0.5;
+
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(
+        rect.width,
+        y
+      );
+      ctx.stroke();
+    }
+
+    for (
+      let col = 0;
+      col <= cols;
+      col++
+    ) {
+      const x =
+        Math.round(col * cw) +
+        0.5;
+
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(
+        x,
+        rect.height
+      );
+      ctx.stroke();
+    }
   }
 
-  async function saveMapToSupabase(
-    map
-  ) {
-    if (!user || !map) {
-      return {
-        error: new Error(
-          "Пользователь не авторизован."
-        ),
-      };
-    }
+  useEffect(() => {
+    if (screen !== "editor")
+      return;
 
-    const row =
-      mapToSupabaseRow(
-        map,
-        user.id
+    const id =
+      requestAnimationFrame(
+        drawCanvas
       );
 
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .from("maps")
-        .upsert(
-          row,
-          {
-            onConflict: "id",
-          }
-        )
-        .select(
-          "id, user_id, name, data, created_at, updated_at"
-        )
-        .single();
+    return () =>
+      cancelAnimationFrame(id);
+  }, [
+    screen,
+    rows,
+    cols,
+    actualTotal,
+    completed,
+    colors,
+    mapType,
+    image,
+    showImage,
+    drawColor,
+    mapZoom,
+  ]);
 
-    if (error) {
-      console.error(
-        "Ошибка сохранения карты:",
-        error
+  useEffect(() => {
+    const f = () =>
+      drawCanvas();
+
+    window.addEventListener(
+      "resize",
+      f
+    );
+
+    return () =>
+      window.removeEventListener(
+        "resize",
+        f
       );
+  }, [
+    rows,
+    cols,
+    actualTotal,
+    completed,
+    colors,
+    mapType,
+    image,
+    showImage,
+    drawColor,
+  ]);
 
-      return {
-        error,
-      };
-    }
+  useEffect(() => {
+    if (screen !== "editor")
+      return;
 
-    return {
-      map: mapFromSupabaseRow(
-        data
-      ),
-      error: null,
+    const handleWheel = (e) => {
+      if (!e.ctrlKey) return;
+
+      const viewport =
+        viewportRef.current;
+
+      if (
+        !viewport ||
+        !viewport.contains(e.target)
+      ) {
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      setMapZoom((z) => {
+        const next =
+          z +
+          (e.deltaY < 0
+            ? 0.1
+            : -0.1);
+
+        return Math.min(
+          4,
+          Math.max(
+            0.5,
+            Number(
+              next.toFixed(1)
+            )
+          )
+        );
+      });
     };
+
+    window.addEventListener(
+      "wheel",
+      handleWheel,
+      {
+        passive: false,
+        capture: true,
+      }
+    );
+
+    return () => {
+      window.removeEventListener(
+        "wheel",
+        handleWheel,
+        {
+          capture: true,
+        }
+      );
+    };
+  }, [screen]);
+
+  useEffect(() => {
+    const f = (e) => {
+      if (
+        e.target instanceof
+          HTMLInputElement ||
+        e.target instanceof
+          HTMLTextAreaElement ||
+        e.target instanceof
+          HTMLSelectElement
+      ) {
+        return;
+      }
+
+      if (
+        (e.ctrlKey ||
+          e.metaKey) &&
+        e.key.toLowerCase() ===
+          "z"
+      ) {
+        e.preventDefault();
+
+        e.shiftKey
+          ? redo()
+          : undo();
+      } else if (
+        (e.ctrlKey ||
+          e.metaKey) &&
+        e.key.toLowerCase() ===
+          "y"
+      ) {
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener(
+      "keydown",
+      f
+    );
+
+    return () =>
+      window.removeEventListener(
+        "keydown",
+        f
+      );
+  });
+
+  function processImage(
+    dataUrl,
+    ratio,
+    targetCols = cols,
+    targetRows = rows
+  ) {
+    const img =
+      new Image();
+
+    img.onload = () => {
+      const off =
+        document.createElement(
+          "canvas"
+        );
+
+      const w =
+        Math.max(
+          1,
+          Number(targetCols) || 1
+        );
+
+      const h =
+        Math.max(
+          1,
+          Number(targetRows) || 1
+        );
+
+      off.width = w;
+      off.height = h;
+
+      const ctx =
+        off.getContext("2d");
+
+      ctx.drawImage(
+        img,
+        0,
+        0,
+        w,
+        h
+      );
+
+      const data =
+        ctx.getImageData(
+          0,
+          0,
+          w,
+          h
+        ).data;
+
+      const next = [];
+
+      for (
+        let i = 0;
+        i < w * h;
+        i++
+      ) {
+        const p = i * 4;
+
+        next[i] =
+          `rgb(${data[p]}, ${data[p + 1]}, ${data[p + 2]})`;
+      }
+
+      setColors(next);
+    };
+
+    img.src = dataUrl;
+  }
+
+  function handleImageChange(e) {
+    const file =
+      e.target.files?.[0];
+
+    if (!file) return;
+
+    const reader =
+      new FileReader();
+
+    reader.onload = () => {
+      const src =
+        String(reader.result);
+
+      const img =
+        new Image();
+
+      img.onload = () => {
+        setImage(src);
+
+        setImageRatio(
+          img.width /
+            img.height ||
+            1
+        );
+
+        setMapType("image");
+        setShowImage(true);
+        setCompletedDirectly([]);
+        clearHistory();
+
+        processImage(
+          src,
+          img.width /
+            img.height ||
+            1
+        );
+      };
+
+      img.src = src;
+    };
+
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+
+  function setCompletedDirectly(
+    list
+  ) {
+    const safe = [
+      ...new Set(list),
+    ];
+
+    completedRef.current =
+      new Set(safe);
+
+    setCompleted(safe);
+  }
+
+  function handleMapTypeChange(
+    type
+  ) {
+    finishStroke();
+
+    setMapType(type);
+
+    setCompletedDirectly([]);
+
+    colorsRef.current = [];
+    setColors([]);
+
+    clearHistory();
+
+    if (type === "free") {
+      setImage(null);
+      setShowImage(false);
+    } else {
+      setShowImage(true);
+    }
+  }
+
+  function handleGridModeChange(
+    mode
+  ) {
+    finishStroke();
+
+    setGridMode(mode);
+
+    const d =
+      getGridDimensions(
+        requestedTotal,
+        imageRatio,
+        mode,
+        manualRows,
+        manualCols
+      );
+
+    setCompletedDirectly(
+      completedRef.current.size
+        ? [
+            ...completedRef.current,
+          ].filter(
+            (i) =>
+              i < d.actualTotal
+          )
+        : []
+    );
+
+    clearHistory();
+
+    if (image) {
+      processImage(
+        image,
+        imageRatio
+      );
+    }
+  }
+
+  function handleManualRowsChange(
+    e
+  ) {
+    const v =
+      e.target.value;
+
+    setManualRows(v);
+
+    const d =
+      getGridDimensions(
+        requestedTotal,
+        imageRatio,
+        "manual",
+        v,
+        manualCols
+      );
+
+    setCompletedDirectly(
+      [
+        ...completedRef.current,
+      ].filter(
+        (i) =>
+          i < d.actualTotal
+      )
+    );
+
+    clearHistory();
+
+    if (image) {
+      processImage(
+        image,
+        imageRatio
+      );
+    }
+  }
+
+  function handleManualColsChange(
+    e
+  ) {
+    const v =
+      e.target.value;
+
+    setManualCols(v);
+
+    const d =
+      getGridDimensions(
+        requestedTotal,
+        imageRatio,
+        "manual",
+        manualRows,
+        v
+      );
+
+    setCompletedDirectly(
+      [
+        ...completedRef.current,
+      ].filter(
+        (i) =>
+          i < d.actualTotal
+      )
+    );
+
+    clearHistory();
+
+    if (image) {
+      processImage(
+        image,
+        imageRatio
+      );
+    }
+  }
+
+  function handleTotalCellsChange(
+    e
+  ) {
+    const v =
+      e.target.value;
+
+    setTotalCells(v);
+
+    if (gridMode === "auto") {
+      const d =
+        getGridDimensions(
+          Math.max(
+            1,
+            Number(v) || 1
+          ),
+          imageRatio,
+          "auto",
+          manualRows,
+          manualCols
+        );
+
+      setCompletedDirectly(
+        [
+          ...completedRef.current,
+        ].filter(
+          (i) =>
+            i < d.actualTotal
+        )
+      );
+
+      if (image) {
+        processImage(
+          image,
+          imageRatio,
+          d.cols,
+          d.rows
+        );
+      }
+    }
+
+    clearHistory();
+  }
+
+  function changeTotalCells(
+    delta
+  ) {
+    const current =
+      Math.max(
+        1,
+        Number(
+          gridMode === "manual"
+            ? actualTotal
+            : totalCells
+        ) || 1
+      );
+
+    const next =
+      Math.max(
+        1,
+        current + delta
+      );
+
+    if (gridMode === "auto") {
+      handleTotalCellsChange({
+        target: {
+          value: String(next),
+        },
+      });
+      return;
+    }
+
+    const ratio =
+      Math.max(
+        0.01,
+        Number(manualCols) /
+          Math.max(
+            1,
+            Number(manualRows)
+          ) || 1
+      );
+
+    let nextRows =
+      Math.max(
+        1,
+        Math.round(
+          Math.sqrt(
+            next / ratio
+          )
+        )
+      );
+
+    let nextCols =
+      Math.max(
+        1,
+        Math.ceil(
+          next / nextRows
+        )
+      );
+
+    if (
+      nextRows * nextCols <
+      next
+    ) {
+      nextCols += 1;
+    }
+
+    setManualRows(
+      String(nextRows)
+    );
+    setManualCols(
+      String(nextCols)
+    );
+    setTotalCells(
+      String(
+        nextRows * nextCols
+      )
+    );
+
+    setCompletedDirectly(
+      [
+        ...completedRef.current,
+      ].filter(
+        (i) =>
+          i <
+          nextRows * nextCols
+      )
+    );
+
+    clearHistory();
+
+    if (image) {
+      processImage(
+        image,
+        imageRatio,
+        nextCols,
+        nextRows
+      );
+    }
+  }
+
+  function clearImage() {
+    setImage(null);
+    colorsRef.current = [];
+    setColors([]);
+    setImageRatio(1);
+    setCompletedDirectly([]);
+    setShowImage(false);
+    clearHistory();
   }
 
   async function saveActiveMap() {
-    if (!activeMapId || !user) {
-      return;
-    }
-
     finishStroke();
 
-    const savedMap =
-      normalizeMap({
-        ...activeMap,
-        mapType,
-        gridMode,
-        completed: [
-          ...completedRef.current,
-        ],
-        image,
-        colors,
-        imageRatio,
-        totalCells,
-        manualRows,
-        manualCols,
-        showImage,
-        description,
-        drawColor,
-        customColors,
-      });
-
-    setMaps(
-      (previousMaps) =>
-        previousMaps.map(
-          (map) =>
-            map.id === activeMapId
-              ? savedMap
-              : map
-        )
+    clearTimeout(
+      saveTimerRef.current
     );
 
-    const {
-      map: remoteMap,
-      error,
-    } =
-      await saveMapToSupabase(
-        savedMap
-      );
+    const map =
+      buildCurrentMap();
 
-    if (error) {
-      setSaveStatus("error");
+    if (!map) return;
 
-      window.setTimeout(
-        () =>
-          setSaveStatus(""),
-        1800
-      );
-
-      return;
-    }
-
-    if (remoteMap) {
-      setMaps(
-        (previousMaps) =>
-          previousMaps.map(
-            (map) =>
-              map.id ===
-              activeMapId
-                ? remoteMap
-                : map
-          )
-      );
-    }
+    setMaps((p) =>
+      p.map((m) =>
+        m.id === map.id
+          ? map
+          : m
+      )
+    );
 
     localStorage.setItem(
       ACTIVE_MAP_KEY,
-      activeMapId
+      map.id
     );
+
+    if (user) {
+      const err =
+        await remoteSave(map);
+
+      if (err) {
+        setSaveStatus("error");
+
+        setTimeout(
+          () =>
+            setSaveStatus(""),
+          1800
+        );
+
+        return;
+      }
+    }
 
     setSaveStatus("saved");
 
-    window.setTimeout(
-      () => setSaveStatus(""),
+    setTimeout(
+      () =>
+        setSaveStatus(""),
       1800
     );
   }
@@ -3557,300 +2852,164 @@ function App() {
     setIsCreateOpen(true);
   }
 
-  function closeCreateModal() {
-    setIsCreateOpen(false);
-  }
-
   async function createMap() {
-    if (!user) {
-      return;
+    const map = normalizeMap({
+      id: createMapId(),
+      name:
+        newMapName.trim() ||
+        "Новая карта",
+      mapType: newMapType,
+      gridMode:
+        newMapGridMode,
+      totalCells: String(
+        Math.max(
+          1,
+          Number(newMapCells) ||
+            500
+        )
+      ),
+      manualRows: String(
+        Math.max(
+          1,
+          Number(newMapRows) ||
+            1
+        )
+      ),
+      manualCols: String(
+        Math.max(
+          1,
+          Number(newMapCols) ||
+            1
+        )
+      ),
+      showImage:
+        newMapType === "image",
+    });
+
+    let use = map;
+
+    if (user) {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("maps")
+        .upsert(
+          mapToSupabaseRow(
+            map,
+            user.id
+          ),
+          {
+            onConflict: "id",
+          }
+        )
+        .select(
+          "id,user_id,name,data,created_at,updated_at"
+        )
+        .single();
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      if (data) {
+        use =
+          mapFromSupabaseRow(
+            data
+          );
+      }
     }
 
-    const name =
-      newMapName.trim() ||
-      "Новая карта";
+    setMaps((p) => [
+      ...p,
+      use,
+    ]);
 
-    const cells =
-      Math.max(
-        1,
-        Number(newMapCells) || 500
-      );
+    setActiveMapId(use.id);
 
-    const rows =
-      Math.max(
-        1,
-        Number(newMapRows) || 1
-      );
-
-    const cols =
-      Math.max(
-        1,
-        Number(newMapCols) || 1
-      );
-
-    const newMap =
-      normalizeMap({
-        id: createMapId(),
-        name,
-        mapType: newMapType,
-        gridMode: newMapGridMode,
-        completed: [],
-        image: null,
-        colors: [],
-        customColors: [],
-        drawColor:
-          BASIC_COLORS[0],
-        imageRatio: 1,
-        totalCells: String(cells),
-        manualRows: String(rows),
-        manualCols: String(cols),
-        showImage:
-          newMapType === "image",
-        description: "",
-      });
-
-    finishStroke();
-
-    const {
-      map: savedMap,
-      error,
-    } =
-      await saveMapToSupabase(
-        newMap
-      );
-
-    if (error) {
-      console.error(
-        "Не удалось создать карту:",
-        error
-      );
-
-      return;
-    }
-
-    const mapToUse =
-      savedMap || newMap;
-
-    setMaps(
-      (prevMaps) => [
-        ...prevMaps,
-        mapToUse,
-      ]
-    );
-
-    setActiveMapId(
-      mapToUse.id
-    );
-
-    setMapType(
-      mapToUse.mapType
-    );
-
-    setGridMode(
-      mapToUse.gridMode
-    );
-
-    setCompletedDirectly([]);
-
-    setImage(null);
-    setColors([]);
-    setImageRatio(1);
-
-    setDrawColor(
-      BASIC_COLORS[0]
-    );
-
-    drawColorRef.current =
-      BASIC_COLORS[0];
-
-    setCustomColors([]);
-
-    setNewColor(
-      BASIC_COLORS[0]
-    );
-
-    setTotalCells(
-      mapToUse.totalCells
-    );
-
-    setManualRows(
-      mapToUse.manualRows
-    );
-
-    setManualCols(
-      mapToUse.manualCols
-    );
-
-    setShowImage(
-      mapToUse.showImage
-    );
-
-    setDescription("");
-
-    clearHistory();
+    openMap(use);
 
     setIsCreateOpen(false);
+    setScreen("editor");
 
     localStorage.setItem(
       ACTIVE_MAP_KEY,
-      mapToUse.id
+      use.id
     );
-
-    setScreen("editor");
   }
 
   function openMap(map) {
     finishStroke();
 
-    setActiveMapId(
-      map.id
+    const m =
+      normalizeMap(map);
+
+    setActiveMapId(m.id);
+    setMapType(m.mapType);
+    setGridMode(m.gridMode);
+    setCompletedDirectly(
+      m.completed
     );
 
-    setMapType(
-      map.mapType
-    );
+    setImage(m.image);
 
-    setGridMode(
-      map.gridMode === "manual"
-        ? "manual"
-        : "auto"
-    );
+    colorsRef.current =
+      m.colors;
 
-    const nextCompleted =
-      Array.isArray(
-        map.completed
-      )
-        ? map.completed
-        : [];
-
-    completedRef.current =
-      new Set(nextCompleted);
-
-    setCompleted(
-      nextCompleted
-    );
-
-    setImage(
-      typeof map.image ===
-        "string"
-        ? map.image
-        : null
-    );
-
-    setColors(
-      Array.isArray(
-        map.colors
-      )
-        ? map.colors
-        : []
-    );
+    setColors(m.colors);
 
     setImageRatio(
-      typeof map.imageRatio ===
-        "number"
-        ? map.imageRatio
-        : 1
+      m.imageRatio
     );
 
-    const nextDrawColor =
-      normalizeHexColor(
-        map.drawColor
-      ) ||
-      BASIC_COLORS[0];
-
-    setDrawColor(
-      nextDrawColor
-    );
-
-    drawColorRef.current =
-      nextDrawColor;
-
-    setNewColor(
-      nextDrawColor
+    selectDrawColor(
+      m.drawColor
     );
 
     setCustomColors(
-      Array.isArray(
-        map.customColors
-      )
-        ? map.customColors
-        : []
+      m.customColors
     );
 
     setTotalCells(
-      typeof map.totalCells ===
-        "string"
-        ? map.totalCells
-        : "500"
+      m.totalCells
     );
 
     setManualRows(
-      typeof map.manualRows ===
-        "string"
-        ? map.manualRows
-        : "20"
+      m.manualRows
     );
 
     setManualCols(
-      typeof map.manualCols ===
-        "string"
-        ? map.manualCols
-        : "25"
+      m.manualCols
     );
 
     setShowImage(
-      typeof map.showImage ===
-        "boolean"
-        ? map.showImage
-        : true
+      m.showImage
     );
 
     setDescription(
-      typeof map.description ===
-        "string"
-        ? map.description
-        : ""
+      m.description
     );
 
     clearHistory();
 
-    isDrawingRef.current =
-      false;
-
-    previousCellRef.current =
-      null;
-
-    strokeBeforeRef.current =
-      null;
-
-    strokeVisitedRef.current =
-      new Set();
-
-    activePointerIdRef.current =
-      null;
+    setMapZoom(1);
 
     localStorage.setItem(
       ACTIVE_MAP_KEY,
-      map.id
+      m.id
     );
   }
 
-  function openRenameModal(map) {
+  function openRenameModal(
+    map
+  ) {
     setRenameValue(
       map.name || ""
     );
 
-    setRenameMapId(
-      map.id
-    );
-
+    setRenameMapId(map.id);
     setIsRenameOpen(true);
-  }
-
-  function closeRenameModal() {
-    setIsRenameOpen(false);
-    setRenameValue("");
-    setRenameMapId(null);
   }
 
   async function saveRename() {
@@ -3859,214 +3018,149 @@ function App() {
 
     if (
       !name ||
-      !renameMapId ||
-      !user
+      !renameMapId
     ) {
       return;
     }
 
-    const targetMap =
+    const old =
       maps.find(
-        (map) =>
-          map.id ===
-          renameMapId
+        (m) =>
+          m.id === renameMapId
       );
 
-    if (!targetMap) {
-      return;
-    }
+    if (!old) return;
 
-    const renamedMap =
+    const renamed =
       normalizeMap({
-        ...targetMap,
+        ...old,
         name,
       });
 
-    setMaps(
-      (prevMaps) =>
-        prevMaps.map(
-          (map) =>
-            map.id ===
-            renameMapId
-              ? renamedMap
-              : map
-        )
+    setMaps((p) =>
+      p.map((m) =>
+        m.id === renameMapId
+          ? renamed
+          : m
+      )
     );
 
-    const {
-      map: remoteMap,
-      error,
-    } =
-      await saveMapToSupabase(
-        renamedMap
-      );
+    if (user) {
+      const err =
+        await remoteSave(
+          renamed
+        );
 
-    if (error) {
-      console.error(
-        "Не удалось переименовать карту:",
-        error
-      );
-
-      setMaps(
-        (prevMaps) =>
-          prevMaps.map(
-            (map) =>
-              map.id ===
-              renameMapId
-                ? targetMap
-                : map
+      if (err) {
+        setMaps((p) =>
+          p.map((m) =>
+            m.id === renameMapId
+              ? old
+              : m
           )
-      );
+        );
 
-      return;
+        return;
+      }
     }
 
-    if (remoteMap) {
-      setMaps(
-        (prevMaps) =>
-          prevMaps.map(
-            (map) =>
-              map.id ===
-              renameMapId
-                ? remoteMap
-                : map
-          )
-      );
-    }
-
-    closeRenameModal();
+    setIsRenameOpen(false);
+    setRenameValue("");
+    setRenameMapId(null);
   }
 
-  function openDeleteModal(map) {
+  function openDeleteModal(
+    map
+  ) {
     setMapToDelete(map);
     setIsDeleteOpen(true);
   }
 
-  function closeDeleteModal() {
+  async function confirmDeleteMap() {
+    if (!mapToDelete)
+      return;
+
+    const id =
+      mapToDelete.id;
+
+    if (user) {
+      const {
+        error,
+      } = await supabase
+        .from("maps")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", user.id);
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+    }
+
+    const rest =
+      maps.filter(
+        (m) => m.id !== id
+      );
+
+    setMaps(rest);
+
+    if (id === activeMapId) {
+      if (rest[0]) {
+        openMap(rest[0]);
+        setScreen("editor");
+      } else {
+        setActiveMapId(null);
+        localStorage.removeItem(
+          ACTIVE_MAP_KEY
+        );
+        setScreen("maps");
+      }
+    }
+
     setIsDeleteOpen(false);
     setMapToDelete(null);
   }
 
-  async function confirmDeleteMap() {
-    if (
-      !mapToDelete ||
-      !user
-    ) {
-      return;
-    }
+  function downloadMap() {
+    const c =
+      canvasRef.current;
 
-    finishStroke();
+    if (!c) return;
 
-    const mapId =
-      mapToDelete.id;
+    const a =
+      document.createElement("a");
 
-    const {
-      error,
-    } =
-      await supabase
-        .from("maps")
-        .delete()
-        .eq("id", mapId)
-        .eq("user_id", user.id);
+    const filename =
+      (activeMap?.name ||
+        "MM-map")
+        .replace(
+          /[\\/:*?"<>|]/g,
+          ""
+        )
+        .trim() ||
+      "MM-map";
 
-    if (error) {
-      console.error(
-        "Не удалось удалить карту:",
-        error
+    a.download =
+      `${filename}.png`;
+
+    a.href =
+      c.toDataURL(
+        "image/png"
       );
 
-      return;
-    }
-
-    const remainingMaps =
-      maps.filter(
-        (map) =>
-          map.id !== mapId
-      );
-
-    if (
-      remainingMaps.length === 0
-    ) {
-      setMaps([]);
-      setActiveMapId(null);
-
-      setMapType("free");
-      setGridMode("auto");
-
-      setCompletedDirectly([]);
-
-      setImage(null);
-      setColors([]);
-      setImageRatio(1);
-
-      setDrawColor(
-        BASIC_COLORS[0]
-      );
-
-      drawColorRef.current =
-        BASIC_COLORS[0];
-
-      setCustomColors([]);
-
-      setNewColor(
-        BASIC_COLORS[0]
-      );
-
-      setTotalCells("500");
-      setManualRows("20");
-      setManualCols("25");
-      setShowImage(false);
-      setDescription("");
-
-      clearHistory();
-
-      localStorage.removeItem(
-        ACTIVE_MAP_KEY
-      );
-
-      closeDeleteModal();
-
-      setScreen("maps");
-
-      return;
-    }
-
-    setMaps(
-      remainingMaps
-    );
-
-    if (
-      mapId === activeMapId
-    ) {
-      const nextMap =
-        remainingMaps[0];
-
-      openMap(nextMap);
-
-      setScreen("editor");
-    }
-
-    closeDeleteModal();
+    a.click();
   }
 
-  if (authLoading) {
+  if (
+    authLoading ||
+    mapsLoading
+  ) {
     return (
       <div className="auth-loading">
-        Загрузка...
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <Auth onAuth={setUser} />
-    );
-  }
-
-  if (mapsLoading) {
-    return (
-      <div className="auth-loading">
-        Загрузка карт...
+        {authLoading
+          ? "Загрузка..."
+          : "Загрузка карт..."}
       </div>
     );
   }
@@ -4075,7 +3169,6 @@ function App() {
     <div className="app">
       <header className="header">
         <button
-          type="button"
           className="back-link"
           onClick={() =>
             setScreen("maps")
@@ -4085,12 +3178,10 @@ function App() {
         </button>
 
         <button
-          type="button"
           className="editor-brand"
           onClick={() =>
             setScreen("home")
           }
-          aria-label={t("home")}
         >
           <span className="brand-mark">
             MM
@@ -4100,8 +3191,15 @@ function App() {
             {screen === "home"
               ? `MM / ${t("home")}`
               : screen === "maps"
-                ? `MM / ${t("myMaps")}`
-                : t("editor")}
+              ? `MM / ${t(
+                  "myMaps"
+                )}`
+              : screen ===
+                "account"
+              ? `MM / ${t(
+                  "account"
+                )}`
+              : t("editor")}
           </span>
         </button>
 
@@ -4109,56 +3207,45 @@ function App() {
           <select
             className="language-select"
             value={language}
-            onChange={(event) =>
+            onChange={(e) =>
               setLanguage(
-                event.target.value
+                e.target.value
               )
             }
-            aria-label="Language"
           >
             <option value="ru">
               Русский
             </option>
-
             <option value="en">
               English
             </option>
-
             <option value="es">
               Español
             </option>
-
             <option value="ja">
               日本語
             </option>
-
             <option value="de">
               Deutsch
             </option>
-
             <option value="fr">
               Français
             </option>
-
             <option value="it">
               Italiano
             </option>
-
             <option value="pt">
               Português
             </option>
-
             <option value="zh">
               中文
             </option>
-
             <option value="ko">
               한국어
             </option>
           </select>
 
           <button
-            type="button"
             className="download-map-btn"
             onClick={
               downloadMap
@@ -4173,7 +3260,6 @@ function App() {
           </button>
 
           <button
-            type="button"
             className="save-map-btn"
             onClick={
               saveActiveMap
@@ -4188,13 +3274,279 @@ function App() {
             "error"
               ? "Ошибка"
               : saveStatus
-                ? t("saved")
-                : t("save")}
+              ? t("saved")
+              : t("save")}
           </button>
+
+          {user && (
+            <div
+              ref={accountRef}
+              style={{
+                position:
+                  "relative",
+                marginLeft:
+                  "8px",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setIsAccountOpen(
+                    (v) => !v
+                  )
+                }
+                style={{
+                  display: "flex",
+                  alignItems:
+                    "center",
+                  gap: "9px",
+                  height: "40px",
+                  padding:
+                    "4px 10px 4px 5px",
+                  border:
+                    "1px solid #ddd8cf",
+                  borderRadius:
+                    "12px",
+                  background:
+                    "#fff",
+                  cursor:
+                    "pointer",
+                  color:
+                    "#20201d",
+                  fontSize:
+                    "13px",
+                  fontWeight:
+                    600,
+                }}
+              >
+                <span
+                  style={{
+                    width: "30px",
+                    height: "30px",
+                    borderRadius:
+                      "9px",
+                    background:
+                      "#34c759",
+                    color:
+                      "#fff",
+                    display:
+                      "grid",
+                    placeItems:
+                      "center",
+                    fontSize:
+                      "13px",
+                    fontWeight:
+                      700,
+                  }}
+                >
+                  {accountInitial}
+                </span>
+
+                <span
+                  style={{
+                    maxWidth:
+                      "110px",
+                    overflow:
+                      "hidden",
+                    textOverflow:
+                      "ellipsis",
+                    whiteSpace:
+                      "nowrap",
+                  }}
+                >
+                  {accountName}
+                </span>
+
+                <span
+                  style={{
+                    fontSize:
+                      "10px",
+                    opacity:
+                      0.55,
+                  }}
+                >
+                  {isAccountOpen
+                    ? "▲"
+                    : "▼"}
+                </span>
+              </button>
+
+              {isAccountOpen && (
+                <div
+                  style={{
+                    position:
+                      "absolute",
+                    top:
+                      "calc(100% + 8px)",
+                    right: 0,
+                    width:
+                      "240px",
+                    padding:
+                      "8px",
+                    background:
+                      "#fff",
+                    border:
+                      "1px solid #ded9d0",
+                    borderRadius:
+                      "16px",
+                    boxShadow:
+                      "0 14px 35px rgba(40,35,25,.12)",
+                    zIndex: 1000,
+                  }}
+                >
+                  <div
+                    style={{
+                      padding:
+                        "10px 11px 12px",
+                      borderBottom:
+                        "1px solid #eeeae3",
+                      marginBottom:
+                        "5px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize:
+                          "14px",
+                        fontWeight:
+                          700,
+                        color:
+                          "#20201d",
+                      }}
+                    >
+                      {accountName}
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop:
+                          "3px",
+                        fontSize:
+                          "11px",
+                        color:
+                          "#8a867e",
+                        overflow:
+                          "hidden",
+                        textOverflow:
+                          "ellipsis",
+                        whiteSpace:
+                          "nowrap",
+                      }}
+                    >
+                      {accountEmail}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAccountOpen(
+                        false
+                      );
+                      setScreen(
+                        "account"
+                      );
+                    }}
+                    style={{
+                      width:
+                        "100%",
+                      border: 0,
+                      background:
+                        "transparent",
+                      padding:
+                        "10px 11px",
+                      borderRadius:
+                        "10px",
+                      textAlign:
+                        "left",
+                      cursor:
+                        "pointer",
+                      fontSize:
+                        "13px",
+                      color:
+                        "#20201d",
+                    }}
+                  >
+                    👤{" "}
+                    {t(
+                      "account"
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAccountOpen(
+                        false
+                      );
+                      setScreen(
+                        "maps"
+                      );
+                    }}
+                    style={{
+                      width:
+                        "100%",
+                      border: 0,
+                      background:
+                        "transparent",
+                      padding:
+                        "10px 11px",
+                      borderRadius:
+                        "10px",
+                      textAlign:
+                        "left",
+                      cursor:
+                        "pointer",
+                      fontSize:
+                        "13px",
+                      color:
+                        "#20201d",
+                    }}
+                  >
+                    ▦{" "}
+                    {t(
+                      "myMaps"
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={
+                      handleSignOut
+                    }
+                    style={{
+                      width:
+                        "100%",
+                      border: 0,
+                      background:
+                        "transparent",
+                      padding:
+                        "10px 11px",
+                      borderRadius:
+                        "10px",
+                      textAlign:
+                        "left",
+                      cursor:
+                        "pointer",
+                      fontSize:
+                        "13px",
+                      color:
+                        "#d9342b",
+                    }}
+                  >
+                    ↪{" "}
+                    {t(
+                      "logout"
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
-      {screen === "home" ? (
+      {screen === "home" && (
         <main className="home-page">
           <section className="landing-hero">
             <div className="landing-copy">
@@ -4212,27 +3564,29 @@ function App() {
 
               <div className="home-actions">
                 <button
-                  type="button"
                   className="save-map-btn"
                   onClick={
                     openCreateModal
                   }
                 >
-                  {t("createMap")}
+                  {t(
+                    "createMap"
+                  )}
                 </button>
 
                 <button
-                  type="button"
                   className="home-secondary-btn"
                   onClick={() =>
                     document
                       .getElementById(
                         "overview"
                       )
-                      ?.scrollIntoView({
-                        behavior:
-                          "smooth",
-                      })
+                      ?.scrollIntoView(
+                        {
+                          behavior:
+                            "smooth",
+                        }
+                      )
                   }
                 >
                   {t("preview")} ↓
@@ -4240,28 +3594,23 @@ function App() {
               </div>
             </div>
 
-            <div
-              className="hero-grid"
-              aria-hidden="true"
-            >
+            <div className="hero-grid">
               {Array.from(
                 {
                   length: 144,
                 },
-                (_, index) => (
+                (_, i) => (
                   <span
-                    key={index}
+                    key={i}
                     className={
-                      index % 13 < 5 ||
+                      i % 13 < 5 ||
                       [
                         43,
                         54,
                         65,
                         76,
                         87,
-                      ].includes(
-                        index
-                      )
+                      ].includes(i)
                         ? "filled"
                         : ""
                     }
@@ -4281,7 +3630,9 @@ function App() {
               </span>
 
               <h2>
-                {t("mapDescription")}
+                {t(
+                  "mapDescription"
+                )}
               </h2>
 
               <span className="landing-label">
@@ -4301,14 +3652,14 @@ function App() {
               <div className="demo-grid">
                 {Array.from(
                   {
-                    length: 104,
+                    length: 30,
                   },
-                  (_, index) => (
+                  (_, i) => (
                     <span
-                      key={index}
+                      key={i}
                       className={
-                        index < 52 &&
-                        index % 7 !== 2
+                        i < 15 &&
+                        i % 7 !== 2
                           ? "filled"
                           : ""
                       }
@@ -4323,23 +3674,17 @@ function App() {
                 </strong>
 
                 <span>
-                  52 / 104{" "}
+                  15 / 30{" "}
                   {t("cells")}
                 </span>
               </div>
 
               <div className="demo-line">
-                <span>
-                  01
-                </span>
-
+                <span>01</span>
                 <i>
                   <b />
                 </i>
-
-                <span>
-                  30
-                </span>
+                <span>30</span>
               </div>
 
               <p>
@@ -4348,14 +3693,13 @@ function App() {
             </div>
 
             <div className="demo-note">
-              {t("benefitThree")}
+              {t(
+                "benefitThree"
+              )}
             </div>
           </section>
 
-          <section
-            className="idea-section"
-            id="idea"
-          >
+          <section className="idea-section">
             <span className="landing-label">
               {t("benefitOne")}
             </span>
@@ -4366,12 +3710,12 @@ function App() {
 
             <div className="idea-steps">
               <article>
-                <span>
-                  01
-                </span>
+                <span>01</span>
 
                 <h3>
-                  {t("myMaps")}
+                  {t(
+                    "myMaps"
+                  )}
                 </h3>
 
                 <p>
@@ -4382,23 +3726,21 @@ function App() {
               </article>
 
               <article>
-                <span>
-                  02
-                </span>
+                <span>02</span>
 
                 <h3>
                   {t("brush")}
                 </h3>
 
                 <p>
-                  {t("newCells")}
+                  {t(
+                    "newCells"
+                  )}
                 </p>
               </article>
 
               <article>
-                <span>
-                  03
-                </span>
+                <span>03</span>
 
                 <h3>
                   {t("preview")}
@@ -4425,13 +3767,14 @@ function App() {
             </p>
 
             <button
-              type="button"
               className="save-map-btn"
               onClick={
                 openCreateModal
               }
             >
-              {t("createMap")}
+              {t(
+                "createMap"
+              )}
             </button>
           </section>
 
@@ -4445,304 +3788,659 @@ function App() {
             </span>
           </footer>
         </main>
-      ) : screen === "maps" ? (
-  <section className="maps-page">
-    <div className="maps-page-header">
-      <div>
-        <span className="workspace-type">MM</span>
+      )}
 
-        <h1>
-          {t("myMaps")}
-        </h1>
-      </div>
-
-      <button
-        type="button"
-        className="save-map-btn"
-        onClick={openCreateModal}
-      >
-        + {t("newMap")}
-      </button>
-    </div>
-
-    {maps.length === 0 ? (
-      <div className="empty-maps">
-        <div
-          className="empty-maps-grid"
-          aria-hidden="true"
+      {screen === "account" && (
+        <section
+          className="maps-page"
+          style={{
+            maxWidth:
+              "1100px",
+            margin:
+              "0 auto",
+            width:
+              "100%",
+          }}
         >
-          {Array.from(
-            { length: 36 },
-            (_, index) => (
-              <span
-                key={index}
-                className={
-                  index % 7 === 0 ||
-                  index % 11 === 0 ||
-                  index === 16 ||
-                  index === 17 ||
-                  index === 23 ||
-                  index === 24
-                    ? "filled"
-                    : ""
-                }
-              />
-            )
-          )}
-        </div>
+          <div className="maps-page-header">
+            <div>
+              <span className="workspace-type">
+                MM
+              </span>
 
-        <span className="empty-maps-label">
-          MM
-        </span>
+              <h1>
+                {t(
+                  "account"
+                )}
+              </h1>
+            </div>
 
-        <h2>
-          {t("mapsEmpty")}
-        </h2>
-
-        <p>
-          {t("heroText")}
-        </p>
-
-        <button
-          type="button"
-          className="save-map-btn"
-          onClick={openCreateModal}
-        >
-          + {t("createMap")}
-        </button>
-      </div>
-    ) : (
-      <div className="maps-list">
-        {maps.map((map) => {
-          const mapDimensions =
-            getGridDimensions(
-              Math.max(
-                1,
-                Number(map.totalCells) || 1
-              ),
-              map.imageRatio || 1,
-              map.gridMode,
-              map.manualRows,
-              map.manualCols
-            );
-
-          const mapTotal =
-            mapDimensions.actualTotal;
-
-          const mapCompleted =
-            Array.isArray(map.completed)
-              ? map.completed.length
-              : 0;
-
-          const mapProgress =
-            mapTotal > 0
-              ? Math.min(
-                  100,
-                  Math.round(
-                    (mapCompleted / mapTotal) *
-                      100
-                  )
+            <button
+              className="save-map-btn"
+              onClick={() =>
+                setScreen(
+                  "maps"
                 )
-              : 0;
+              }
+            >
+              {t("myMaps")}
+            </button>
+          </div>
 
-          return (
-            <article
-              className="map-card"
-              key={map.id}
-              onClick={() => {
-                openMap(map);
-                setScreen("editor");
+          <div
+            style={{
+              display:
+                "grid",
+              gridTemplateColumns:
+                "minmax(280px, 360px) 1fr",
+              gap: "20px",
+              marginTop:
+                "24px",
+            }}
+          >
+            <div
+              style={{
+                background:
+                  "#fff",
+                border:
+                  "1px solid #ddd8cf",
+                borderRadius:
+                  "20px",
+                padding:
+                  "24px",
               }}
             >
-              <div className="map-card-preview">
-                {map.mapType === "image" &&
-                map.image ? (
-                  <img
-                    className="map-card-image"
-                    src={map.image}
-                    alt=""
-                  />
-                ) : (
-                  <div
-                    className="map-card-grid"
-                    style={{
-                      gridTemplateColumns: `repeat(${mapDimensions.cols}, minmax(0, 1fr))`,
-                      aspectRatio: `${mapDimensions.cols} / ${mapDimensions.rows}`,
-                    }}
-                  >
-                    {Array.from(
-                      {
-                        length:
-                          mapDimensions.actualTotal,
-                      },
-                      (_, index) => {
-                        const completed =
-                          Array.isArray(
-                            map.completed
-                          ) &&
-                          map.completed.includes(
-                            index
-                          );
+              <div
+                style={{
+                  width:
+                    "72px",
+                  height:
+                    "72px",
+                  borderRadius:
+                    "20px",
+                  background:
+                    "#34c759",
+                  color:
+                    "#fff",
+                  display:
+                    "grid",
+                  placeItems:
+                    "center",
+                  fontSize:
+                    "28px",
+                  fontWeight:
+                    700,
+                  marginBottom:
+                    "18px",
+                }}
+              >
+                {accountInitial}
+              </div>
 
-                        const cellColor =
-                          map.colors?.[index] ||
-                          "#111111";
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize:
+                    "22px",
+                }}
+              >
+                {accountName}
+              </h2>
 
-                        return (
-                          <span
-                            key={index}
-                            className={
-                              completed
-                                ? "map-card-cell filled"
-                                : "map-card-cell"
-                            }
-                            style={{
-                              backgroundColor:
-                                completed
-                                  ? cellColor
-                                  : undefined,
-                            }}
-                          />
-                        );
+              <p
+                style={{
+                  margin:
+                    "7px 0 0",
+                  color:
+                    "#8a867e",
+                  fontSize:
+                    "13px",
+                }}
+              >
+                {accountEmail}
+              </p>
+            </div>
+
+            <div
+              style={{
+                display:
+                  "grid",
+                gridTemplateColumns:
+                  "repeat(2, minmax(150px, 1fr))",
+                gap:
+                  "14px",
+              }}
+            >
+              <div
+                style={{
+                  background:
+                    "#fff",
+                  border:
+                    "1px solid #ddd8cf",
+                  borderRadius:
+                    "20px",
+                  padding:
+                    "22px",
+                }}
+              >
+                <span
+                  style={{
+                    display:
+                      "block",
+                    fontSize:
+                      "11px",
+                    textTransform:
+                      "uppercase",
+                    letterSpacing:
+                      ".08em",
+                    color:
+                      "#8a867e",
+                    marginBottom:
+                      "10px",
+                  }}
+                >
+                  {t(
+                    "accountMaps"
+                  )}
+                </span>
+
+                <strong
+                  style={{
+                    fontSize:
+                      "32px",
+                  }}
+                >
+                  {maps.length}
+                </strong>
+
+                <p
+                  style={{
+                    margin:
+                      "5px 0 0",
+                    color:
+                      "#8a867e",
+                  }}
+                >
+                  {t(
+                    "myMaps"
+                  )}
+                </p>
+              </div>
+
+              <div
+                style={{
+                  background:
+                    "#fff",
+                  border:
+                    "1px solid #ddd8cf",
+                  borderRadius:
+                    "20px",
+                  padding:
+                    "22px",
+                }}
+              >
+                <span
+                  style={{
+                    display:
+                      "block",
+                    fontSize:
+                      "11px",
+                    textTransform:
+                      "uppercase",
+                    letterSpacing:
+                      ".08em",
+                    color:
+                      "#8a867e",
+                    marginBottom:
+                      "10px",
+                  }}
+                >
+                  {t(
+                    "accountCells"
+                  )}
+                </span>
+
+                <strong
+                  style={{
+                    fontSize:
+                      "32px",
+                  }}
+                >
+                  {maps.reduce(
+                    (
+                      sum,
+                      m
+                    ) =>
+                      sum +
+                      (m.completed
+                        ?.length ||
+                        0),
+                    0
+                  )}
+                </strong>
+
+                <p
+                  style={{
+                    margin:
+                      "5px 0 0",
+                    color:
+                      "#8a867e",
+                  }}
+                >
+                  {t(
+                    "painted"
+                  )}
+                </p>
+              </div>
+
+              <div
+                style={{
+                  gridColumn:
+                    "1 / -1",
+                  background:
+                    "#fff",
+                  border:
+                    "1px solid #ddd8cf",
+                  borderRadius:
+                    "20px",
+                  padding:
+                    "22px",
+                }}
+              >
+                <span
+                  style={{
+                    display:
+                      "block",
+                    fontSize:
+                      "11px",
+                    textTransform:
+                      "uppercase",
+                    letterSpacing:
+                      ".08em",
+                    color:
+                      "#8a867e",
+                    marginBottom:
+                      "10px",
+                  }}
+                >
+                  MM — Map Method
+                </span>
+
+                <h3
+                  style={{
+                    margin: 0,
+                    fontSize:
+                      "20px",
+                  }}
+                >
+                  {t(
+                    "hero"
+                  )}
+                </h3>
+
+                <p
+                  style={{
+                    margin:
+                      "8px 0 18px",
+                    color:
+                      "#8a867e",
+                    lineHeight:
+                      1.5,
+                  }}
+                >
+                  {t(
+                    "accountDescription"
+                  )}
+                </p>
+
+                <button
+                  className="save-map-btn"
+                  onClick={
+                    openCreateModal
+                  }
+                >
+                  +{" "}
+                  {t(
+                    "newMap"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {screen === "maps" && (
+        <section className="maps-page">
+          <div className="maps-page-header">
+            <div>
+              <span className="workspace-type">
+                MM
+              </span>
+
+              <h1>
+                {t("myMaps")}
+              </h1>
+            </div>
+
+            <button
+              className="save-map-btn"
+              onClick={
+                openCreateModal
+              }
+            >
+              + {t("newMap")}
+            </button>
+          </div>
+
+          {!maps.length ? (
+            <div className="empty-maps">
+              <div className="empty-maps-grid">
+                {Array.from(
+                  {
+                    length: 36,
+                  },
+                  (_, i) => (
+                    <span
+                      key={i}
+                      className={
+                        i % 7 === 0 ||
+                        i % 11 === 0 ||
+                        [
+                          16,
+                          17,
+                          23,
+                          24,
+                        ].includes(
+                          i
+                        )
+                          ? "filled"
+                          : ""
                       }
-                    )}
-                  </div>
+                    />
+                  )
                 )}
               </div>
 
-              <div className="map-card-body">
-                <div className="map-card-heading">
-                  <div>
-                    <strong>
-                      {map.name}
-                    </strong>
+              <span className="empty-maps-label">
+                MM
+              </span>
 
-                    <span>
-                      {map.mapType === "image"
-                        ? t("imageMap")
-                        : t("freeDrawing")}
-                    </span>
-                  </div>
+              <h2>
+                {t(
+                  "mapsEmpty"
+                )}
+              </h2>
 
-                  <strong className="map-card-percent">
-                    {mapProgress}%
-                  </strong>
-                </div>
+              <p>
+                {t("heroText")}
+              </p>
 
-                <div className="map-card-progress">
-                  <i
-                    style={{
-                      width: `${mapProgress}%`,
-                    }}
-                  />
-                </div>
+              <button
+                className="save-map-btn"
+                onClick={
+                  openCreateModal
+                }
+              >
+                +{" "}
+                {t(
+                  "createMap"
+                )}
+              </button>
+            </div>
+          ) : (
+            <div className="maps-list">
+              {maps.map(
+                (map) => {
+                  const d =
+                    getGridDimensions(
+                      Math.max(
+                        1,
+                        Number(
+                          map.totalCells
+                        ) || 1
+                      ),
+                      map.imageRatio ||
+                        1,
+                      map.gridMode,
+                      map.manualRows,
+                      map.manualCols
+                    );
 
-                <div className="map-card-footer">
-                  <span>
-                    {mapCompleted} /{" "}
-                    {mapTotal} {t("cells")}
-                  </span>
+                  const done =
+                    map.completed
+                      ?.length || 0;
 
-                  <div className="map-card-actions">
-                    <button
-                      type="button"
-                      className="tool-btn"
-                      onClick={(event) => {
-                        event.stopPropagation();
+                  const p =
+                    Math.min(
+                      100,
+                      Math.round(
+                        (done /
+                          d.actualTotal) *
+                          100
+                      )
+                    );
 
-                        openMap(map);
-                        setScreen("editor");
+                  return (
+                    <article
+                      className="map-card"
+                      key={
+                        map.id
+                      }
+                      onClick={() => {
+                        openMap(
+                          map
+                        );
+                        setScreen(
+                          "editor"
+                        );
                       }}
                     >
-                      {t("open")}
-                    </button>
+                      <div className="map-card-preview">
+                        {map.mapType ===
+                          "image" &&
+                        map.image ? (
+                          <img
+                            className="map-card-image"
+                            src={
+                              map.image
+                            }
+                            alt=""
+                          />
+                        ) : (
+                          <div
+                            className="map-card-grid"
+                            style={{
+                              gridTemplateColumns: `repeat(${d.cols},minmax(0,1fr))`,
+                              aspectRatio: `${d.cols}/${d.rows}`,
+                            }}
+                          >
+                            {Array.from(
+                              {
+                                length:
+                                  d.actualTotal,
+                              },
+                              (
+                                _,
+                                i
+                              ) => (
+                                <span
+                                  key={
+                                    i
+                                  }
+                                  className="map-card-cell"
+                                  style={{
+                                    backgroundColor:
+                                      map.completed?.includes(
+                                        i
+                                      )
+                                        ? map.colors?.[
+                                            i
+                                          ] ||
+                                          "#111111"
+                                        : undefined,
+                                  }}
+                                />
+                              )
+                            )}
+                          </div>
+                        )}
+                      </div>
 
-                    <button
-                      type="button"
-                      className="tool-btn"
-                      onClick={(event) => {
-                        event.stopPropagation();
+                      <div className="map-card-body">
+                        <div className="map-card-heading">
+                          <div>
+                            <strong>
+                              {
+                                map.name
+                              }
+                            </strong>
 
-                        openRenameModal(map);
-                      }}
-                    >
-                      {t("edit")}
-                    </button>
+                            <span>
+                              {map.mapType ===
+                              "image"
+                                ? t(
+                                    "imageMap"
+                                  )
+                                : t(
+                                    "freeDrawing"
+                                  )}
+                            </span>
+                          </div>
 
-                    <button
-                      type="button"
-                      className="tool-btn danger-action"
-                      onClick={(event) => {
-                        event.stopPropagation();
+                          <strong className="map-card-percent">
+                            {p}%
+                          </strong>
+                        </div>
 
-                        openDeleteModal(map);
-                      }}
-                    >
-                      {t("delete")}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-    )}
-  </section>
-) : (
-  <main className="editor-layout">
+                        <div className="map-card-progress">
+                          <i
+                            style={{
+                              width: `${p}%`,
+                            }}
+                          />
+                        </div>
+
+                        <div className="map-card-footer">
+                          <span>
+                            {done} /{" "}
+                            {
+                              d.actualTotal
+                            }{" "}
+                            {t(
+                              "cells"
+                            )}
+                          </span>
+
+                          <div className="map-card-actions">
+                            <button
+                              className="tool-btn"
+                              onClick={(
+                                e
+                              ) => {
+                                e.stopPropagation();
+
+                                openMap(
+                                  map
+                                );
+
+                                setScreen(
+                                  "editor"
+                                );
+                              }}
+                            >
+                              {t(
+                                "open"
+                              )}
+                            </button>
+
+                            <button
+                              className="tool-btn"
+                              onClick={(
+                                e
+                              ) => {
+                                e.stopPropagation();
+
+                                openRenameModal(
+                                  map
+                                );
+                              }}
+                            >
+                              {t(
+                                "edit"
+                              )}
+                            </button>
+
+                            <button
+                              className="tool-btn danger-action"
+                              onClick={(
+                                e
+                              ) => {
+                                e.stopPropagation();
+
+                                openDeleteModal(
+                                  map
+                                );
+                              }}
+                            >
+                              {t(
+                                "delete"
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                }
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {screen === "editor" && (
+        <main className="editor-layout">
           <aside className="left-sidebar">
             <section className="sidebar-section map-data-section">
               <div className="section-heading">
                 {t("mapData")}
               </div>
 
-              <label
-                className="field-label"
-                htmlFor="activeMap"
-              >
+              <label className="field-label">
                 {t("name")}
               </label>
 
               <select
-                id="activeMap"
                 className="map-select"
                 value={
-                  activeMapId || ""
+                  activeMapId ||
+                  ""
                 }
-                onChange={(event) => {
-                  const map =
+                onChange={(e) => {
+                  const m =
                     maps.find(
-                      (item) =>
-                        item.id ===
-                        event.target
+                      (x) =>
+                        x.id ===
+                        e.target
                           .value
                     );
 
-                  if (map) {
-                    openMap(map);
+                  if (m) {
+                    openMap(
+                      m
+                    );
                   }
                 }}
               >
-                {maps.length ===
-                0 ? (
-                  <option value="">
-                    {t("newMap")}
+                {maps.map((m) => (
+                  <option
+                    key={m.id}
+                    value={m.id}
+                  >
+                    {m.name}
                   </option>
-                ) : (
-                  maps.map((map) => (
-                    <option
-                      key={
-                        map.id
-                      }
-                      value={
-                        map.id
-                      }
-                    >
-                      {map.name}
-                    </option>
-                  ))
-                )}
+                ))}
               </select>
 
               <span className="field-label">
@@ -4757,9 +4455,9 @@ function App() {
                 placeholder={t(
                   "mapDescription"
                 )}
-                onChange={(event) =>
+                onChange={(e) =>
                   setDescription(
-                    event.target
+                    e.target
                       .value
                   )
                 }
@@ -4767,7 +4465,6 @@ function App() {
 
               <div className="map-actions">
                 <button
-                  type="button"
                   className="text-action"
                   onClick={
                     openCreateModal
@@ -4779,7 +4476,6 @@ function App() {
                 {activeMap && (
                   <>
                     <button
-                      type="button"
                       className="text-action"
                       onClick={() =>
                         openRenameModal(
@@ -4787,11 +4483,12 @@ function App() {
                         )
                       }
                     >
-                      {t("edit")}
+                      {t(
+                        "edit"
+                      )}
                     </button>
 
                     <button
-                      type="button"
                       className="text-action danger-action"
                       onClick={() =>
                         openDeleteModal(
@@ -4799,7 +4496,9 @@ function App() {
                         )
                       }
                     >
-                      {t("delete")}
+                      {t(
+                        "delete"
+                      )}
                     </button>
                   </>
                 )}
@@ -4808,18 +4507,19 @@ function App() {
 
             <section className="sidebar-section">
               <div className="section-heading">
-                {t("canvasSize")}
+                {t(
+                  "canvasSize"
+                )}
               </div>
 
               <div className="segmented-control">
                 <button
-                  type="button"
-                  className={
+                  className={`map-type-btn ${
                     gridMode ===
                     "auto"
-                      ? "map-type-btn active"
-                      : "map-type-btn"
-                  }
+                      ? "active"
+                      : ""
+                  }`}
                   onClick={() =>
                     handleGridModeChange(
                       "auto"
@@ -4830,51 +4530,48 @@ function App() {
                 </button>
 
                 <button
-                  type="button"
-                  className={
+                  className={`map-type-btn ${
                     gridMode ===
                     "manual"
-                      ? "map-type-btn active"
-                      : "map-type-btn"
-                  }
+                      ? "active"
+                      : ""
+                  }`}
                   onClick={() =>
                     handleGridModeChange(
                       "manual"
                     )
                   }
                 >
-                  {t("manual")}
+                  {t(
+                    "manual"
+                  )}
                 </button>
               </div>
 
               {gridMode ===
               "auto" ? (
                 <div className="compact-field">
-                  <label htmlFor="totalCells">
+                  <label>
                     {t("cells")}
                   </label>
 
                   <input
-                    id="totalCells"
                     type="number"
                     min="1"
-                    value={
-                      totalCells
-                    }
-                    onChange={
-                      handleTotalCellsChange
-                    }
+                    value={totalCells}
+                    onChange={handleTotalCellsChange}
                   />
                 </div>
               ) : (
                 <div className="manual-grid-controls compact-grid-fields">
                   <div className="compact-field">
-                    <label htmlFor="manualRows">
-                      {t("rows")}
+                    <label>
+                      {t(
+                        "rows"
+                      )}
                     </label>
 
                     <input
-                      id="manualRows"
                       type="number"
                       min="1"
                       value={
@@ -4887,12 +4584,13 @@ function App() {
                   </div>
 
                   <div className="compact-field">
-                    <label htmlFor="manualCols">
-                      {t("columns")}
+                    <label>
+                      {t(
+                        "columns"
+                      )}
                     </label>
 
                     <input
-                      id="manualCols"
                       type="number"
                       min="1"
                       value={
@@ -4902,6 +4600,119 @@ function App() {
                         handleManualColsChange
                       }
                     />
+                  </div>
+
+                  <div
+                    className="cells-stepper"
+                    style={{
+                      marginTop: "10px",
+                      width: "100%",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <label
+                      style={{
+                        display: "block",
+                        marginBottom: "6px",
+                      }}
+                    >
+                      {t("cells")}
+                    </label>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                          "34px 34px minmax(48px, 1fr) 34px 34px",
+                        alignItems: "center",
+                        gap: "4px",
+                        width: "100%",
+                        minHeight: "40px",
+                        padding: "3px",
+                        border:
+                          "1px solid #d8d0c5",
+                        borderRadius: "11px",
+                        background: "#fffdf9",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      {[
+                        ["‹‹", -100, "-100"],
+                        ["‹", -10, "-10"],
+                      ].map(
+                        ([symbol, delta, label]) => (
+                          <button
+                            key={label}
+                            type="button"
+                            className="tool-btn"
+                            aria-label={label}
+                            title={label}
+                            onClick={() =>
+                              changeTotalCells(delta)
+                            }
+                            style={{
+                              width: "34px",
+                              minWidth: "34px",
+                              height: "34px",
+                              padding: 0,
+                              display: "grid",
+                              placeItems: "center",
+                              fontSize: "18px",
+                              lineHeight: 1,
+                            }}
+                          >
+                            {symbol}
+                          </button>
+                        )
+                      )}
+
+                      <span
+                        aria-live="polite"
+                        style={{
+                          textAlign: "center",
+                          fontSize: "14px",
+                          fontWeight: 700,
+                          color: "#252824",
+                          userSelect: "none",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {Math.max(
+                          1,
+                          Number(actualTotal) || 1
+                        )}
+                      </span>
+
+                      {[
+                        ["›", 10, "+10"],
+                        ["››", 100, "+100"],
+                      ].map(
+                        ([symbol, delta, label]) => (
+                          <button
+                            key={label}
+                            type="button"
+                            className="tool-btn"
+                            aria-label={label}
+                            title={label}
+                            onClick={() =>
+                              changeTotalCells(delta)
+                            }
+                            style={{
+                              width: "34px",
+                              minWidth: "34px",
+                              height: "34px",
+                              padding: 0,
+                              display: "grid",
+                              placeItems: "center",
+                              fontSize: "18px",
+                              lineHeight: 1,
+                            }}
+                          >
+                            {symbol}
+                          </button>
+                        )
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -4923,43 +4734,44 @@ function App() {
               <div className="tool-stack">
                 <div className="map-type tool-type">
                   <button
-                    type="button"
-                    className={
+                    className={`map-type-btn ${
                       mapType ===
                       "free"
-                        ? "map-type-btn active"
-                        : "map-type-btn"
-                    }
+                        ? "active"
+                        : ""
+                    }`}
                     onClick={() =>
                       handleMapTypeChange(
                         "free"
                       )
                     }
                   >
-                    {t("brush")}
+                    {t(
+                      "brush"
+                    )}
                   </button>
 
                   <button
-                    type="button"
-                    className={
+                    className={`map-type-btn ${
                       mapType ===
                       "image"
-                        ? "map-type-btn active"
-                        : "map-type-btn"
-                    }
+                        ? "active"
+                        : ""
+                    }`}
                     onClick={() =>
                       handleMapTypeChange(
                         "image"
                       )
                     }
                   >
-                    {t("image")}
+                    {t(
+                      "image"
+                    )}
                   </button>
                 </div>
 
                 <div className="tool-actions">
                   <button
-                    type="button"
                     className="tool-btn"
                     onClick={
                       undo
@@ -4970,11 +4782,12 @@ function App() {
                     }
                   >
                     ↶{" "}
-                    {t("undo")}
+                    {t(
+                      "undo"
+                    )}
                   </button>
 
                   <button
-                    type="button"
                     className="tool-btn"
                     onClick={
                       redo
@@ -4985,7 +4798,9 @@ function App() {
                     }
                   >
                     ↷{" "}
-                    {t("redo")}
+                    {t(
+                      "redo"
+                    )}
                   </button>
                 </div>
 
@@ -5004,10 +4819,10 @@ function App() {
                       <input
                         type="file"
                         accept="image/*"
+                        hidden
                         onChange={
                           handleImageChange
                         }
-                        hidden
                       />
                     </label>
 
@@ -5028,16 +4843,13 @@ function App() {
                                   .checked
                               )
                             }
-                          />
-
-                          {" "}
+                          />{" "}
                           {t(
                             "showImage"
                           )}
                         </label>
 
                         <button
-                          type="button"
                           className="tool-btn"
                           onClick={
                             clearImage
@@ -5058,7 +4870,9 @@ function App() {
               "free" && (
               <section className="sidebar-section palette-section">
                 <div className="section-heading">
-                  {t("palette")}
+                  {t(
+                    "palette"
+                  )}
                 </div>
 
                 <div className="color-palette">
@@ -5083,53 +4897,45 @@ function App() {
                         backgroundColor:
                           drawColor,
                       }}
-                      title={`Выбран: ${drawColor}`}
                     />
                   </div>
 
-                  <div className="color-palette-section">
-                    <div className="color-list">
-                      {BASIC_COLORS.map(
-                        (
-                          color
-                        ) => (
-                          <button
-                            key={
-                              color
-                            }
-                            type="button"
-                            className={
-                              drawColor ===
-                              color
-                                ? "color-item selected"
-                                : color ===
-                                    "#ffffff"
-                                  ? "color-item white"
-                                  : "color-item"
-                            }
-                            title={
-                              color
-                            }
-                            onClick={() =>
-                              selectDrawColor(
-                                color
-                              )
-                            }
-                            style={{
-                              "--color":
-                                color,
-                            }}
-                          >
-                            <span className="color-dot" />
-                          </button>
-                        )
-                      )}
-                    </div>
+                  <div className="color-list">
+                    {BASIC_COLORS.map(
+                      (c) => (
+                        <button
+                          key={c}
+                          className={`color-item ${
+                            drawColor ===
+                            c
+                              ? "selected"
+                              : ""
+                          } ${
+                            c ===
+                            "#ffffff"
+                              ? "white"
+                              : ""
+                          }`}
+                          title={c}
+                          onClick={() =>
+                            selectDrawColor(
+                              c
+                            )
+                          }
+                          style={{
+                            "--color":
+                              c,
+                          }}
+                        >
+                          <span className="color-dot" />
+                        </button>
+                      )
+                    )}
                   </div>
 
                   {customColors.length >
                     0 && (
-                    <div className="color-palette-section custom-colors-section">
+                    <div className="color-palette-section">
                       <div className="color-palette-label">
                         {t(
                           "myColors"
@@ -5138,69 +4944,50 @@ function App() {
 
                       <div className="color-list">
                         {customColors.map(
-                          (
-                            color
-                          ) => (
+                          (c) => (
                             <div
-                              key={
-                                color
-                              }
+                              key={c}
                               className="custom-color-wrapper"
                               onContextMenu={(
-                                event
-                              ) =>
-                                handleCustomColorContextMenu(
-                                  event,
-                                  color
-                                )
-                              }
+                                e
+                              ) => {
+                                e.preventDefault();
+
+                                deleteCustomColor(
+                                  c
+                                );
+                              }}
                             >
                               <button
-                                type="button"
-                                className={
+                                className={`color-item ${
                                   drawColor ===
-                                  color
-                                    ? "color-item selected"
-                                    : color ===
-                                        "#ffffff"
-                                      ? "color-item white"
-                                      : "color-item"
-                                }
+                                  c
+                                    ? "selected"
+                                    : ""
+                                }`}
                                 title={
-                                  color
+                                  c
                                 }
                                 onClick={() =>
                                   selectDrawColor(
-                                    color
+                                    c
                                   )
                                 }
                                 style={{
                                   "--color":
-                                    color,
+                                    c,
                                 }}
                               >
                                 <span className="color-dot" />
                               </button>
 
                               <button
-                                type="button"
                                 className="delete-color-btn"
-                                aria-label={t(
-                                  "delete"
-                                )}
-                                title={t(
-                                  "delete"
-                                )}
-                                onClick={(
-                                  event
-                                ) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-
+                                onClick={() =>
                                   deleteCustomColor(
-                                    color
-                                  );
-                                }}
+                                    c
+                                  )
+                                }
                               >
                                 ×
                               </button>
@@ -5226,9 +5013,6 @@ function App() {
                               .value
                           )
                         }
-                        title={t(
-                          "brushColor"
-                        )}
                       />
 
                       <span className="color-picker-value">
@@ -5237,15 +5021,12 @@ function App() {
                     </div>
 
                     <button
-                      type="button"
                       className="add-color-btn"
                       onClick={
                         addCustomColor
                       }
                     >
-                      <span>
-                        +
-                      </span>{" "}
+                      +{" "}
                       {t(
                         "addColor"
                       )}
@@ -5272,7 +5053,9 @@ function App() {
 
                 <h1>
                   {activeMap?.name ||
-                    t("newMap")}
+                    t(
+                      "newMap"
+                    )}
                 </h1>
               </div>
 
@@ -5285,49 +5068,139 @@ function App() {
             </div>
 
             <div className="canvas-card">
+              <div className="map-zoom-toolbar">
+                <button
+                  className="tool-btn"
+                  onClick={() =>
+                    setMapZoom(
+                      (z) =>
+                        Math.max(
+                          0.5,
+                          +(
+                            z -
+                            0.1
+                          ).toFixed(
+                            1
+                          )
+                        )
+                    )
+                  }
+                >
+                  −
+                </button>
+
+                <span>
+                  {Math.round(
+                    mapZoom *
+                      100
+                  )}
+                  %
+                </span>
+
+                <button
+                  className="tool-btn"
+                  onClick={() =>
+                    setMapZoom(
+                      (z) =>
+                        Math.min(
+                          4,
+                          +(
+                            z +
+                            0.1
+                          ).toFixed(
+                            1
+                          )
+                        )
+                    )
+                  }
+                >
+                  +
+                </button>
+
+                <button
+                  className="tool-btn"
+                  onClick={() =>
+                    setMapZoom(1)
+                  }
+                >
+                  100%
+                </button>
+              </div>
+
               <div
-                className="grid-container"
-                style={{
-                  aspectRatio: `${cols} / ${rows}`,
-                }}
-                onContextMenu={(e) =>
-                  e.preventDefault()
+                className="grid-viewport"
+                ref={
+                  viewportRef
                 }
               >
-                <canvas
-                  ref={
-                    canvasRef
-                  }
-                  className="grid-canvas"
+                <div
+                  className="grid-zoom-stage"
                   style={{
-                    touchAction:
-                      "none",
+                    width: `${
+                      mapZoom *
+                      100
+                    }%`,
+                    height: `${
+                      mapZoom *
+                      100
+                    }%`,
+                    minWidth: `${
+                      mapZoom *
+                      100
+                    }%`,
+                    minHeight: `${
+                      mapZoom *
+                      100
+                    }%`,
                   }}
-                  onPointerDown={
-                    handlePointerDown
-                  }
-                  onPointerMove={
-                    handlePointerMove
-                  }
-                  onPointerUp={
-                    handlePointerUp
-                  }
-                  onPointerCancel={
-                    handlePointerCancel
-                  }
-                  onContextMenu={(e) =>
-                    e.preventDefault()
-                  }
-                  onDragStart={(e) =>
-                    e.preventDefault()
-                  }
-                />
+                >
+                  <div
+                    className="grid-container"
+                    style={{
+                      aspectRatio: `${cols}/${rows}`,
+                    }}
+                    onContextMenu={(
+                      e
+                    ) =>
+                      e.preventDefault()
+                    }
+                  >
+                    <canvas
+                      ref={
+                        canvasRef
+                      }
+                      className="grid-canvas"
+                      style={{
+                        touchAction:
+                          "none",
+                      }}
+                      onPointerDown={
+                        handlePointerDown
+                      }
+                      onPointerMove={
+                        handlePointerMove
+                      }
+                      onPointerUp={
+                        handlePointerUp
+                      }
+                      onPointerCancel={
+                        handlePointerCancel
+                      }
+                      onContextMenu={(
+                        e
+                      ) =>
+                        e.preventDefault()
+                      }
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
             <div className="drawing-hint">
-              {t("drawHint")}
-
+              {t(
+                "drawHint"
+              )}{" "}
               {mapType ===
                 "free" &&
                 " · Ctrl+Z / Ctrl+Y"}
@@ -5337,14 +5210,16 @@ function App() {
           <aside className="right-sidebar">
             <section className="sidebar-section preview-panel">
               <div className="section-heading">
-                {t("preview")}
+                {t(
+                  "preview"
+                )}
               </div>
 
               <div
                 className="mini-preview"
                 style={{
-                  gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-                  aspectRatio: `${cols} / ${rows}`,
+                  gridTemplateColumns: `repeat(${cols},minmax(0,1fr))`,
+                  aspectRatio: `${cols}/${rows}`,
                 }}
               >
                 {Array.from(
@@ -5352,42 +5227,31 @@ function App() {
                     length:
                       actualTotal,
                   },
-                  (_, index) => {
-                    const isActive =
+                  (_, i) => {
+                    const active =
                       completed.includes(
-                        index
+                        i
                       );
 
                     const color =
-                      mapType ===
-                      "free"
-                        ? colors[
-                            index
-                          ] ||
-                          BASIC_COLORS[0]
-                        : colors[
-                            index
-                          ] ||
-                          "#e5e5e5";
+                      colors[i] ||
+                      "#e5e5e5";
 
                     return (
                       <span
-                        key={
-                          index
-                        }
+                        key={i}
                         style={{
                           backgroundColor:
-                            isActive
+                            active
                               ? color
                               : mapType ===
                                   "image" &&
                                 showImage &&
                                 image
-                                ? color
-                                : "#eeeeea",
-
+                              ? color
+                              : "#eeeeea",
                           opacity:
-                            !isActive &&
+                            !active &&
                             mapType ===
                               "image" &&
                             showImage &&
@@ -5407,7 +5271,9 @@ function App() {
                 </strong>
 
                 <span>
-                  {t("filled")}
+                  {t(
+                    "filled"
+                  )}
                 </span>
               </div>
 
@@ -5421,18 +5287,24 @@ function App() {
 
               <div className="preview-stat">
                 <span>
-                  {t("painted")}{" "}
+                  {t(
+                    "painted"
+                  )}{" "}
                   {t("cells")}
                 </span>
 
                 <strong>
-                  {completed.length}
+                  {
+                    completed.length
+                  }
                 </strong>
               </div>
 
               <div className="preview-stat">
                 <span>
-                  {t("total")}{" "}
+                  {t(
+                    "total"
+                  )}{" "}
                   {t("cells")}
                 </span>
 
@@ -5459,8 +5331,10 @@ function App() {
       {isCreateOpen && (
         <div
           className="modal-overlay"
-          onMouseDown={
-            closeCreateModal
+          onMouseDown={() =>
+            setIsCreateOpen(
+              false
+            )
           }
         >
           <div
@@ -5475,10 +5349,11 @@ function App() {
               </h2>
 
               <button
-                type="button"
                 className="modal-close"
-                onClick={
-                  closeCreateModal
+                onClick={() =>
+                  setIsCreateOpen(
+                    false
+                  )
                 }
               >
                 ×
@@ -5486,22 +5361,18 @@ function App() {
             </div>
 
             <div className="modal-field">
-              <label htmlFor="newMapName">
+              <label>
                 {t("name")}
               </label>
 
               <input
-                id="newMapName"
-                type="text"
-                placeholder={t(
-                  "name"
-                )}
                 value={
                   newMapName
                 }
                 onChange={(e) =>
                   setNewMapName(
-                    e.target.value
+                    e.target
+                      .value
                   )
                 }
               />
@@ -5514,13 +5385,12 @@ function App() {
 
               <div className="modal-map-types">
                 <button
-                  type="button"
-                  className={
+                  className={`map-type-btn ${
                     newMapType ===
                     "image"
-                      ? "map-type-btn active"
-                      : "map-type-btn"
-                  }
+                      ? "active"
+                      : ""
+                  }`}
                   onClick={() =>
                     setNewMapType(
                       "image"
@@ -5531,13 +5401,12 @@ function App() {
                 </button>
 
                 <button
-                  type="button"
-                  className={
+                  className={`map-type-btn ${
                     newMapType ===
                     "free"
-                      ? "map-type-btn active"
-                      : "map-type-btn"
-                  }
+                      ? "active"
+                      : ""
+                  }`}
                   onClick={() =>
                     setNewMapType(
                       "free"
@@ -5558,13 +5427,12 @@ function App() {
 
               <div className="modal-map-types">
                 <button
-                  type="button"
-                  className={
+                  className={`map-type-btn ${
                     newMapGridMode ===
                     "auto"
-                      ? "map-type-btn active"
-                      : "map-type-btn"
-                  }
+                      ? "active"
+                      : ""
+                  }`}
                   onClick={() =>
                     setNewMapGridMode(
                       "auto"
@@ -5575,20 +5443,21 @@ function App() {
                 </button>
 
                 <button
-                  type="button"
-                  className={
+                  className={`map-type-btn ${
                     newMapGridMode ===
                     "manual"
-                      ? "map-type-btn active"
-                      : "map-type-btn"
-                  }
+                      ? "active"
+                      : ""
+                  }`}
                   onClick={() =>
                     setNewMapGridMode(
                       "manual"
                     )
                   }
                 >
-                  {t("manual")}
+                  {t(
+                    "manual"
+                  )}
                 </button>
               </div>
             </div>
@@ -5596,12 +5465,13 @@ function App() {
             {newMapGridMode ===
             "auto" ? (
               <div className="modal-field">
-                <label htmlFor="newMapCells">
-                  {t("cells")}
+                <label>
+                  {t(
+                    "cells"
+                  )}
                 </label>
 
                 <input
-                  id="newMapCells"
                   type="number"
                   min="1"
                   value={
@@ -5609,7 +5479,8 @@ function App() {
                   }
                   onChange={(e) =>
                     setNewMapCells(
-                      e.target.value
+                      e.target
+                        .value
                     )
                   }
                 />
@@ -5617,12 +5488,13 @@ function App() {
             ) : (
               <div className="manual-grid-controls">
                 <div className="modal-field">
-                  <label htmlFor="newMapRows">
-                    {t("rows")}
+                  <label>
+                    {t(
+                      "rows"
+                    )}
                   </label>
 
                   <input
-                    id="newMapRows"
                     type="number"
                     min="1"
                     value={
@@ -5638,12 +5510,13 @@ function App() {
                 </div>
 
                 <div className="modal-field">
-                  <label htmlFor="newMapCols">
-                    {t("columns")}
+                  <label>
+                    {t(
+                      "columns"
+                    )}
                   </label>
 
                   <input
-                    id="newMapCols"
                     type="number"
                     min="1"
                     value={
@@ -5661,7 +5534,6 @@ function App() {
             )}
 
             <button
-              type="button"
               className="modal-create-btn"
               onClick={
                 createMap
@@ -5678,8 +5550,10 @@ function App() {
       {isRenameOpen && (
         <div
           className="modal-overlay"
-          onMouseDown={
-            closeRenameModal
+          onMouseDown={() =>
+            setIsRenameOpen(
+              false
+            )
           }
         >
           <div
@@ -5696,10 +5570,11 @@ function App() {
               </h2>
 
               <button
-                type="button"
                 className="modal-close"
-                onClick={
-                  closeRenameModal
+                onClick={() =>
+                  setIsRenameOpen(
+                    false
+                  )
                 }
               >
                 ×
@@ -5707,13 +5582,14 @@ function App() {
             </div>
 
             <div className="modal-field">
-              <label htmlFor="renameMap">
-                {t("newName")}
+              <label>
+                {t(
+                  "newName"
+                )}
               </label>
 
               <input
-                id="renameMap"
-                type="text"
+                autoFocus
                 value={
                   renameValue
                 }
@@ -5723,12 +5599,15 @@ function App() {
                       .value
                   )
                 }
-                autoFocus
+                onKeyDown={(e) =>
+                  e.key ===
+                    "Enter" &&
+                  saveRename()
+                }
               />
             </div>
 
             <button
-              type="button"
               className="modal-create-btn"
               onClick={
                 saveRename
@@ -5744,8 +5623,10 @@ function App() {
         mapToDelete && (
           <div
             className="modal-overlay"
-            onMouseDown={
-              closeDeleteModal
+            onMouseDown={() =>
+              setIsDeleteOpen(
+                false
+              )
             }
           >
             <div
@@ -5762,10 +5643,11 @@ function App() {
                 </h2>
 
                 <button
-                  type="button"
                   className="modal-close"
-                  onClick={
-                    closeDeleteModal
+                  onClick={() =>
+                    setIsDeleteOpen(
+                      false
+                    )
                   }
                 >
                   ×
@@ -5785,23 +5667,27 @@ function App() {
 
               <div className="delete-modal-actions">
                 <button
-                  type="button"
                   className="cancel-delete-btn"
-                  onClick={
-                    closeDeleteModal
+                  onClick={() =>
+                    setIsDeleteOpen(
+                      false
+                    )
                   }
                 >
-                  {t("cancel")}
+                  {t(
+                    "cancel"
+                  )}
                 </button>
 
                 <button
-                  type="button"
                   className="confirm-delete-btn"
                   onClick={
                     confirmDeleteMap
                   }
                 >
-                  {t("delete")}
+                  {t(
+                    "delete"
+                  )}
                 </button>
               </div>
             </div>
@@ -5810,5 +5696,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
