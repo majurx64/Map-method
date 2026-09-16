@@ -850,7 +850,10 @@ function getGridDimensions(
     return {
       rows,
       cols,
-      actualTotal: rows * cols,
+      actualTotal: Math.min(
+        rows * cols,
+        Math.max(1, Number(total) || rows * cols)
+      ),
     };
   }
 
@@ -1207,11 +1210,19 @@ export default function App() {
   }, [screen, activeMapId, isMapInitialized]);
 
   useEffect(() => {
+    if (authLoading || mapsLoading) return;
+
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+
     const positions = JSON.parse(
       localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
     );
     const target = positions[screen] || 0;
-    const frame = requestAnimationFrame(() => window.scrollTo(0, target));
+    const restore = () => window.scrollTo(0, target);
+    const firstFrame = requestAnimationFrame(restore);
+    const delayedRestore = window.setTimeout(restore, 350);
     const savePosition = () => {
       const next = JSON.parse(
         localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
@@ -1220,12 +1231,15 @@ export default function App() {
       localStorage.setItem(SCROLL_POSITIONS_KEY, JSON.stringify(next));
     };
     window.addEventListener("scroll", savePosition, { passive: true });
+    window.addEventListener("pagehide", savePosition);
     return () => {
-      cancelAnimationFrame(frame);
+      cancelAnimationFrame(firstFrame);
+      window.clearTimeout(delayedRestore);
       savePosition();
       window.removeEventListener("scroll", savePosition);
+      window.removeEventListener("pagehide", savePosition);
     };
-  }, [screen]);
+  }, [screen, authLoading, mapsLoading]);
 
   useEffect(() => {
     if (!isMapInitialized) return;
@@ -2617,6 +2631,12 @@ export default function App() {
       e.target.value;
 
     setManualRows(v);
+    setTotalCells(
+      String(
+        Math.max(1, Number(v) || 1) *
+          Math.max(1, Number(manualCols) || 1)
+      )
+    );
 
     const d =
       getGridDimensions(
@@ -2653,6 +2673,12 @@ export default function App() {
       e.target.value;
 
     setManualCols(v);
+    setTotalCells(
+      String(
+        Math.max(1, Number(manualRows) || 1) *
+          Math.max(1, Number(v) || 1)
+      )
+    );
 
     const d =
       getGridDimensions(
@@ -2763,20 +2789,11 @@ export default function App() {
           ) || 1
       );
 
-    let nextRows = 1;
-    let nextCols = next;
-    let bestDifference = Infinity;
-
-    for (let candidateRows = 1; candidateRows * candidateRows <= next; candidateRows += 1) {
-      if (next % candidateRows !== 0) continue;
-      const candidateCols = next / candidateRows;
-      const difference = Math.abs(candidateCols / candidateRows - ratio);
-      if (difference < bestDifference) {
-        bestDifference = difference;
-        nextRows = candidateRows;
-        nextCols = candidateCols;
-      }
-    }
+    const nextRows = Math.max(
+      1,
+      Math.round(Math.sqrt(next / ratio))
+    );
+    const nextCols = Math.max(1, Math.ceil(next / nextRows));
 
     setManualRows(
       String(nextRows)
@@ -2786,7 +2803,7 @@ export default function App() {
     );
     setTotalCells(
       String(
-        nextRows * nextCols
+        next
       )
     );
 
@@ -2796,7 +2813,7 @@ export default function App() {
       ].filter(
         (i) =>
           i <
-          nextRows * nextCols
+          next
       )
     );
 
@@ -4136,10 +4153,6 @@ export default function App() {
         <section className="maps-page">
           <div className="maps-page-header">
             <div>
-              <span className="workspace-type">
-                MM
-              </span>
-
               <h1>
                 {t("myMaps")}
               </h1>
@@ -4257,8 +4270,11 @@ export default function App() {
                           "editor"
                         );
                       }}
-                    >
+                      >
                       <div className="map-card-preview">
+                        {map.mapType === "image" && map.image && (
+                          <img className="map-card-image" src={map.image} alt="" />
+                        )}
                         <div
                             className="map-card-grid"
                             style={{
@@ -4280,7 +4296,7 @@ export default function App() {
                                     i
                                   }
                                   className="map-card-cell"
-                                  style={{ backgroundColor: map.completed?.includes(i) ? map.colors?.[i] || "#111111" : "#deded8", opacity: map.mapType === "image" && !map.completed?.includes(i) && map.showImage ? 0.35 : 1 }}
+                                  style={{ backgroundColor: map.completed?.includes(i) ? map.colors?.[i] || "#111111" : map.mapType === "image" && map.showImage ? map.colors?.[i] || "#deded8" : "#deded8", opacity: map.mapType === "image" && !map.completed?.includes(i) && map.showImage ? 0.35 : 1 }}
                                 />
                               )
                             )}
@@ -5660,7 +5676,9 @@ export default function App() {
               </div>
 
               <p className="delete-modal-text">
-                «{mapToDelete.name}»
+                <strong>«{mapToDelete.name}»</strong>
+                <br />
+                Это действие нельзя отменить: карта и весь её прогресс будут удалены.
               </p>
 
               <div className="delete-modal-actions">
