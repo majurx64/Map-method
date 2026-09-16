@@ -2202,7 +2202,9 @@ button:disabled {
 .compact-grid-fields .compact-field { width:100%; }
 .cells-stepper { grid-column:1; }
 .cells-stepper label { font-size:16px !important; font-weight:750; }
-.cells-stepper .tool-btn { min-width:42px !important; width:42px !important; height:42px !important; font-size:22px !important; }
+.cells-stepper .tool-btn { min-width:34px !important; width:34px !important; height:34px !important; font-size:18px !important; }
+.cells-stepper-controls { gap:5px !important; }
+.cells-stepper-label { text-transform:capitalize; }
 .text-action { min-height:40px; padding:0 12px; font-size:15px; font-weight:700; }
 .section-heading { font-size:14px; letter-spacing:.08em; }
 .map-card-heading strong { font-size:20px; }.map-card-heading span,.map-card-description,.map-card-footer > span { font-size:14px; }.map-card-description { color:#686f65 !important; line-height:1.4; }.map-card-actions .tool-btn { min-height:36px; padding:7px 10px; font-size:13px; }

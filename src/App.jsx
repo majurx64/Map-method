@@ -1823,10 +1823,7 @@ export default function App() {
   }
 
   function undo() {
-    if (
-      isDrawingRef.current ||
-      mapType !== "free"
-    ) {
+    if (isDrawingRef.current) {
       return;
     }
 
@@ -1840,10 +1837,7 @@ export default function App() {
   }
 
   function redo() {
-    if (
-      isDrawingRef.current ||
-      mapType !== "free"
-    ) {
+    if (isDrawingRef.current) {
       return;
     }
 
@@ -1890,7 +1884,11 @@ export default function App() {
       )
     );
 
-    return row * cols + col;
+    const index = row * cols + col;
+
+    // В ручной сетке последние ячейки могут быть только техническим
+    // заполнением прямоугольника. Они не входят в выбранное число клеток.
+    return index < actualTotal ? index : null;
   }
 
   function applyCells(indices, mode) {
@@ -2646,16 +2644,36 @@ export default function App() {
   ) {
     finishStroke();
 
-    setGridMode(mode);
+    if (mode === gridMode) return;
+
+    let nextRows = manualRows;
+    let nextCols = manualCols;
+
+    // При первом переходе из «Авто» сохраняем ту же форму сетки.
+    // Так изображение не пересчитывается по старым размерам и не «ломается».
+    if (mode === "manual") {
+      const automatic = getGridDimensions(
+        requestedTotal,
+        imageRatio,
+        "auto"
+      );
+
+      nextRows = String(automatic.rows);
+      nextCols = String(automatic.cols);
+      setManualRows(nextRows);
+      setManualCols(nextCols);
+    }
 
     const d =
       getGridDimensions(
         requestedTotal,
         imageRatio,
         mode,
-        manualRows,
-        manualCols
+        nextRows,
+        nextCols
       );
+
+    setGridMode(mode);
 
     setCompletedDirectly(
       completedRef.current.size
@@ -2673,7 +2691,9 @@ export default function App() {
     if (image) {
       processImage(
         image,
-        imageRatio
+        imageRatio,
+        d.cols,
+        d.rows
       );
     }
   }
@@ -2684,17 +2704,16 @@ export default function App() {
     const v =
       e.target.value;
 
+    const nextTotal =
+      Math.max(1, Number(v) || 1) *
+      Math.max(1, Number(manualCols) || 1);
+
     setManualRows(v);
-    setTotalCells(
-      String(
-        Math.max(1, Number(v) || 1) *
-          Math.max(1, Number(manualCols) || 1)
-      )
-    );
+    setTotalCells(String(nextTotal));
 
     const d =
       getGridDimensions(
-        requestedTotal,
+        nextTotal,
         imageRatio,
         "manual",
         v,
@@ -2715,7 +2734,9 @@ export default function App() {
     if (image) {
       processImage(
         image,
-        imageRatio
+        imageRatio,
+        d.cols,
+        d.rows
       );
     }
   }
@@ -2726,17 +2747,16 @@ export default function App() {
     const v =
       e.target.value;
 
+    const nextTotal =
+      Math.max(1, Number(manualRows) || 1) *
+      Math.max(1, Number(v) || 1);
+
     setManualCols(v);
-    setTotalCells(
-      String(
-        Math.max(1, Number(manualRows) || 1) *
-          Math.max(1, Number(v) || 1)
-      )
-    );
+    setTotalCells(String(nextTotal));
 
     const d =
       getGridDimensions(
-        requestedTotal,
+        nextTotal,
         imageRatio,
         "manual",
         manualRows,
@@ -2757,7 +2777,9 @@ export default function App() {
     if (image) {
       processImage(
         image,
-        imageRatio
+        imageRatio,
+        d.cols,
+        d.rows
       );
     }
   }
@@ -2833,6 +2855,11 @@ export default function App() {
       return;
     }
 
+    updateManualTotalCells(next);
+  }
+
+  function updateManualTotalCells(next) {
+    const safeTotal = Math.max(1, Number(next) || 1);
     const ratio =
       Math.max(
         0.01,
@@ -2845,9 +2872,9 @@ export default function App() {
 
     const nextRows = Math.max(
       1,
-      Math.round(Math.sqrt(next / ratio))
+      Math.round(Math.sqrt(safeTotal / ratio))
     );
-    const nextCols = Math.max(1, Math.ceil(next / nextRows));
+    const nextCols = Math.max(1, Math.ceil(safeTotal / nextRows));
 
     setManualRows(
       String(nextRows)
@@ -2857,7 +2884,7 @@ export default function App() {
     );
     setTotalCells(
       String(
-        next
+        safeTotal
       )
     );
 
@@ -2867,7 +2894,7 @@ export default function App() {
       ].filter(
         (i) =>
           i <
-          next
+          safeTotal
       )
     );
 
@@ -2881,6 +2908,16 @@ export default function App() {
         nextRows
       );
     }
+  }
+
+  function handleManualTotalCellsChange(e) {
+    const value = e.target.value;
+    setTotalCells(value);
+
+    const next = Number(value);
+    if (!Number.isFinite(next) || next < 1) return;
+
+    updateManualTotalCells(next);
   }
 
   function clearImage() {
@@ -4695,21 +4732,23 @@ export default function App() {
                     }}
                   >
                     <label
+                      className="cells-stepper-label"
                       style={{
                         display: "block",
                         marginBottom: "6px",
                       }}
                     >
-                      {t("cells")}
+                      {language === "ru" ? "Клеток" : t("cells")}
                     </label>
 
                     <div
+                      className="cells-stepper-controls"
                       style={{
                         display: "grid",
                         gridTemplateColumns:
                           "34px 34px minmax(48px, 1fr) 34px 34px",
                         alignItems: "center",
-                        gap: "4px",
+                        gap: "5px",
                         width: "100%",
                         minHeight: "40px",
                         padding: "3px",
@@ -4750,22 +4789,26 @@ export default function App() {
                         )
                       )}
 
-                      <span
-                        aria-live="polite"
+                      <input
+                        type="number"
+                        min="1"
+                        aria-label={language === "ru" ? "Количество клеток" : t("cells")}
+                        value={totalCells}
+                        onChange={handleManualTotalCellsChange}
                         style={{
                           textAlign: "center",
                           fontSize: "14px",
                           fontWeight: 700,
                           color: "#252824",
-                          userSelect: "none",
-                          overflow: "hidden",
+                          width: "100%",
+                          minWidth: 0,
+                          height: "34px",
+                          padding: "0 4px",
+                          border: "1px solid #d8d0c5",
+                          borderRadius: "7px",
+                          background: "#fff",
                         }}
-                      >
-                        {Math.max(
-                          1,
-                          Number(actualTotal) || 1
-                        )}
-                      </span>
+                      />
 
                       {[
                         ["›", 10, "+10"],
@@ -4860,10 +4903,6 @@ export default function App() {
                     onClick={
                       undo
                     }
-                    disabled={
-                      mapType !==
-                      "free"
-                    }
                   >
                     ↶{" "}
                     {t(
@@ -4875,10 +4914,6 @@ export default function App() {
                     className="tool-btn"
                     onClick={
                       redo
-                    }
-                    disabled={
-                      mapType !==
-                      "free"
                     }
                   >
                     ↷{" "}
