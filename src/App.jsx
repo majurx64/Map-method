@@ -1220,10 +1220,15 @@ export default function App() {
       localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
     );
     const target = positions[screen] || 0;
-    const restore = () => window.scrollTo(0, target);
+    let restored = false;
+    const restore = () => {
+      window.scrollTo(0, target);
+      restored = true;
+    };
     const firstFrame = requestAnimationFrame(restore);
     const delayedRestore = window.setTimeout(restore, 350);
     const savePosition = () => {
+      if (!restored) return;
       const next = JSON.parse(
         localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
       );
