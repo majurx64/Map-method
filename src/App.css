@@ -2211,6 +2211,125 @@ button:disabled {
 .hero-grid.demo-interactive button,.demo-grid button { appearance:none; border:0; padding:0; cursor:pointer; }.hero-grid.demo-interactive button:hover,.demo-grid button:hover { outline:2px solid #31683b; outline-offset:1px; }.hero-grid.demo-interactive button:not(.filled),.demo-grid button:not(.filled) { background:#eee4d7; }.hero-grid.demo-interactive button.filled,.demo-grid button.filled { background:#3f7d4a; }
 .delete-modal { max-width:480px; padding:32px; border-radius:18px; }.delete-modal .modal-header h2 { font-size:28px; }.delete-modal-text { margin:4px 0 28px; font-size:16px; line-height:1.6; }.delete-modal-actions { gap:12px; }.delete-modal-actions button { min-height:46px; font-size:15px; font-weight:700; }
 
+/* Компактная боковая панель: вся палитра остаётся в пределах экрана. */
+.left-sidebar {
+  padding: 14px 17px 10px;
+}
+
+.left-sidebar .sidebar-section {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+}
+
+.left-sidebar .section-heading {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.left-sidebar .field-label {
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.left-sidebar .map-select {
+  height: 36px;
+  margin-bottom: 7px;
+}
+
+.left-sidebar .map-description {
+  height: 40px;
+}
+
+.left-sidebar .map-actions {
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.left-sidebar .text-action {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.left-sidebar .compact-field {
+  margin-top: 7px;
+}
+
+.left-sidebar .compact-field input {
+  height: 36px;
+}
+
+.left-sidebar .grid-info {
+  margin-top: 7px;
+  font-size: 13px;
+}
+
+.left-sidebar .tool-stack {
+  gap: 6px;
+}
+
+.left-sidebar .tool-actions {
+  gap: 5px;
+}
+
+.left-sidebar .tool-btn,
+.left-sidebar .map-type-btn {
+  min-height: 36px;
+  font-size: 13px;
+}
+
+.left-sidebar .color-palette-header {
+  margin-bottom: 7px;
+}
+
+.left-sidebar .color-palette-section,
+.left-sidebar .custom-color-create {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.left-sidebar .color-list {
+  gap: 5px;
+}
+
+.left-sidebar .color-item,
+.left-sidebar .custom-color-wrapper {
+  width: 22px;
+  height: 22px;
+}
+
+/* Масштаб отделён от поля рисования и не «прыгает» из-за длины процента. */
+.map-zoom-toolbar {
+  width: max-content;
+  margin: 0 4px 16px auto;
+  padding: 5px;
+  border: 1px solid #ddd7cc;
+  border-radius: 12px;
+  background: #fffdf9;
+  box-shadow: 0 5px 14px rgba(46, 42, 34, 0.06);
+}
+
+.map-zoom-toolbar .tool-btn {
+  min-width: 34px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+
+.map-zoom-toolbar > span {
+  display: inline-grid;
+  width: 48px;
+  place-items: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.workspace-type {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
 /* Карточка карты: превью всегда остаётся заметным квадратным окном. */
 .map-card {
   display: grid;

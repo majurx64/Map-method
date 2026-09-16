@@ -2457,37 +2457,39 @@ export default function App() {
         return;
       }
 
-      if (
-        (e.ctrlKey ||
-          e.metaKey) &&
-        e.key.toLowerCase() ===
-          "z"
-      ) {
+      const isUndoKey =
+        e.code === "KeyZ" ||
+        e.key.toLowerCase() === "z";
+
+      const isRedoKey =
+        e.code === "KeyY" ||
+        e.key.toLowerCase() === "y";
+
+      if ((e.ctrlKey || e.metaKey) && isUndoKey) {
         e.preventDefault();
+        e.stopPropagation();
 
         e.shiftKey
           ? redo()
           : undo();
-      } else if (
-        (e.ctrlKey ||
-          e.metaKey) &&
-        e.key.toLowerCase() ===
-          "y"
-      ) {
+      } else if ((e.ctrlKey || e.metaKey) && isRedoKey) {
         e.preventDefault();
+        e.stopPropagation();
         redo();
       }
     };
 
     window.addEventListener(
       "keydown",
-      f
+      f,
+      true
     );
 
     return () =>
       window.removeEventListener(
         "keydown",
-        f
+        f,
+        true
       );
   });
 
@@ -5301,10 +5303,7 @@ export default function App() {
             <div className="drawing-hint">
               {t(
                 "drawHint"
-              )}{" "}
-              {mapType ===
-                "free" &&
-                " · Ctrl+Z / Ctrl+Y"}
+              )} · Ctrl+Z / Ctrl+Y
             </div>
           </section>
 
