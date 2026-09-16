@@ -2332,26 +2332,19 @@ button:disabled {
 
 .left-sidebar {
   display: flex;
-  height: calc(100vh - 74px);
   min-height: calc(100vh - 74px);
   flex-direction: column;
-  align-self: start;
-  overflow: hidden;
 }
 
 .left-sidebar .palette-section {
-  display: flex;
   flex: 1;
-  min-height: 0;
   margin-bottom: 0;
 }
 
 .left-sidebar .palette-section .color-palette {
   display: flex;
-  flex: 1;
   height: 100%;
   flex-direction: column;
-  justify-content: space-between;
 }
 
 .left-sidebar .palette-section .custom-color-create {
@@ -2398,9 +2391,7 @@ button:disabled {
 
 @media (max-width: 720px) {
   .left-sidebar {
-    height: auto;
     min-height: auto;
-    overflow: visible;
   }
 }
 
