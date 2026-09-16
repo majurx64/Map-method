@@ -3256,19 +3256,6 @@ export default function App() {
     a.click();
   }
 
-  if (
-    authLoading ||
-    mapsLoading
-  ) {
-    return (
-      <div className="auth-loading">
-        {authLoading
-          ? "Загрузка..."
-          : "Загрузка карт..."}
-      </div>
-    );
-  }
-
   return (
     <div className="app">
       <header className="header">
@@ -4330,9 +4317,6 @@ export default function App() {
                       }}
                       >
                       <div className="map-card-preview">
-                        {map.mapType === "image" && map.image && (
-                          <img className="map-card-image" src={map.image} alt="" />
-                        )}
                         <div
                             className="map-card-grid"
                             style={{
@@ -4359,11 +4343,22 @@ export default function App() {
                                       : ""
                                   }`}
                                   style={{
-                                    backgroundColor: completedCells.has(i)
-                                      ? map.colors?.[i] || "#111111"
-                                      : map.mapType === "image" && map.showImage
-                                        ? "transparent"
-                                        : "#deded8",
+                                    backgroundColor:
+                                      map.mapType === "image"
+                                        ? completedCells.has(i)
+                                          ? map.colors?.[i] || "#e5e5e5"
+                                          : map.showImage
+                                            ? map.colors?.[i] || "#dcdcdc"
+                                            : "#e5e5e5"
+                                        : completedCells.has(i)
+                                          ? map.colors?.[i] || "#111111"
+                                          : "#deded8",
+                                    opacity:
+                                      map.mapType === "image" &&
+                                      map.showImage &&
+                                      !completedCells.has(i)
+                                        ? 0.35
+                                        : 1,
                                   }}
                                 />
                               )
