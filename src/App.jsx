@@ -1868,9 +1868,12 @@ export default function App() {
       ? progressCompletedRef.current
       : completedRef.current;
     const next = new Set(s.completed);
-    const changed = [...new Set([...current, ...next])].filter(
-      (index) => current.has(index) !== next.has(index)
-    );
+    const changed = [...new Set([...current, ...next])]
+      .filter((index) => current.has(index) !== next.has(index))
+      .map((index) => ({
+        index,
+        mode: current.has(index) ? "erase" : "draw",
+      }));
     animateCells(changed);
 
     if (target === "progress") {
@@ -1963,11 +1966,22 @@ export default function App() {
     return index < actualTotal ? index : null;
   }
 
-  function animateCells(indices) {
-    if (!indices?.length) return;
+  function animateCells(cells, mode = "draw") {
+    if (!cells?.length) return;
 
     const startedAt = performance.now();
-    indices.forEach((index) => cellAnimationsRef.current.set(index, startedAt));
+    cells.forEach((cell) => {
+      const index = typeof cell === "number" ? cell : cell.index;
+      const cellMode = typeof cell === "number" ? mode : cell.mode;
+      cellAnimationsRef.current.set(index, {
+        startedAt,
+        mode: cellMode,
+        color:
+          cellMode === "erase"
+            ? colorsRef.current[index] || drawColorRef.current
+            : null,
+      });
+    });
     setCellAnimationTick((tick) => tick + 1);
 
     window.clearTimeout(cellAnimationTimerRef.current);
@@ -1996,7 +2010,7 @@ export default function App() {
         }
       }
 
-      animateCells(changed);
+      animateCells(changed, mode);
       progressCompletedRef.current = next;
       setProgressCompleted([...next]);
       return;
@@ -2030,7 +2044,7 @@ export default function App() {
       }
     }
 
-    animateCells(changed);
+    animateCells(changed, mode);
     completedRef.current = nextSet;
     setCompleted([...nextSet]);
 
@@ -2397,10 +2411,8 @@ export default function App() {
           : "#e5e5e5";
       }
 
-      ctx.fillStyle = fill;
-
-      const animationStartedAt = cellAnimationsRef.current.get(i);
-      const elapsed = animationStartedAt === undefined ? 300 : now - animationStartedAt;
+      const animation = cellAnimationsRef.current.get(i);
+      const elapsed = animation === undefined ? 300 : now - animation.startedAt;
       const progress = Math.min(1, elapsed / 260);
       const scale = elapsed < 260
         ? progress < 0.72
@@ -2409,6 +2421,12 @@ export default function App() {
         : 1;
 
       if (elapsed < 260) hasActiveAnimations = true;
+
+      // При стирании коротко оставляем прежний цвет: эффект виден так же,
+      // как при закрашивании, а затем клетка возвращается к фону.
+      ctx.fillStyle = animation?.mode === "erase" && elapsed < 260
+        ? animation.color
+        : fill;
 
       ctx.fillRect(
         x + (cw * (1 - scale)) / 2,
@@ -2421,7 +2439,8 @@ export default function App() {
         mapType === "image" &&
         !active &&
         showImage &&
-        image
+        image &&
+        animation?.mode !== "erase"
       ) {
         ctx.globalAlpha = 0.35;
         ctx.fillStyle =
