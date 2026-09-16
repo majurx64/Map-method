@@ -2341,6 +2341,16 @@ button:disabled {
   margin-bottom: 0;
 }
 
+.left-sidebar .palette-section .color-palette {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+}
+
+.left-sidebar .palette-section .custom-color-create {
+  margin-top: auto;
+}
+
 .left-sidebar .color-palette-title {
   font-size: 15px;
 }
