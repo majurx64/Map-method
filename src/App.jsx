@@ -3840,18 +3840,18 @@ export default function App() {
 
       {screen === "home" && (
         <main className="home-page">
-          <section className="landing-hero">
+          <section className="landing-hero landing-hero-intro">
             <div className="landing-copy">
               <span className="landing-label">
-                {t("progress")}
+                Прогресс, который видно
               </span>
 
               <h1>
-                {t("hero")}
+                Преврати каждый маленький шаг в картинку.
               </h1>
 
               <p>
-                {t("heroText")}
+                MM превращает прогресс в сетку, которую можно увидеть. Закрашивай клетку, продвигай картинку и возвращайся ровно туда, где остановился.
               </p>
 
               <div className="home-actions">
@@ -3861,9 +3861,7 @@ export default function App() {
                     openCreateModal
                   }
                 >
-                  {t(
-                    "createMap"
-                  )}
+                  Создать карту →
                 </button>
 
                 <button
@@ -3881,169 +3879,103 @@ export default function App() {
                       )
                   }
                 >
-                  {t("preview")} ↓
+                  Попробовать сетку ↓
                 </button>
               </div>
             </div>
 
-            <div className="hero-demo-wrap" id="pyramid-demo">
+          </section>
+
+          <section className="landing-pyramid-section" id="pyramid-demo">
+            <div className="pyramid-heading">
+              <div>
+                <span className="landing-label">Живой эскиз</span>
+                <h2>30 дней чтения</h2>
+                <p>Нажимай на клетки. Рисунок меняется вместе с тобой.</p>
+              </div>
               <div className="hero-demo-progress">
                 <strong>{Math.round((heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100)}%</strong>
                 <span>{heroDemoCells.size} / {DEMO_PYRAMID_TOTAL} клеток</span>
               </div>
-              <div className="hero-grid demo-interactive hero-pyramid" onContextMenu={(event) => event.preventDefault()}>
-                {DEMO_PYRAMID_ROWS.map((count, row) => (
-                  <div className="hero-pyramid-row" key={row}>
-                    {Array.from({ length: count }, (_, column) => {
-                      const index = DEMO_PYRAMID_ROWS.slice(0, row).reduce((sum, value) => sum + value, 0) + column;
-                      return (
-                        <button
-                          key={index}
-                          type="button"
-                          className={heroDemoCells.has(index) ? "filled" : ""}
-                          onPointerDown={(event) => beginDemoStroke(event, index)}
-                          onPointerEnter={(event) => continueDemoStroke(event, index)}
-                          onContextMenu={(event) => event.preventDefault()}
-                        />
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section
-            className="landing-demo"
-            id="overview"
-          >
-            <div className="demo-copy">
-              <span className="demo-number">
-                01
-              </span>
-
-              <h2>
-                {t(
-                  "mapDescription"
-                )}
-              </h2>
-
-              <span className="landing-label">
-                {t("preview")}
-              </span>
-
-              <p>
-                {t("heroText")}
-              </p>
             </div>
 
-            <div className="demo-card">
-              <div className="demo-card-title">
-                100 {t("cells")}
+            <div className="pyramid-card">
+              <div className="pyramid-card-meta">
+                <span>День 01 — День 30</span>
+                <span>✓ Сохранено в карте</span>
               </div>
-
-              <div className="demo-grid">
-                {Array.from(
-                  {
-                    length: 100,
-                  },
-                  (_, i) => <button key={i} type="button" className={cardDemoCells.has(i) ? "filled" : ""} onClick={() => toggleDemoCell(setCardDemoCells, i)} onContextMenu={(event) => { event.preventDefault(); toggleDemoCell(setCardDemoCells, i, true); }} />
-                )}
+              <div className="hero-demo-wrap">
+                <div className="hero-grid demo-interactive hero-pyramid" onContextMenu={(event) => event.preventDefault()}>
+                  {DEMO_PYRAMID_ROWS.map((count, row) => (
+                    <div className="hero-pyramid-row" key={row}>
+                      {Array.from({ length: count }, (_, column) => {
+                        const index = DEMO_PYRAMID_ROWS.slice(0, row).reduce((sum, value) => sum + value, 0) + column;
+                        return (
+                          <button
+                            key={index}
+                            type="button"
+                            className={heroDemoCells.has(index) ? "filled" : ""}
+                            onPointerDown={(event) => beginDemoStroke(event, index)}
+                            onPointerEnter={(event) => continueDemoStroke(event, index)}
+                            onContextMenu={(event) => event.preventDefault()}
+                          />
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
               </div>
-
-              <div className="demo-metric">
-                <strong>
-                  {cardDemoCells.size}%
-                </strong>
-
-                <span>
-                  {cardDemoCells.size} / 100{" "}
-                  {t("cells")}
-                </span>
-              </div>
-
-              <div className="demo-line">
-                <span>00</span>
-                <i>
-                  <b style={{ width: `${cardDemoCells.size}%` }} />
-                </i>
-                <span>100</span>
-              </div>
-
-            </div>
-
-            <div className="demo-note">
-              {t(
-                "benefitThree"
-              )}
+              <div className="pyramid-card-footer">Продолжай. Эта картинка — твоя.</div>
             </div>
           </section>
 
           <section className="idea-section" id="how-it-works">
             <span className="landing-label">
-              {t("benefitOne")}
+              Идея
             </span>
 
             <h2>
-              {t("hero")}
+              Достаточно просто для<br /> каждого дня.
             </h2>
 
             <div className="idea-steps">
               <article>
                 <span>01</span>
 
-                <h3>
-                  {t(
-                    "myMaps"
-                  )}
-                </h3>
+                <h3>Выбери карту</h3>
 
-                <p>
-                  {t(
-                    "mapDescription"
-                  )}
-                </p>
+                <p>Начни с готового эскиза или создай собственную сетку.</p>
               </article>
 
               <article>
                 <span>02</span>
 
-                <h3>
-                  {t("brush")}
-                </h3>
+                <h3>Закрась клетку</h3>
 
-                <p>
-                  {t(
-                    "newCells"
-                  )}
-                </p>
+                <p>Одно действие становится видимой частью картинки.</p>
               </article>
 
               <article>
                 <span>03</span>
 
-                <h3>
-                  {t("preview")}
-                </h3>
+                <h3>Смотри, как она появляется</h3>
 
-                <p>
-                  {t("heroText")}
-                </p>
+                <p>Возвращайся позже и продолжай, не теряя прогресс.</p>
               </article>
             </div>
           </section>
 
           <section className="landing-final">
             <span className="landing-label">
-              MM
+              Дальше
             </span>
 
             <h2>
-              {t("hero")}
+              Создавай карты, к которым хочется возвращаться.
             </h2>
 
             <p>
-              {t("heroText")}
+              Сначала личные проекты. Далее — эскизы сообщества, экспорт и полноценный редактор карт.
             </p>
 
             <button
@@ -4052,9 +3984,7 @@ export default function App() {
                 openCreateModal
               }
             >
-              {t(
-                "createMap"
-              )}
+              ＋ Создать карту
             </button>
           </section>
 
@@ -4064,7 +3994,7 @@ export default function App() {
             </strong>
 
             <span>
-              {t("hero")}
+              Прогресс, который видно
             </span>
           </footer>
         </main>

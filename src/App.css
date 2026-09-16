@@ -2417,6 +2417,150 @@ button:disabled {
   box-shadow: 0 3px 8px rgba(35, 76, 60, 0.22);
 }
 
+/* Главная построена как спокойная последовательность: вступление, эскиз, идея. */
+.landing-hero-intro {
+  display: block;
+  min-height: min(720px, calc(100vh - 58px));
+  padding: clamp(104px, 11vw, 156px) 0 clamp(86px, 10vw, 132px);
+}
+
+.landing-hero-intro .landing-copy {
+  max-width: 760px;
+}
+
+.landing-hero-intro h1 {
+  max-width: 670px;
+  font-size: clamp(58px, 6.4vw, 86px);
+}
+
+.landing-hero-intro p {
+  max-width: 620px;
+}
+
+.landing-pyramid-section {
+  padding: 74px 0 112px;
+}
+
+.pyramid-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 30px;
+  margin-bottom: 22px;
+}
+
+.pyramid-heading .landing-label { margin-bottom: 10px; }
+.pyramid-heading h2 {
+  margin: 0;
+  color: #252621;
+  font-size: clamp(38px, 4.4vw, 56px);
+  line-height: 1;
+  letter-spacing: -0.06em;
+}
+.pyramid-heading p {
+  margin: 12px 0 0;
+  color: #697168;
+  font-size: 16px;
+}
+
+.pyramid-card {
+  overflow: hidden;
+  border: 1px solid #d8d0c4;
+  border-radius: 20px;
+  background: #eee8dc;
+  box-shadow: 0 14px 30px rgba(51, 46, 38, 0.055);
+}
+
+.pyramid-card-meta,
+.pyramid-card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 18px;
+  border-color: #d8d0c4;
+  background: #fffdf9;
+  color: #687066;
+  font-size: 12px;
+}
+
+.pyramid-card-meta { border-bottom: 1px solid #d8d0c4; }
+.pyramid-card-meta span:last-child { color: var(--green); }
+.pyramid-card-footer { border-top: 1px solid #d8d0c4; }
+
+.pyramid-card .hero-demo-wrap {
+  min-height: 540px;
+  place-items: center;
+  padding: 34px 24px;
+}
+
+.pyramid-card .hero-grid.hero-pyramid {
+  width: min(100%, 570px);
+  padding: 28px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.idea-section {
+  padding: 102px 0 132px;
+  border-top: 0;
+}
+
+.idea-section h2 {
+  font-size: clamp(44px, 5vw, 62px);
+}
+
+.idea-steps {
+  gap: 0;
+  margin-top: 44px;
+  border-top: 1px solid #d8d0c4;
+  border-bottom: 1px solid #d8d0c4;
+}
+
+.idea-steps article {
+  min-height: 170px;
+  padding: 28px 0 18px;
+  border: 0;
+  border-radius: 0;
+}
+
+.idea-steps article + article {
+  padding-left: 25px;
+  border-left: 1px solid #d8d0c4;
+}
+
+.idea-steps h3 { margin: 34px 0 8px; font-size: 21px; }
+
+.landing-final {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 40px;
+  align-items: center;
+  margin-bottom: 72px;
+  padding: clamp(34px, 5.5vw, 62px);
+}
+
+.landing-final .landing-label,
+.landing-final h2,
+.landing-final p { grid-column: 1; }
+.landing-final .save-map-btn { grid-column: 2; grid-row: 1 / span 3; }
+
+@media (max-width: 720px) {
+  .landing-hero-intro { min-height: auto; padding: 78px 0 58px; }
+  .landing-hero-intro h1 { font-size: clamp(48px, 14vw, 66px); }
+  .landing-pyramid-section { padding: 48px 0 72px; }
+  .pyramid-heading { display: grid; align-items: start; }
+  .pyramid-heading .hero-demo-progress { justify-items: start; }
+  .pyramid-card .hero-demo-wrap { min-height: 370px; padding: 18px 6px; }
+  .pyramid-card-meta { padding: 12px; font-size: 11px; }
+  .pyramid-card-meta span:last-child { display: none; }
+  .idea-section { padding: 70px 0; }
+  .idea-steps { grid-template-columns: 1fr; }
+  .idea-steps article + article { padding-left: 0; border-left: 0; border-top: 1px solid #d8d0c4; }
+  .landing-final { display: block; }
+  .landing-final .save-map-btn { width: 100%; }
+}
+
 @media (max-width: 720px) {
   .hero-demo-wrap { justify-items: center; }
   .hero-demo-progress { justify-items: center; }
