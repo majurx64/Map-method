@@ -2325,9 +2325,64 @@ button:disabled {
 }
 
 .workspace-type {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: 0.08em;
+}
+
+.left-sidebar {
+  display: flex;
+  min-height: calc(100vh - 74px);
+  flex-direction: column;
+}
+
+.left-sidebar .palette-section {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.left-sidebar .color-palette-title {
+  font-size: 15px;
+}
+
+.left-sidebar .color-palette-subtitle,
+.left-sidebar .color-palette-label {
+  font-size: 11px;
+}
+
+.left-sidebar .selected-color-preview {
+  width: 30px;
+  height: 30px;
+}
+
+.left-sidebar .color-list {
+  gap: 8px;
+}
+
+.left-sidebar .color-item,
+.left-sidebar .custom-color-wrapper {
+  width: 27px;
+  height: 27px;
+}
+
+.left-sidebar .color-dot {
+  inset: 2px;
+}
+
+.left-sidebar .color-picker-wrap {
+  height: 36px;
+}
+
+.left-sidebar .add-color-btn {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .left-sidebar {
+    min-height: auto;
+  }
 }
 
 /* Карточка карты: превью всегда остаётся заметным квадратным окном. */
