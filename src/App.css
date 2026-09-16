@@ -2393,7 +2393,7 @@ button:disabled {
 .hero-grid.hero-pyramid {
   display: grid;
   grid-template-columns: 1fr;
-  width: min(100%, 530px);
+  width: min(100%, 560px);
   gap: 4px;
   padding: 26px;
   touch-action: none;
@@ -2406,17 +2406,22 @@ button:disabled {
 }
 
 .hero-pyramid-row button {
-  width: 30px;
-  height: 30px;
+  width: 18px;
+  height: 18px;
   border-radius: 2px;
-  animation: cell-pop 180ms ease-out;
+  transition: transform 150ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.hero-pyramid-row button.filled {
+  animation: cell-pop 260ms cubic-bezier(.2,.9,.3,1.25);
+  box-shadow: 0 3px 8px rgba(35, 76, 60, 0.22);
 }
 
 @media (max-width: 720px) {
   .hero-demo-wrap { justify-items: center; }
   .hero-demo-progress { justify-items: center; }
   .hero-grid.hero-pyramid { padding: 14px; }
-  .hero-pyramid-row button { width: 18px; height: 18px; }
+  .hero-pyramid-row button { width: 12px; height: 12px; }
 }
 
 .game-fill-btn {
@@ -2447,11 +2452,15 @@ button:disabled {
 
 .victory-overlay strong { font-size: clamp(28px, 5vw, 52px); }
 .victory-overlay span { font-size: 16px; }
-.victory-confetti { color: #ffe06b; font-size: clamp(28px, 6vw, 58px); letter-spacing: 0.18em; animation: confetti 750ms ease-in-out infinite alternate; }
+.victory-confetti { position: relative; width: min(72vw, 720px); height: 220px; }
+.victory-confetti i { position: absolute; left: var(--x); top: var(--y); color: hsl(calc(var(--particle) * 43), 90%, 66%); font-size: clamp(20px, 4vw, 46px); font-style: normal; animation: firework 1.2s cubic-bezier(.15,.8,.25,1) infinite; animation-delay: calc(var(--particle) * -90ms); }
+.grid-canvas.is-drawing { animation: canvas-tap 180ms ease-out; }
 
 @keyframes cell-pop { 0% { transform: scale(.72); } 75% { transform: scale(1.08); } 100% { transform: scale(1); } }
 @keyframes confetti { from { transform: translateY(-8px) rotate(-4deg); } to { transform: translateY(8px) rotate(4deg); } }
 @keyframes victory-fade { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes firework { 0% { transform: scale(.2) rotate(0deg); opacity: 0; } 18% { opacity: 1; } 75% { transform: translate(var(--drift-x), var(--drift-y)) scale(1.2) rotate(160deg); opacity: 1; } 100% { transform: translate(var(--drift-x), 120px) scale(.45) rotate(280deg); opacity: 0; } }
+@keyframes canvas-tap { 0% { filter: brightness(1); } 45% { filter: brightness(1.08) saturate(1.15); } 100% { filter: brightness(1); } }
 
 .left-sidebar {
   display: flex;

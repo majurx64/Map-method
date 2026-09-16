@@ -23,7 +23,7 @@ const BASIC_COLORS = [
   "#FF47CA",
 ];
 
-const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13];
+const DEMO_PYRAMID_ROWS = [4, 8, 12, 16, 20, 20, 20];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
 
 const translations = {
@@ -957,7 +957,7 @@ export default function App() {
   );
   const [saveStatus, setSaveStatus] = useState("");
   const [heroDemoCells, setHeroDemoCells] = useState(
-    () => new Set(Array.from({ length: 25 }, (_, index) => index * 2))
+    () => new Set(Array.from({ length: 50 }, (_, index) => index * 2))
   );
   const [cardDemoCells, setCardDemoCells] = useState(
     () => new Set(Array.from({ length: 50 }, (_, index) => index))
@@ -3421,7 +3421,22 @@ export default function App() {
     <div className="app">
       {showVictory && (
         <div className="victory-overlay" role="status">
-          <div className="victory-confetti">✦ ✦ ✦ ✦ ✦ ✦ ✦</div>
+          <div className="victory-confetti" aria-hidden="true">
+            {Array.from({ length: 28 }, (_, index) => (
+              <i
+                key={index}
+                style={{
+                  "--particle": index,
+                  "--x": `${(index * 37) % 100}%`,
+                  "--y": `${(index * 53) % 72}%`,
+                  "--drift-x": `${((index % 7) - 3) * 16}px`,
+                  "--drift-y": `${(Math.floor(index / 7) - 2) * 18}px`,
+                }}
+              >
+                ✦
+              </i>
+            ))}
+          </div>
           <strong>Карта завершена!</strong>
           <span>Отличная работа — рисунок собран.</span>
         </div>
@@ -5457,7 +5472,7 @@ export default function App() {
                       ref={
                         canvasRef
                       }
-                      className="grid-canvas"
+                    className={`grid-canvas ${isDrawing ? "is-drawing" : ""}`}
                       style={{
                         touchAction:
                           "none",
