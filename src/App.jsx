@@ -1219,32 +1219,81 @@ export default function App() {
     const positions = JSON.parse(
       localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
     );
-    const target = positions[screen] || 0;
+    const target = Math.max(0, Number(positions[screen]) || 0);
     let restored = false;
     const restore = () => {
       window.scrollTo(0, target);
       restored = true;
     };
-    const firstFrame = requestAnimationFrame(restore);
-    const delayedRestore = window.setTimeout(restore, 350);
+    // Карточки и изображения могут увеличить страницу уже после первого кадра.
+    // Повторяем восстановление несколько раз, чтобы браузер не обрезал позицию
+    // до высоты ещё не отрисованного содержимого.
+    const restoreTimers = [0, 80, 300, 700, 1200].map((delay) =>
+      window.setTimeout(restore, delay)
+    );
     const savePosition = () => {
       if (!restored) return;
       const next = JSON.parse(
         localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
       );
-      next[screen] = window.scrollY;
+      next[screen] = Math.max(
+        window.scrollY,
+        document.documentElement.scrollTop,
+        document.body.scrollTop
+      );
       localStorage.setItem(SCROLL_POSITIONS_KEY, JSON.stringify(next));
     };
     window.addEventListener("scroll", savePosition, { passive: true });
     window.addEventListener("pagehide", savePosition);
+    window.addEventListener("beforeunload", savePosition);
+    const saveWhenHidden = () => {
+      if (document.visibilityState === "hidden") savePosition();
+    };
+    document.addEventListener("visibilitychange", saveWhenHidden);
     return () => {
-      cancelAnimationFrame(firstFrame);
-      window.clearTimeout(delayedRestore);
+      restoreTimers.forEach((timer) => window.clearTimeout(timer));
       savePosition();
       window.removeEventListener("scroll", savePosition);
       window.removeEventListener("pagehide", savePosition);
+      window.removeEventListener("beforeunload", savePosition);
+      document.removeEventListener("visibilitychange", saveWhenHidden);
     };
   }, [screen, authLoading, mapsLoading]);
+
+  useEffect(() => {
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") return;
+
+      if (isCreateOpen) {
+        setIsCreateOpen(false);
+        return;
+      }
+
+      if (isRenameOpen) {
+        setIsRenameOpen(false);
+        return;
+      }
+
+      if (isDeleteOpen) {
+        setIsDeleteOpen(false);
+        return;
+      }
+
+      if (isAccountOpen) {
+        setIsAccountOpen(false);
+        return;
+      }
+
+      if (screen === "editor") {
+        setScreen("maps");
+      } else if (["maps", "account", "auth"].includes(screen)) {
+        setScreen("home");
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [screen, isCreateOpen, isRenameOpen, isDeleteOpen, isAccountOpen]);
 
   useEffect(() => {
     if (!isMapInitialized) return;
@@ -4251,6 +4300,10 @@ export default function App() {
                     map.completed
                       ?.length || 0;
 
+                  const completedCells = new Set(
+                    map.completed || []
+                  );
+
                   const p =
                     Math.min(
                       100,
@@ -4300,8 +4353,18 @@ export default function App() {
                                   key={
                                     i
                                   }
-                                  className="map-card-cell"
-                                  style={{ backgroundColor: map.completed?.includes(i) ? map.colors?.[i] || "#111111" : map.mapType === "image" && map.showImage ? map.colors?.[i] || "#deded8" : "#deded8", opacity: map.mapType === "image" && !map.completed?.includes(i) && map.showImage ? 0.35 : 1 }}
+                                  className={`map-card-cell ${
+                                    completedCells.has(i)
+                                      ? "filled"
+                                      : ""
+                                  }`}
+                                  style={{
+                                    backgroundColor: completedCells.has(i)
+                                      ? map.colors?.[i] || "#111111"
+                                      : map.mapType === "image" && map.showImage
+                                        ? "transparent"
+                                        : "#deded8",
+                                  }}
                                 />
                               )
                             )}
