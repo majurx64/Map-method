@@ -2598,13 +2598,12 @@ button:disabled {
 .victory-overlay span { font-size: 16px; }
 .victory-confetti { position: relative; width: min(72vw, 720px); height: 220px; }
 .victory-confetti i { position: absolute; left: var(--x); top: var(--y); color: hsl(calc(var(--particle) * 43), 90%, 66%); font-size: clamp(20px, 4vw, 46px); font-style: normal; animation: firework 1.2s cubic-bezier(.15,.8,.25,1) infinite; animation-delay: calc(var(--particle) * -90ms); }
-.grid-canvas.is-drawing { animation: canvas-tap 180ms ease-out; }
+.mini-preview span.cell-pop { animation: cell-pop 260ms cubic-bezier(.2,.9,.3,1.25); }
 
 @keyframes cell-pop { 0% { transform: scale(.72); } 75% { transform: scale(1.08); } 100% { transform: scale(1); } }
 @keyframes confetti { from { transform: translateY(-8px) rotate(-4deg); } to { transform: translateY(8px) rotate(4deg); } }
 @keyframes victory-fade { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes firework { 0% { transform: scale(.2) rotate(0deg); opacity: 0; } 18% { opacity: 1; } 75% { transform: translate(var(--drift-x), var(--drift-y)) scale(1.2) rotate(160deg); opacity: 1; } 100% { transform: translate(var(--drift-x), 120px) scale(.45) rotate(280deg); opacity: 0; } }
-@keyframes canvas-tap { 0% { filter: brightness(1); } 45% { filter: brightness(1.08) saturate(1.15); } 100% { filter: brightness(1); } }
 
 .left-sidebar {
   display: flex;

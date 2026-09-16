@@ -1046,6 +1046,8 @@ export default function App() {
     setIsDrawing,
   ] = useState(false);
 
+  const [, setCellAnimationTick] = useState(0);
+
   const [
     drawMode,
     setDrawMode,
@@ -1127,6 +1129,9 @@ export default function App() {
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
   const wasGameCompleteRef = useRef(false);
+  const cellAnimationsRef = useRef(new Map());
+  const cellAnimationTimerRef = useRef(null);
+  const canvasAnimationFrameRef = useRef(null);
 
   const isDrawingRef = useRef(false);
   const drawModeRef = useRef("draw");
@@ -1859,14 +1864,22 @@ export default function App() {
   }
 
   function setSnapshot(s, target = "drawing") {
+    const current = target === "progress"
+      ? progressCompletedRef.current
+      : completedRef.current;
+    const next = new Set(s.completed);
+    const changed = [...new Set([...current, ...next])].filter(
+      (index) => current.has(index) !== next.has(index)
+    );
+    animateCells(changed);
+
     if (target === "progress") {
-      progressCompletedRef.current = new Set(s.completed);
+      progressCompletedRef.current = next;
       setProgressCompleted([...s.completed]);
       return;
     }
 
-    completedRef.current =
-      new Set(s.completed);
+    completedRef.current = next;
 
     colorsRef.current = [
       ...s.colors,
@@ -1950,19 +1963,40 @@ export default function App() {
     return index < actualTotal ? index : null;
   }
 
+  function animateCells(indices) {
+    if (!indices?.length) return;
+
+    const startedAt = performance.now();
+    indices.forEach((index) => cellAnimationsRef.current.set(index, startedAt));
+    setCellAnimationTick((tick) => tick + 1);
+
+    window.clearTimeout(cellAnimationTimerRef.current);
+    cellAnimationTimerRef.current = window.setTimeout(() => {
+      cellAnimationsRef.current.clear();
+      setCellAnimationTick((tick) => tick + 1);
+    }, 300);
+  }
+
   function applyCells(indices, mode) {
     if (!indices?.length) return;
 
     if (isGameMode && mapType === "free") {
       const next = new Set(progressCompletedRef.current);
+      const changed = [];
 
       for (const i of indices) {
         // В игре можно отмечать только клетки готового рисунка.
         if (!completedRef.current.has(i)) continue;
-        if (mode === "draw") next.add(i);
-        else next.delete(i);
+        if (mode === "draw" && !next.has(i)) {
+          next.add(i);
+          changed.push(i);
+        } else if (mode !== "draw" && next.has(i)) {
+          next.delete(i);
+          changed.push(i);
+        }
       }
 
+      animateCells(changed);
       progressCompletedRef.current = next;
       setProgressCompleted([...next]);
       return;
@@ -1975,9 +2009,11 @@ export default function App() {
       mapType === "free"
         ? [...colorsRef.current]
         : null;
+    const changed = [];
 
     for (const i of indices) {
       if (mode === "draw") {
+        if (!nextSet.has(i)) changed.push(i);
         nextSet.add(i);
 
         if (nextColors) {
@@ -1985,6 +2021,7 @@ export default function App() {
             drawColorRef.current;
         }
       } else {
+        if (nextSet.has(i)) changed.push(i);
         nextSet.delete(i);
 
         if (nextColors) {
@@ -1993,6 +2030,7 @@ export default function App() {
       }
     }
 
+    animateCells(changed);
     completedRef.current = nextSet;
     setCompleted([...nextSet]);
 
@@ -2315,6 +2353,9 @@ export default function App() {
     const ch =
       rect.height / rows;
 
+    const now = performance.now();
+    let hasActiveAnimations = false;
+
     for (
       let i = 0;
       i < actualTotal;
@@ -2358,11 +2399,22 @@ export default function App() {
 
       ctx.fillStyle = fill;
 
+      const animationStartedAt = cellAnimationsRef.current.get(i);
+      const elapsed = animationStartedAt === undefined ? 300 : now - animationStartedAt;
+      const progress = Math.min(1, elapsed / 260);
+      const scale = elapsed < 260
+        ? progress < 0.72
+          ? 0.72 + progress * 0.5
+          : 1.08 - (progress - 0.72) * 0.29
+        : 1;
+
+      if (elapsed < 260) hasActiveAnimations = true;
+
       ctx.fillRect(
-        x,
-        y,
-        cw + 0.5,
-        ch + 0.5
+        x + (cw * (1 - scale)) / 2,
+        y + (ch * (1 - scale)) / 2,
+        cw * scale + 0.5,
+        ch * scale + 0.5
       );
 
       if (
@@ -2408,6 +2460,11 @@ export default function App() {
         y
       );
       ctx.stroke();
+    }
+
+    if (hasActiveAnimations) {
+      window.cancelAnimationFrame(canvasAnimationFrameRef.current);
+      canvasAnimationFrameRef.current = window.requestAnimationFrame(drawCanvas);
     }
 
     for (
@@ -2931,7 +2988,9 @@ export default function App() {
       ? [...available].sort(() => Math.random() - 0.5)
       : available.sort((a, b) => a - b);
     const next = new Set(progressCompletedRef.current);
-    cells.slice(0, count).forEach((index) => next.add(index));
+    const added = cells.slice(0, count);
+    added.forEach((index) => next.add(index));
+    animateCells(added);
     progressCompletedRef.current = next;
     setProgressCompleted([...next]);
     setIsGameFillOpen(false);
@@ -5402,7 +5461,7 @@ export default function App() {
                       ref={
                         canvasRef
                       }
-                    className={`grid-canvas ${isDrawing ? "is-drawing" : ""}`}
+                    className="grid-canvas"
                       style={{
                         touchAction:
                           "none",
@@ -5470,6 +5529,7 @@ export default function App() {
                     return (
                       <span
                         key={i}
+                        className={cellAnimationsRef.current.has(i) ? "cell-pop" : ""}
                         style={{
                           backgroundColor:
                             active
