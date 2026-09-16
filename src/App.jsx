@@ -1129,6 +1129,7 @@ export default function App() {
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
   const wasGameCompleteRef = useRef(false);
+  const imageProcessingRef = useRef(0);
   const cellAnimationsRef = useRef(new Map());
   const cellAnimationTimerRef = useRef(null);
   const canvasAnimationFrameRef = useRef(null);
@@ -1182,12 +1183,14 @@ export default function App() {
       )
     : 0;
 
-  const isPlaying = isGameMode && mapType === "free";
+  const isPlaying = isGameMode;
   const displayedCompleted = isPlaying
     ? progressCompleted
     : completed;
   const displayedTotal = isPlaying
-    ? completed.length
+    ? mapType === "image"
+      ? actualTotal
+      : completed.length
     : actualTotal;
   const displayedProgress = displayedTotal
     ? Math.min(100, Math.round((displayedCompleted.length / displayedTotal) * 100))
@@ -1355,13 +1358,14 @@ export default function App() {
   }, [progressCompleted]);
 
   useEffect(() => {
-    const complete = isGameMode && mapType === "free" && completed.length > 0 && progressCompleted.length >= completed.length;
+    const gameTotal = mapType === "image" ? actualTotal : completed.length;
+    const complete = isGameMode && gameTotal > 0 && progressCompleted.length >= gameTotal;
     if (complete && !wasGameCompleteRef.current) {
       setShowVictory(true);
       window.setTimeout(() => setShowVictory(false), 3200);
     }
     wasGameCompleteRef.current = complete;
-  }, [isGameMode, mapType, completed, progressCompleted]);
+  }, [isGameMode, mapType, actualTotal, completed, progressCompleted]);
 
   useEffect(() => {
     colorsRef.current = colors;
@@ -1994,13 +1998,13 @@ export default function App() {
   function applyCells(indices, mode) {
     if (!indices?.length) return;
 
-    if (isGameMode && mapType === "free") {
+    if (isGameMode) {
       const next = new Set(progressCompletedRef.current);
       const changed = [];
 
       for (const i of indices) {
         // В игре можно отмечать только клетки готового рисунка.
-        if (!completedRef.current.has(i)) continue;
+        if (mapType === "free" && !completedRef.current.has(i)) continue;
         if (mode === "draw" && !next.has(i)) {
           next.add(i);
           changed.push(i);
@@ -2071,7 +2075,7 @@ export default function App() {
 
     strokeBeforeRef.current =
       new Set(
-        isGameMode && mapType === "free"
+        isGameMode
           ? progressCompletedRef.current
           : completedRef.current
       );
@@ -2150,7 +2154,7 @@ export default function App() {
     if (before) {
       const after =
         new Set(
-          isGameMode && mapType === "free"
+          isGameMode
             ? progressCompletedRef.current
             : completedRef.current
         );
@@ -2160,7 +2164,7 @@ export default function App() {
         after,
         strokeColorsBeforeRef.current,
         colorsRef.current,
-        isGameMode && mapType === "free" ? "progress" : "drawing"
+        isGameMode ? "progress" : "drawing"
       );
     }
 
@@ -2189,7 +2193,7 @@ export default function App() {
     if (i === null) return;
 
     const currentSet =
-      isGameMode && mapType === "free"
+      isGameMode
         ? progressCompletedRef.current
         : completedRef.current;
     const mode = e.button === 2 || currentSet.has(i) ? "erase" : "draw";
@@ -2288,7 +2292,7 @@ export default function App() {
   function clearProgress() {
     finishStroke();
 
-    if (isGameMode && mapType === "free") {
+    if (isGameMode) {
       const before = new Set(progressCompletedRef.current);
       if (!before.size) return;
       progressCompletedRef.current = new Set();
@@ -2389,7 +2393,7 @@ export default function App() {
 
       const drawingActive = completedRef.current.has(i);
       const active =
-        isGameMode && mapType === "free"
+        isGameMode
           ? progressCompletedRef.current.has(i)
           : drawingActive;
 
@@ -2674,6 +2678,7 @@ export default function App() {
     targetCols = cols,
     targetRows = rows
   ) {
+    const requestId = ++imageProcessingRef.current;
     const img =
       new Image();
 
@@ -2730,7 +2735,10 @@ export default function App() {
           `rgb(${data[p]}, ${data[p + 1]}, ${data[p + 2]})`;
       }
 
-      setColors(next);
+      if (requestId === imageProcessingRef.current) {
+        colorsRef.current = next;
+        setColors(next);
+      }
     };
 
     img.src = dataUrl;
@@ -2753,24 +2761,32 @@ export default function App() {
         new Image();
 
       img.onload = () => {
+        const ratio = img.width / img.height || 1;
+        const dimensions = getGridDimensions(
+          requestedTotal,
+          ratio,
+          gridMode,
+          manualRows,
+          manualCols
+        );
+
         setImage(src);
 
-        setImageRatio(
-          img.width /
-            img.height ||
-            1
-        );
+        setImageRatio(ratio);
 
         setMapType("image");
         setShowImage(true);
+        setIsGameMode(false);
+        progressCompletedRef.current = new Set();
+        setProgressCompleted([]);
         setCompletedDirectly([]);
         clearHistory();
 
         processImage(
           src,
-          img.width /
-            img.height ||
-            1
+          ratio,
+          dimensions.cols,
+          dimensions.rows
         );
       };
 
@@ -2800,6 +2816,9 @@ export default function App() {
     finishStroke();
 
     setMapType(type);
+    setIsGameMode(false);
+    progressCompletedRef.current = new Set();
+    setProgressCompleted([]);
 
     setCompletedDirectly([]);
 
@@ -3000,7 +3019,10 @@ export default function App() {
 
   function fillGameCells() {
     const count = Math.max(1, Number(gameFillCount) || 1);
-    const available = [...completedRef.current].filter(
+    const targets = mapType === "image"
+      ? Array.from({ length: actualTotal }, (_, index) => index)
+      : [...completedRef.current];
+    const available = targets.filter(
       (index) => !progressCompletedRef.current.has(index)
     );
     const cells = gameFillRandom
@@ -4925,9 +4947,9 @@ export default function App() {
                       style={{
                         display: "grid",
                         gridTemplateColumns:
-                          "34px 34px minmax(48px, 1fr) 34px 34px",
+                          "30px 30px minmax(66px, 1fr) 30px 30px",
                         alignItems: "center",
-                        gap: "5px",
+                        gap: "3px",
                         width: "100%",
                         minHeight: "40px",
                         padding: "3px",
@@ -4953,8 +4975,8 @@ export default function App() {
                               changeTotalCells(delta)
                             }
                             style={{
-                              width: "34px",
-                              minWidth: "34px",
+                              width: "30px",
+                              minWidth: "30px",
                               height: "34px",
                               padding: 0,
                               display: "grid",
@@ -5004,8 +5026,8 @@ export default function App() {
                               changeTotalCells(delta)
                             }
                             style={{
-                              width: "34px",
-                              minWidth: "34px",
+                              width: "30px",
+                              minWidth: "30px",
                               height: "34px",
                               padding: 0,
                               display: "grid",
@@ -5076,19 +5098,29 @@ export default function App() {
                   </button>
                   </div>
 
-                  {mapType === "free" && (
-                    <>
-                      <div className="map-mode-switch" role="group" aria-label="Режим карты">
-                        <button className={!isGameMode ? "active" : ""} onClick={() => setIsGameMode(false)}>Рисование</button>
-                        <button className={isGameMode ? "active" : ""} disabled={!completed.length} onClick={() => setIsGameMode(true)}>Игра</button>
-                      </div>
-                      {isGameMode && (
-                        <button className="game-fill-btn" onClick={() => setIsGameFillOpen(true)}>
-                          Заполнить клетки
-                        </button>
-                      )}
-                    </>
-                  )}
+                  <>
+                    <div className="map-mode-switch" role="group" aria-label="Режим карты">
+                      <button className={!isGameMode ? "active" : ""} onClick={() => setIsGameMode(false)}>Рисование</button>
+                      <button
+                        className={isGameMode ? "active" : ""}
+                        disabled={mapType === "free" ? !completed.length : !image}
+                        onClick={() => {
+                          if (mapType === "image" && !progressCompletedRef.current.size && completedRef.current.size) {
+                            progressCompletedRef.current = new Set(completedRef.current);
+                            setProgressCompleted([...completedRef.current]);
+                          }
+                          setIsGameMode(true);
+                        }}
+                      >
+                        Игра
+                      </button>
+                    </div>
+                    {isGameMode && (
+                      <button className="game-fill-btn" onClick={() => setIsGameFillOpen(true)}>
+                        Заполнить клетки
+                      </button>
+                    )}
+                  </>
 
                   <div className="tool-actions">
                   <button
@@ -5536,10 +5568,9 @@ export default function App() {
                       actualTotal,
                   },
                   (_, i) => {
-                    const active =
-                      completed.includes(
-                        i
-                      );
+                    const active = isGameMode
+                      ? progressCompleted.includes(i)
+                      : completed.includes(i);
 
                     const color =
                       colors[i] ||
