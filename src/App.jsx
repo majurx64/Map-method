@@ -2649,17 +2649,18 @@ export default function App() {
     let nextRows = manualRows;
     let nextCols = manualCols;
 
-    // При первом переходе из «Авто» сохраняем ту же форму сетки.
-    // Так изображение не пересчитывается по старым размерам и не «ломается».
+    // В ручном режиме начинаем с компактной, почти квадратной сетки.
+    // Цвета изображения сразу пересчитываются по этим же размерам.
     if (mode === "manual") {
-      const automatic = getGridDimensions(
-        requestedTotal,
-        imageRatio,
-        "auto"
+      const squareSide = Math.max(
+        1,
+        Math.round(Math.sqrt(requestedTotal))
       );
 
-      nextRows = String(automatic.rows);
-      nextCols = String(automatic.cols);
+      nextRows = String(squareSide);
+      nextCols = String(
+        Math.max(1, Math.ceil(requestedTotal / squareSide))
+      );
       setManualRows(nextRows);
       setManualCols(nextCols);
     }
@@ -2685,8 +2686,6 @@ export default function App() {
           )
         : []
     );
-
-    clearHistory();
 
     if (image) {
       processImage(
@@ -2729,8 +2728,6 @@ export default function App() {
       )
     );
 
-    clearHistory();
-
     if (image) {
       processImage(
         image,
@@ -2771,8 +2768,6 @@ export default function App() {
           i < d.actualTotal
       )
     );
-
-    clearHistory();
 
     if (image) {
       processImage(
@@ -2824,7 +2819,6 @@ export default function App() {
       }
     }
 
-    clearHistory();
   }
 
   function changeTotalCells(
@@ -2860,19 +2854,9 @@ export default function App() {
 
   function updateManualTotalCells(next) {
     const safeTotal = Math.max(1, Number(next) || 1);
-    const ratio =
-      Math.max(
-        0.01,
-        Number(manualCols) /
-          Math.max(
-            1,
-            Number(manualRows)
-          ) || 1
-      );
-
     const nextRows = Math.max(
       1,
-      Math.round(Math.sqrt(safeTotal / ratio))
+      Math.round(Math.sqrt(safeTotal))
     );
     const nextCols = Math.max(1, Math.ceil(safeTotal / nextRows));
 
@@ -2897,8 +2881,6 @@ export default function App() {
           safeTotal
       )
     );
-
-    clearHistory();
 
     if (image) {
       processImage(
