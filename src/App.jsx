@@ -23,13 +23,13 @@ const BASIC_COLORS = [
   "#FF47CA",
 ];
 
-const DEMO_PYRAMID_ROWS = [2, 4, 6, 8, 10, 12, 14, 16, 16, 16];
+const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
 
 const translations = {
   ru: {
     myMaps: "Мои карты",
-    editor: "редактор",
+    editor: "Редактор",
     save: "Сохранить",
     mapData: "Данные карты",
     name: "Название",
@@ -957,13 +957,17 @@ export default function App() {
   );
   const [saveStatus, setSaveStatus] = useState("");
   const [heroDemoCells, setHeroDemoCells] = useState(
-    () => new Set(Array.from({ length: 52 }, (_, index) => index * 2))
+    () => new Set(Array.from({ length: 25 }, (_, index) => index * 2))
   );
   const [cardDemoCells, setCardDemoCells] = useState(
     () => new Set(Array.from({ length: 50 }, (_, index) => index))
   );
   const [isGameMode, setIsGameMode] = useState(false);
   const [progressCompleted, setProgressCompleted] = useState([]);
+  const [isGameFillOpen, setIsGameFillOpen] = useState(false);
+  const [gameFillCount, setGameFillCount] = useState("1");
+  const [gameFillRandom, setGameFillRandom] = useState(false);
+  const [showVictory, setShowVictory] = useState(false);
 
   const activeMap =
     maps.find((m) => m.id === activeMapId) || null;
@@ -1122,6 +1126,7 @@ export default function App() {
   const accountRef = useRef(null);
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
+  const wasGameCompleteRef = useRef(false);
 
   const isDrawingRef = useRef(false);
   const drawModeRef = useRef("draw");
@@ -1343,6 +1348,15 @@ export default function App() {
   useEffect(() => {
     progressCompletedRef.current = new Set(progressCompleted);
   }, [progressCompleted]);
+
+  useEffect(() => {
+    const complete = isGameMode && mapType === "free" && completed.length > 0 && progressCompleted.length >= completed.length;
+    if (complete && !wasGameCompleteRef.current) {
+      setShowVictory(true);
+      window.setTimeout(() => setShowVictory(false), 3200);
+    }
+    wasGameCompleteRef.current = complete;
+  }, [isGameMode, mapType, completed, progressCompleted]);
 
   useEffect(() => {
     colorsRef.current = colors;
@@ -1844,8 +1858,8 @@ export default function App() {
     }
   }
 
-  function setSnapshot(s) {
-    if (s.target === "progress") {
+  function setSnapshot(s, target = "drawing") {
+    if (target === "progress") {
       progressCompletedRef.current = new Set(s.completed);
       setProgressCompleted([...s.completed]);
       return;
@@ -1878,7 +1892,7 @@ export default function App() {
     if (!a) return;
 
     redoStackRef.current.push(a);
-    setSnapshot(a.before);
+    setSnapshot(a.before, a.target);
   }
 
   function redo() {
@@ -1892,7 +1906,7 @@ export default function App() {
     if (!a) return;
 
     undoStackRef.current.push(a);
-    setSnapshot(a.after);
+    setSnapshot(a.after, a.target);
   }
 
   function getCellFromPointerEvent(e) {
@@ -2122,10 +2136,11 @@ export default function App() {
 
     if (i === null) return;
 
-    const mode =
-      e.button === 2
-        ? "erase"
-        : "draw";
+    const currentSet =
+      isGameMode && mapType === "free"
+        ? progressCompletedRef.current
+        : completedRef.current;
+    const mode = e.button === 2 || currentSet.has(i) ? "erase" : "draw";
 
     try {
       canvasRef.current?.setPointerCapture(
@@ -2907,10 +2922,28 @@ export default function App() {
 
   }
 
+  function fillGameCells() {
+    const count = Math.max(1, Number(gameFillCount) || 1);
+    const available = [...completedRef.current].filter(
+      (index) => !progressCompletedRef.current.has(index)
+    );
+    const cells = gameFillRandom
+      ? [...available].sort(() => Math.random() - 0.5)
+      : available.sort((a, b) => a - b);
+    const next = new Set(progressCompletedRef.current);
+    cells.slice(0, count).forEach((index) => next.add(index));
+    progressCompletedRef.current = next;
+    setProgressCompleted([...next]);
+    setIsGameFillOpen(false);
+  }
+
   function beginDemoStroke(event, index) {
     event.preventDefault();
     demoPointerRef.current = event.pointerId;
-    demoModeRef.current = event.button === 2 ? "erase" : "draw";
+    demoModeRef.current =
+      event.button === 2 || heroDemoCells.has(index)
+        ? "erase"
+        : "draw";
     toggleDemoCell(setHeroDemoCells, index, demoModeRef.current === "erase");
   }
 
@@ -3386,6 +3419,13 @@ export default function App() {
 
   return (
     <div className="app">
+      {showVictory && (
+        <div className="victory-overlay" role="status">
+          <div className="victory-confetti">✦ ✦ ✦ ✦ ✦ ✦ ✦</div>
+          <strong>Карта завершена!</strong>
+          <span>Отличная работа — рисунок собран.</span>
+        </div>
+      )}
       <header className="header">
         <button
           className="back-link"
@@ -3423,6 +3463,14 @@ export default function App() {
         </button>
 
         <div className="header-actions">
+          {screen === "home" && (
+            <button
+              className="home-how-btn"
+              onClick={() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })}
+            >
+              Как это работает
+            </button>
+          )}
           <select
             className="language-select"
             value={language}
@@ -3808,7 +3856,7 @@ export default function App() {
                   onClick={() =>
                     document
                       .getElementById(
-                        "overview"
+                        "pyramid-demo"
                       )
                       ?.scrollIntoView(
                         {
@@ -3823,7 +3871,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="hero-demo-wrap">
+            <div className="hero-demo-wrap" id="pyramid-demo">
               <div className="hero-demo-progress">
                 <strong>{Math.round((heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100)}%</strong>
                 <span>{heroDemoCells.size} / {DEMO_PYRAMID_TOTAL} клеток</span>
@@ -3916,7 +3964,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="idea-section">
+          <section className="idea-section" id="how-it-works">
             <span className="landing-label">
               {t("benefitOne")}
             </span>
@@ -5006,21 +5054,17 @@ export default function App() {
                   </div>
 
                   {mapType === "free" && (
-                    <div className="map-mode-switch" role="group" aria-label="Режим карты">
-                      <button
-                        className={!isGameMode ? "active" : ""}
-                        onClick={() => setIsGameMode(false)}
-                      >
-                        Рисование
-                      </button>
-                      <button
-                        className={isGameMode ? "active" : ""}
-                        disabled={!completed.length}
-                        onClick={() => setIsGameMode(true)}
-                      >
-                        Игра
-                      </button>
-                    </div>
+                    <>
+                      <div className="map-mode-switch" role="group" aria-label="Режим карты">
+                        <button className={!isGameMode ? "active" : ""} onClick={() => setIsGameMode(false)}>Рисование</button>
+                        <button className={isGameMode ? "active" : ""} disabled={!completed.length} onClick={() => setIsGameMode(true)}>Игра</button>
+                      </div>
+                      {isGameMode && (
+                        <button className="game-fill-btn" onClick={() => setIsGameFillOpen(true)}>
+                          Заполнить клетки
+                        </button>
+                      )}
+                    </>
                   )}
 
                   <div className="tool-actions">
@@ -5567,6 +5611,17 @@ export default function App() {
             </section>
           </aside>
         </main>
+      )}
+
+      {isGameFillOpen && (
+        <div className="modal-overlay" onMouseDown={() => setIsGameFillOpen(false)}>
+          <div className="create-modal game-fill-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><h2>Заполнить клетки</h2><button className="modal-close" onClick={() => setIsGameFillOpen(false)}>×</button></div>
+            <div className="modal-field"><label>Сколько клеток отметить</label><input type="number" min="1" value={gameFillCount} onChange={(event) => setGameFillCount(event.target.value)} /></div>
+            <label className="image-toggle"><input type="checkbox" checked={gameFillRandom} onChange={(event) => setGameFillRandom(event.target.checked)} /> В случайном порядке</label>
+            <button className="modal-create-btn" onClick={fillGameCells}>Заполнить</button>
+          </div>
+        </div>
       )}
 
       {isCreateOpen && (

@@ -2340,6 +2340,15 @@ button:disabled {
   background: #efebe2;
 }
 
+.home-how-btn {
+  border: 0;
+  background: transparent;
+  color: #655f56;
+  font-size: 13px;
+  cursor: pointer;
+}
+.home-how-btn:hover { color: var(--green-dark); }
+
 .map-mode-switch button {
   min-height: 32px;
   border: 0;
@@ -2362,6 +2371,9 @@ button:disabled {
   justify-items: end;
   gap: 18px;
 }
+
+/* Единственный интерактивный эскиз на главной — пирамида выше. */
+.landing-demo { display: none; }
 
 .hero-demo-progress {
   display: grid;
@@ -2397,6 +2409,7 @@ button:disabled {
   width: 30px;
   height: 30px;
   border-radius: 2px;
+  animation: cell-pop 180ms ease-out;
 }
 
 @media (max-width: 720px) {
@@ -2405,6 +2418,40 @@ button:disabled {
   .hero-grid.hero-pyramid { padding: 14px; }
   .hero-pyramid-row button { width: 18px; height: 18px; }
 }
+
+.game-fill-btn {
+  min-height: 36px;
+  border: 1px solid var(--green);
+  border-radius: 8px;
+  background: var(--green);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.victory-overlay {
+  position: fixed;
+  z-index: 2000;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 30px;
+  background: rgba(35, 47, 38, 0.22);
+  color: #fff;
+  text-align: center;
+  animation: victory-fade 3.2s ease both;
+  pointer-events: none;
+}
+
+.victory-overlay strong { font-size: clamp(28px, 5vw, 52px); }
+.victory-overlay span { font-size: 16px; }
+.victory-confetti { color: #ffe06b; font-size: clamp(28px, 6vw, 58px); letter-spacing: 0.18em; animation: confetti 750ms ease-in-out infinite alternate; }
+
+@keyframes cell-pop { 0% { transform: scale(.72); } 75% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes confetti { from { transform: translateY(-8px) rotate(-4deg); } to { transform: translateY(8px) rotate(4deg); } }
+@keyframes victory-fade { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
 
 .left-sidebar {
   display: flex;
