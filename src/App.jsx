@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { supabase } from "./lib/supabase";
+import Auth from "./Auth";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -930,6 +931,7 @@ export default function App() {
       "maps",
       "editor",
       "account",
+      "auth",
     ].includes(saved)
       ? saved
       : "home";
@@ -3278,6 +3280,16 @@ export default function App() {
               : t("save")}
           </button>
 
+          {!user && (
+            <button
+              type="button"
+              className="account-login-btn"
+              onClick={() => setScreen("auth")}
+            >
+              👤 {t("account")}
+            </button>
+          )}
+
           {user && (
             <div
               ref={accountRef}
@@ -3788,6 +3800,14 @@ export default function App() {
             </span>
           </footer>
         </main>
+      )}
+
+      {screen === "auth" && (
+        <Auth
+          onAuth={() => {
+            setScreen("account");
+          }}
+        />
       )}
 
       {screen === "account" && (
