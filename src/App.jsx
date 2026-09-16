@@ -942,6 +942,12 @@ export default function App() {
     initial.activeMap
   );
   const [saveStatus, setSaveStatus] = useState("");
+  const [heroDemoCells, setHeroDemoCells] = useState(
+    () => new Set([0, 1, 2, 12, 13, 14, 24, 25, 26, 36, 37, 38, 48, 49, 50, 60, 61, 62, 72, 73, 74])
+  );
+  const [cardDemoCells, setCardDemoCells] = useState(
+    () => new Set(Array.from({ length: 50 }, (_, index) => index))
+  );
 
   const activeMap =
     maps.find((m) => m.id === activeMapId) || null;
@@ -977,7 +983,9 @@ export default function App() {
     try {
       return JSON.parse(
         localStorage.getItem(CUSTOM_COLORS_KEY) || "[]"
-      ).filter(Boolean);
+      )
+        .filter(Boolean)
+        .filter((color) => color.toLowerCase() !== "#ff0000");
     } catch {
       return [];
     }
@@ -1151,6 +1159,15 @@ export default function App() {
     translations.ru[key] ??
     key;
 
+  function toggleDemoCell(setCells, index, erase = false) {
+    setCells((previous) => {
+      const next = new Set(previous);
+      if (erase) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
   const accountName =
     user?.user_metadata?.username ||
     user?.user_metadata?.user_name ||
@@ -1181,12 +1198,34 @@ export default function App() {
     );
 
     if (
+      isMapInitialized &&
       screen === "editor" &&
       !activeMapId
     ) {
       setScreen("maps");
     }
-  }, [screen, activeMapId]);
+  }, [screen, activeMapId, isMapInitialized]);
+
+  useEffect(() => {
+    const positions = JSON.parse(
+      localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
+    );
+    const target = positions[screen] || 0;
+    const frame = requestAnimationFrame(() => window.scrollTo(0, target));
+    const savePosition = () => {
+      const next = JSON.parse(
+        localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
+      );
+      next[screen] = window.scrollY;
+      localStorage.setItem(SCROLL_POSITIONS_KEY, JSON.stringify(next));
+    };
+    window.addEventListener("scroll", savePosition, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      savePosition();
+      window.removeEventListener("scroll", savePosition);
+    };
+  }, [screen]);
 
   useEffect(() => {
     if (!isMapInitialized) return;
@@ -2151,9 +2190,9 @@ export default function App() {
             drawColorRef.current
           : "#eeeeee";
       } else {
-        fill =
-          colors[i] ||
-          "#e5e5e5";
+        fill = active
+          ? colors[i] || "#e5e5e5"
+          : "#e5e5e5";
       }
 
       ctx.fillStyle = fill;
@@ -2724,29 +2763,19 @@ export default function App() {
           ) || 1
       );
 
-    let nextRows =
-      Math.max(
-        1,
-        Math.round(
-          Math.sqrt(
-            next / ratio
-          )
-        )
-      );
+    let nextRows = 1;
+    let nextCols = next;
+    let bestDifference = Infinity;
 
-    let nextCols =
-      Math.max(
-        1,
-        Math.ceil(
-          next / nextRows
-        )
-      );
-
-    if (
-      nextRows * nextCols <
-      next
-    ) {
-      nextCols += 1;
+    for (let candidateRows = 1; candidateRows * candidateRows <= next; candidateRows += 1) {
+      if (next % candidateRows !== 0) continue;
+      const candidateCols = next / candidateRows;
+      const difference = Math.abs(candidateCols / candidateRows - ratio);
+      if (difference < bestDifference) {
+        bestDifference = difference;
+        nextRows = candidateRows;
+        nextCols = candidateCols;
+      }
     }
 
     setManualRows(
@@ -2970,7 +2999,9 @@ export default function App() {
     );
 
     setCustomColors(
-      m.customColors
+      m.customColors.filter(
+        (color) => color.toLowerCase() !== "#ff0000"
+      )
     );
 
     setTotalCells(
@@ -3606,28 +3637,12 @@ export default function App() {
               </div>
             </div>
 
-            <div className="hero-grid">
+            <div className="hero-grid demo-interactive">
               {Array.from(
                 {
                   length: 144,
                 },
-                (_, i) => (
-                  <span
-                    key={i}
-                    className={
-                      i % 13 < 5 ||
-                      [
-                        43,
-                        54,
-                        65,
-                        76,
-                        87,
-                      ].includes(i)
-                        ? "filled"
-                        : ""
-                    }
-                  />
-                )
+                (_, i) => <button key={i} type="button" className={heroDemoCells.has(i) ? "filled" : ""} onClick={() => toggleDemoCell(setHeroDemoCells, i)} onContextMenu={(event) => { event.preventDefault(); toggleDemoCell(setHeroDemoCells, i, true); }} />
               )}
             </div>
           </section>
@@ -3658,50 +3673,37 @@ export default function App() {
 
             <div className="demo-card">
               <div className="demo-card-title">
-                30 {t("cells")}
+                100 {t("cells")}
               </div>
 
               <div className="demo-grid">
                 {Array.from(
                   {
-                    length: 30,
+                    length: 100,
                   },
-                  (_, i) => (
-                    <span
-                      key={i}
-                      className={
-                        i < 15 &&
-                        i % 7 !== 2
-                          ? "filled"
-                          : ""
-                      }
-                    />
-                  )
+                  (_, i) => <button key={i} type="button" className={cardDemoCells.has(i) ? "filled" : ""} onClick={() => toggleDemoCell(setCardDemoCells, i)} onContextMenu={(event) => { event.preventDefault(); toggleDemoCell(setCardDemoCells, i, true); }} />
                 )}
               </div>
 
               <div className="demo-metric">
                 <strong>
-                  50%
+                  {cardDemoCells.size}%
                 </strong>
 
                 <span>
-                  15 / 30{" "}
+                  {cardDemoCells.size} / 100{" "}
                   {t("cells")}
                 </span>
               </div>
 
               <div className="demo-line">
-                <span>01</span>
+                <span>00</span>
                 <i>
-                  <b />
+                  <b style={{ width: `${cardDemoCells.size}%` }} />
                 </i>
-                <span>30</span>
+                <span>100</span>
               </div>
 
-              <p>
-                {t("saved")}
-              </p>
             </div>
 
             <div className="demo-note">
@@ -4257,18 +4259,7 @@ export default function App() {
                       }}
                     >
                       <div className="map-card-preview">
-                        {map.mapType ===
-                          "image" &&
-                        map.image ? (
-                          <img
-                            className="map-card-image"
-                            src={
-                              map.image
-                            }
-                            alt=""
-                          />
-                        ) : (
-                          <div
+                        <div
                             className="map-card-grid"
                             style={{
                               gridTemplateColumns: `repeat(${d.cols},minmax(0,1fr))`,
@@ -4289,22 +4280,11 @@ export default function App() {
                                     i
                                   }
                                   className="map-card-cell"
-                                  style={{
-                                    backgroundColor:
-                                      map.completed?.includes(
-                                        i
-                                      )
-                                        ? map.colors?.[
-                                            i
-                                          ] ||
-                                          "#111111"
-                                        : undefined,
-                                  }}
+                                  style={{ backgroundColor: map.completed?.includes(i) ? map.colors?.[i] || "#111111" : "#deded8", opacity: map.mapType === "image" && !map.completed?.includes(i) && map.showImage ? 0.35 : 1 }}
                                 />
                               )
                             )}
                           </div>
-                        )}
                       </div>
 
                       <div className="map-card-body">
@@ -4326,6 +4306,11 @@ export default function App() {
                                     "freeDrawing"
                                   )}
                             </span>
+                            {map.description && (
+                              <span className="map-card-description">
+                                {map.description}
+                              </span>
+                            )}
                           </div>
 
                           <strong className="map-card-percent">
@@ -5675,14 +5660,7 @@ export default function App() {
               </div>
 
               <p className="delete-modal-text">
-                {t(
-                  "deleteMap"
-                )}{" "}
-                «
-                {
-                  mapToDelete.name
-                }
-                »
+                «{mapToDelete.name}»
               </p>
 
               <div className="delete-modal-actions">
