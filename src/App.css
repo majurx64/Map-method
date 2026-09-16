@@ -2330,6 +2330,82 @@ button:disabled {
   letter-spacing: 0.08em;
 }
 
+.map-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #efebe2;
+}
+
+.map-mode-switch button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6e6a61;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.map-mode-switch button.active {
+  background: #fffdf9;
+  color: var(--green-dark);
+  box-shadow: 0 1px 3px rgba(40, 35, 25, 0.1);
+}
+
+.hero-demo-wrap {
+  display: grid;
+  justify-items: end;
+  gap: 18px;
+}
+
+.hero-demo-progress {
+  display: grid;
+  justify-items: end;
+}
+
+.hero-demo-progress strong {
+  font-size: 32px;
+  letter-spacing: -0.06em;
+}
+
+.hero-demo-progress span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.hero-grid.hero-pyramid {
+  display: grid;
+  grid-template-columns: 1fr;
+  width: min(100%, 530px);
+  gap: 4px;
+  padding: 26px;
+  touch-action: none;
+}
+
+.hero-pyramid-row {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+
+.hero-pyramid-row button {
+  width: 30px;
+  height: 30px;
+  border-radius: 2px;
+}
+
+@media (max-width: 720px) {
+  .hero-demo-wrap { justify-items: center; }
+  .hero-demo-progress { justify-items: center; }
+  .hero-grid.hero-pyramid { padding: 14px; }
+  .hero-pyramid-row button { width: 18px; height: 18px; }
+}
+
 .left-sidebar {
   display: flex;
   min-height: calc(100vh - 74px);

@@ -23,6 +23,9 @@ const BASIC_COLORS = [
   "#FF47CA",
 ];
 
+const DEMO_PYRAMID_ROWS = [2, 4, 6, 8, 10, 12, 14, 16, 16, 16];
+const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
+
 const translations = {
   ru: {
     myMaps: "Мои карты",
@@ -763,6 +766,14 @@ function normalizeMap(map = {}) {
           .filter((i) => i >= 0)
       ),
     ],
+    progressCompleted: [
+      ...new Set(
+        (Array.isArray(map.progressCompleted) ? map.progressCompleted : [])
+          .map(Number)
+          .filter(Number.isInteger)
+          .filter((i) => i >= 0)
+      ),
+    ],
     image: typeof map.image === "string" ? map.image : null,
     colors: Array.isArray(map.colors) ? map.colors : [],
     customColors: custom,
@@ -946,11 +957,13 @@ export default function App() {
   );
   const [saveStatus, setSaveStatus] = useState("");
   const [heroDemoCells, setHeroDemoCells] = useState(
-    () => new Set([0, 1, 2, 12, 13, 14, 24, 25, 26, 36, 37, 38, 48, 49, 50, 60, 61, 62, 72, 73, 74])
+    () => new Set(Array.from({ length: 52 }, (_, index) => index * 2))
   );
   const [cardDemoCells, setCardDemoCells] = useState(
     () => new Set(Array.from({ length: 50 }, (_, index) => index))
   );
+  const [isGameMode, setIsGameMode] = useState(false);
+  const [progressCompleted, setProgressCompleted] = useState([]);
 
   const activeMap =
     maps.find((m) => m.id === activeMapId) || null;
@@ -1107,6 +1120,8 @@ export default function App() {
   const canvasRef = useRef(null);
   const viewportRef = useRef(null);
   const accountRef = useRef(null);
+  const demoPointerRef = useRef(null);
+  const demoModeRef = useRef("draw");
 
   const isDrawingRef = useRef(false);
   const drawModeRef = useRef("draw");
@@ -1114,6 +1129,7 @@ export default function App() {
   const activePointerIdRef = useRef(null);
 
   const completedRef = useRef(new Set());
+  const progressCompletedRef = useRef(new Set());
   const colorsRef = useRef([]);
   const drawColorRef = useRef(drawColor);
 
@@ -1154,6 +1170,17 @@ export default function App() {
           (completed.length / actualTotal) * 100
         )
       )
+    : 0;
+
+  const isPlaying = isGameMode && mapType === "free";
+  const displayedCompleted = isPlaying
+    ? progressCompleted
+    : completed;
+  const displayedTotal = isPlaying
+    ? completed.length
+    : actualTotal;
+  const displayedProgress = displayedTotal
+    ? Math.min(100, Math.round((displayedCompleted.length / displayedTotal) * 100))
     : 0;
 
   const t = (key) =>
@@ -1312,6 +1339,10 @@ export default function App() {
   useEffect(() => {
     completedRef.current = new Set(completed);
   }, [completed]);
+
+  useEffect(() => {
+    progressCompletedRef.current = new Set(progressCompleted);
+  }, [progressCompleted]);
 
   useEffect(() => {
     colorsRef.current = colors;
@@ -1508,6 +1539,7 @@ export default function App() {
       mapType,
       gridMode,
       completed,
+      progressCompleted,
       image,
       colors,
       imageRatio,
@@ -1535,6 +1567,7 @@ export default function App() {
     mapType,
     gridMode,
     completed,
+    progressCompleted,
     image,
     colors,
     imageRatio,
@@ -1556,6 +1589,9 @@ export default function App() {
             gridMode,
             completed: [
               ...completedRef.current,
+            ],
+            progressCompleted: [
+              ...progressCompletedRef.current,
             ],
             image,
             colors,
@@ -1666,7 +1702,8 @@ export default function App() {
   }, [
     mapType,
     gridMode,
-    completed,
+      completed,
+      progressCompleted,
     image,
     colors,
     imageRatio,
@@ -1779,7 +1816,8 @@ export default function App() {
     before,
     after,
     beforeColors,
-    afterColors
+    afterColors,
+    target = "drawing"
   ) {
     const b = {
       completed: [...before],
@@ -1796,6 +1834,7 @@ export default function App() {
     undoStackRef.current.push({
       before: b,
       after: a,
+      target,
     });
 
     if (
@@ -1806,6 +1845,12 @@ export default function App() {
   }
 
   function setSnapshot(s) {
+    if (s.target === "progress") {
+      progressCompletedRef.current = new Set(s.completed);
+      setProgressCompleted([...s.completed]);
+      return;
+    }
+
     completedRef.current =
       new Set(s.completed);
 
@@ -1894,6 +1939,21 @@ export default function App() {
   function applyCells(indices, mode) {
     if (!indices?.length) return;
 
+    if (isGameMode && mapType === "free") {
+      const next = new Set(progressCompletedRef.current);
+
+      for (const i of indices) {
+        // В игре можно отмечать только клетки готового рисунка.
+        if (!completedRef.current.has(i)) continue;
+        if (mode === "draw") next.add(i);
+        else next.delete(i);
+      }
+
+      progressCompletedRef.current = next;
+      setProgressCompleted([...next]);
+      return;
+    }
+
     const nextSet =
       new Set(completedRef.current);
 
@@ -1945,7 +2005,9 @@ export default function App() {
 
     strokeBeforeRef.current =
       new Set(
-        completedRef.current
+        isGameMode && mapType === "free"
+          ? progressCompletedRef.current
+          : completedRef.current
       );
 
     strokeColorsBeforeRef.current =
@@ -2022,14 +2084,17 @@ export default function App() {
     if (before) {
       const after =
         new Set(
-          completedRef.current
+          isGameMode && mapType === "free"
+            ? progressCompletedRef.current
+            : completedRef.current
         );
 
       pushHistory(
         before,
         after,
         strokeColorsBeforeRef.current,
-        colorsRef.current
+        colorsRef.current,
+        isGameMode && mapType === "free" ? "progress" : "drawing"
       );
     }
 
@@ -2156,6 +2221,15 @@ export default function App() {
   function clearProgress() {
     finishStroke();
 
+    if (isGameMode && mapType === "free") {
+      const before = new Set(progressCompletedRef.current);
+      if (!before.size) return;
+      progressCompletedRef.current = new Set();
+      setProgressCompleted([]);
+      pushHistory(before, new Set(), [], [], "progress");
+      return;
+    }
+
     const before =
       new Set(
         completedRef.current
@@ -2243,18 +2317,24 @@ export default function App() {
       const y =
         r * ch;
 
+      const drawingActive = completedRef.current.has(i);
       const active =
-        completedRef.current.has(
-          i
-        );
+        isGameMode && mapType === "free"
+          ? progressCompletedRef.current.has(i)
+          : drawingActive;
 
       let fill;
 
       if (mapType === "free") {
-        fill = active
-          ? colors[i] ||
-            drawColorRef.current
-          : "#eeeeee";
+        fill = isGameMode
+          ? !drawingActive
+            ? "#eeeeee"
+            : active
+              ? colors[i] || drawColorRef.current
+              : "#deded8"
+          : active
+            ? colors[i] || drawColorRef.current
+            : "#eeeeee";
       } else {
         fill = active
           ? colors[i] || "#e5e5e5"
@@ -2351,8 +2431,10 @@ export default function App() {
     cols,
     actualTotal,
     completed,
+    progressCompleted,
     colors,
     mapType,
+    isGameMode,
     image,
     showImage,
     drawColor,
@@ -2378,8 +2460,10 @@ export default function App() {
     cols,
     actualTotal,
     completed,
+    progressCompleted,
     colors,
     mapType,
+    isGameMode,
     image,
     showImage,
     drawColor,
@@ -2823,6 +2907,26 @@ export default function App() {
 
   }
 
+  function beginDemoStroke(event, index) {
+    event.preventDefault();
+    demoPointerRef.current = event.pointerId;
+    demoModeRef.current = event.button === 2 ? "erase" : "draw";
+    toggleDemoCell(setHeroDemoCells, index, demoModeRef.current === "erase");
+  }
+
+  function continueDemoStroke(event, index) {
+    if (demoPointerRef.current !== event.pointerId) return;
+    toggleDemoCell(setHeroDemoCells, index, demoModeRef.current === "erase");
+  }
+
+  useEffect(() => {
+    const stopDemoStroke = () => {
+      demoPointerRef.current = null;
+    };
+    window.addEventListener("pointerup", stopDemoStroke);
+    return () => window.removeEventListener("pointerup", stopDemoStroke);
+  }, []);
+
   function changeTotalCells(
     delta
   ) {
@@ -3074,6 +3178,9 @@ export default function App() {
     setCompletedDirectly(
       m.completed
     );
+    progressCompletedRef.current = new Set(m.progressCompleted);
+    setProgressCompleted(m.progressCompleted);
+    setIsGameMode(false);
 
     setImage(m.image);
 
@@ -3716,13 +3823,30 @@ export default function App() {
               </div>
             </div>
 
-            <div className="hero-grid demo-interactive">
-              {Array.from(
-                {
-                  length: 144,
-                },
-                (_, i) => <button key={i} type="button" className={heroDemoCells.has(i) ? "filled" : ""} onClick={() => toggleDemoCell(setHeroDemoCells, i)} onContextMenu={(event) => { event.preventDefault(); toggleDemoCell(setHeroDemoCells, i, true); }} />
-              )}
+            <div className="hero-demo-wrap">
+              <div className="hero-demo-progress">
+                <strong>{Math.round((heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100)}%</strong>
+                <span>{heroDemoCells.size} / {DEMO_PYRAMID_TOTAL} клеток</span>
+              </div>
+              <div className="hero-grid demo-interactive hero-pyramid" onContextMenu={(event) => event.preventDefault()}>
+                {DEMO_PYRAMID_ROWS.map((count, row) => (
+                  <div className="hero-pyramid-row" key={row}>
+                    {Array.from({ length: count }, (_, column) => {
+                      const index = DEMO_PYRAMID_ROWS.slice(0, row).reduce((sum, value) => sum + value, 0) + column;
+                      return (
+                        <button
+                          key={index}
+                          type="button"
+                          className={heroDemoCells.has(index) ? "filled" : ""}
+                          onPointerDown={(event) => beginDemoStroke(event, index)}
+                          onPointerEnter={(event) => continueDemoStroke(event, index)}
+                          onContextMenu={(event) => event.preventDefault()}
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
 
@@ -4879,9 +5003,27 @@ export default function App() {
                       "image"
                     )}
                   </button>
-                </div>
+                  </div>
 
-                <div className="tool-actions">
+                  {mapType === "free" && (
+                    <div className="map-mode-switch" role="group" aria-label="Режим карты">
+                      <button
+                        className={!isGameMode ? "active" : ""}
+                        onClick={() => setIsGameMode(false)}
+                      >
+                        Рисование
+                      </button>
+                      <button
+                        className={isGameMode ? "active" : ""}
+                        disabled={!completed.length}
+                        onClick={() => setIsGameMode(true)}
+                      >
+                        Игра
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="tool-actions">
                   <button
                     className="tool-btn"
                     onClick={
@@ -4969,8 +5111,7 @@ export default function App() {
               </div>
             </section>
 
-            {mapType ===
-              "free" && (
+            {mapType === "free" && !isGameMode && (
               <section className="sidebar-section palette-section">
                 <div className="section-heading">
                   {t(
@@ -5163,9 +5304,9 @@ export default function App() {
               </div>
 
               <span className="painted-count">
-                {completed.length}{" "}
+                {displayedCompleted.length}{" "}
                 /{" "}
-                {actualTotal}{" "}
+                {displayedTotal}{" "}
                 {t("cells")}
               </span>
             </div>
@@ -5367,7 +5508,7 @@ export default function App() {
 
               <div className="preview-progress">
                 <strong>
-                  {progress}%
+                  {displayedProgress}%
                 </strong>
 
                 <span>
@@ -5380,7 +5521,7 @@ export default function App() {
               <div className="preview-bar">
                 <i
                   style={{
-                    width: `${progress}%`,
+                    width: `${displayedProgress}%`,
                   }}
                 />
               </div>
@@ -5395,7 +5536,7 @@ export default function App() {
 
                 <strong>
                   {
-                    completed.length
+                    displayedCompleted.length
                   }
                 </strong>
               </div>
@@ -5409,7 +5550,7 @@ export default function App() {
                 </span>
 
                 <strong>
-                  {actualTotal}
+                  {displayedTotal}
                 </strong>
               </div>
 
