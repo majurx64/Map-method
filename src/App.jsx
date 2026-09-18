@@ -743,6 +743,29 @@ function normalizeHexColor(c) {
   return /^#[0-9a-f]{6}$/i.test(v) ? v : null;
 }
 
+function getActivityDate(date = new Date()) {
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function normalizeActivityLog(value) {
+  const totals = new Map();
+
+  (Array.isArray(value) ? value : []).forEach((entry) => {
+    const date = typeof entry?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.date)
+      ? entry.date
+      : null;
+    const cells = Math.max(0, Math.floor(Number(entry?.cells) || 0));
+
+    if (date && cells) totals.set(date, (totals.get(date) || 0) + cells);
+  });
+
+  return [...totals.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-180)
+    .map(([date, cells]) => ({ date, cells }));
+}
+
 function normalizeMap(map = {}) {
   const custom = [
     ...new Set(
@@ -796,6 +819,7 @@ function normalizeMap(map = {}) {
       typeof map.showImage === "boolean" ? map.showImage : true,
     description:
       typeof map.description === "string" ? map.description : "",
+    activityLog: normalizeActivityLog(map.activityLog),
   };
 }
 
@@ -1049,6 +1073,11 @@ export default function App() {
   ] = useState("");
 
   const [
+    activityLog,
+    setActivityLog,
+  ] = useState([]);
+
+  const [
     isDrawing,
     setIsDrawing,
   ] = useState(false);
@@ -1150,6 +1179,7 @@ export default function App() {
   const progressCompletedRef = useRef(new Set());
   const colorsRef = useRef([]);
   const drawColorRef = useRef(drawColor);
+  const activityLogRef = useRef([]);
 
   const strokeBeforeRef = useRef(null);
   const strokeColorsBeforeRef = useRef([]);
@@ -1229,6 +1259,51 @@ export default function App() {
 
   const accountInitial =
     accountName.trim().charAt(0).toUpperCase() || "M";
+
+  const accountMapStats = maps.map((map) => {
+    const dimensions = getGridDimensions(
+      Math.max(1, Number(map.totalCells) || 1),
+      map.imageRatio || 1,
+      map.gridMode,
+      map.manualRows,
+      map.manualCols
+    );
+    const filled = map.isGameMode
+      ? map.progressCompleted?.length || 0
+      : map.completed?.length || 0;
+
+    return { ...map, total: dimensions.actualTotal, filled };
+  });
+
+  const accountPaintedCells = accountMapStats.reduce(
+    (sum, map) => sum + map.filled,
+    0
+  );
+  const accountTotalCells = accountMapStats.reduce(
+    (sum, map) => sum + map.total,
+    0
+  );
+  const accountTodayCells = maps.reduce(
+    (sum, map) =>
+      sum + (map.activityLog || [])
+        .filter((entry) => entry.date === getActivityDate())
+        .reduce((subtotal, entry) => subtotal + entry.cells, 0),
+    0
+  );
+  const accountDailyGoal = accountTotalCells
+    ? Math.max(1, Math.ceil(Math.max(0, accountTotalCells - accountPaintedCells) / 30))
+    : 0;
+  const accountDailyProgress = accountDailyGoal
+    ? Math.min(100, Math.round((accountTodayCells / accountDailyGoal) * 100))
+    : 0;
+  const accountAchievements = [
+    { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: maps.length, goal: 1 },
+    { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: maps.length, goal: 3 },
+    { icon: "▦", title: "Картограф", text: "Создать 5 карт", current: maps.length, goal: 5 },
+    { icon: "●", title: "Первый шаг", text: "Закрасить 100 клеток", current: accountPaintedCells, goal: 100 },
+    { icon: "◆", title: "Ритм", text: "Закрасить 200 клеток", current: accountPaintedCells, goal: 200 },
+    { icon: "✺", title: "Большая картина", text: "Закрасить 500 клеток", current: accountPaintedCells, goal: 500 },
+  ];
 
   useEffect(() => {
     localStorage.setItem(LANGUAGE_KEY, language);
@@ -1363,6 +1438,10 @@ export default function App() {
   useEffect(() => {
     progressCompletedRef.current = new Set(progressCompleted);
   }, [progressCompleted]);
+
+  useEffect(() => {
+    activityLogRef.current = activityLog;
+  }, [activityLog]);
 
   useEffect(() => {
     const gameTotal = mapType === "image" ? actualTotal : completed.length;
@@ -1579,6 +1658,7 @@ export default function App() {
       manualCols,
       showImage,
       description,
+      activityLog,
       drawColor,
       customColors,
     });
@@ -1608,6 +1688,7 @@ export default function App() {
     manualCols,
     showImage,
     description,
+    activityLog,
     drawColor,
     customColors,
   ]);
@@ -1634,6 +1715,7 @@ export default function App() {
             manualCols,
             showImage,
             description,
+            activityLog: activityLogRef.current,
             drawColor,
             customColors,
           })
@@ -1651,6 +1733,7 @@ export default function App() {
       manualCols,
       showImage,
       description,
+      activityLog,
       drawColor,
       customColors,
     ]
@@ -1747,6 +1830,7 @@ export default function App() {
     manualCols,
     showImage,
     description,
+    activityLog,
     drawColor,
     customColors,
     isMapInitialized,
@@ -2007,6 +2091,20 @@ export default function App() {
     }, 300);
   }
 
+  function recordPaintedCells(count) {
+    if (!count) return;
+
+    const date = getActivityDate();
+    setActivityLog((previous) => {
+      const next = normalizeActivityLog([
+        ...previous,
+        { date, cells: count },
+      ]);
+      activityLogRef.current = next;
+      return next;
+    });
+  }
+
   function applyCells(indices, mode) {
     if (!indices?.length) return;
 
@@ -2029,6 +2127,7 @@ export default function App() {
       animateCells(changed, mode);
       progressCompletedRef.current = next;
       setProgressCompleted([...next]);
+      if (mode === "draw") recordPaintedCells(changed.length);
       return;
     }
 
@@ -2063,6 +2162,7 @@ export default function App() {
     animateCells(changed, mode);
     completedRef.current = nextSet;
     setCompleted([...nextSet]);
+    if (mode === "draw") recordPaintedCells(changed.length);
 
     if (nextColors) {
       colorsRef.current = nextColors;
@@ -2429,34 +2529,32 @@ export default function App() {
 
       const animation = cellAnimationsRef.current.get(i);
       const elapsed = animation === undefined ? 300 : now - animation.startedAt;
-      const progress = Math.min(1, elapsed / 260);
+      const animationProgress = Math.min(1, elapsed / 260);
       const scale = elapsed < 260
-        ? progress < 0.72
-          ? 0.72 + progress * 0.5
-          : 1.08 - (progress - 0.72) * 0.29
+        ? animationProgress < 0.72
+          ? 0.86 + animationProgress * 0.31
+          : 1.08 - (animationProgress - 0.72) * 0.29
         : 1;
 
       if (elapsed < 260) hasActiveAnimations = true;
 
-      // При стирании коротко оставляем прежний цвет: эффект виден так же,
-      // как при закрашивании, а затем клетка возвращается к фону.
-      ctx.fillStyle = animation?.mode === "erase" && elapsed < 260
-        ? animation.color
-        : fill;
+      const isErasing = animation?.mode === "erase" && elapsed < 260;
 
+      // Новая клетка мягко появляется, но её базовый цвет виден сразу.
+      // Поэтому при быстром штрихе не остаётся визуальных пробелов.
+      ctx.fillStyle = fill;
       ctx.fillRect(
-        x + (cw * (1 - scale)) / 2,
-        y + (ch * (1 - scale)) / 2,
-        cw * scale + 0.5,
-        ch * scale + 0.5
+        isErasing ? x : x + (cw * (1 - scale)) / 2,
+        isErasing ? y : y + (ch * (1 - scale)) / 2,
+        isErasing ? cw + 0.5 : cw * scale + 0.5,
+        isErasing ? ch + 0.5 : ch * scale + 0.5
       );
 
       if (
         mapType === "image" &&
         !active &&
         showImage &&
-        image &&
-        animation?.mode !== "erase"
+        image
       ) {
         ctx.globalAlpha = 0.35;
         ctx.fillStyle =
@@ -2470,6 +2568,21 @@ export default function App() {
           ch + 0.5
         );
 
+        ctx.globalAlpha = 1;
+      }
+
+      // При стирании фон появляется сразу под курсором, а прежний цвет
+      // плавно сжимается поверх него — анимация есть, отставания нет.
+      if (isErasing) {
+        const eraseScale = 1 - animationProgress * 0.35;
+        ctx.globalAlpha = 1 - animationProgress;
+        ctx.fillStyle = animation.color || fill;
+        ctx.fillRect(
+          x + (cw * (1 - eraseScale)) / 2,
+          y + (ch * (1 - eraseScale)) / 2,
+          cw * eraseScale + 0.5,
+          ch * eraseScale + 0.5
+        );
         ctx.globalAlpha = 1;
       }
     }
@@ -3367,6 +3480,9 @@ export default function App() {
       m.description
     );
 
+    activityLogRef.current = m.activityLog;
+    setActivityLog(m.activityLog);
+
     clearHistory();
 
     setMapZoom(1);
@@ -3456,30 +3572,20 @@ export default function App() {
     if (!mapToDelete)
       return;
 
-    const id =
-      mapToDelete.id;
-
-    if (user) {
-      const {
-        error,
-      } = await supabase
-        .from("maps")
-        .delete()
-        .eq("id", id)
-        .eq("user_id", user.id);
-
-      if (error) {
-        console.error(error);
-        return;
-      }
-    }
+    const deletingMap = mapToDelete;
+    const id = deletingMap.id;
+    const previousMaps = maps;
 
     const rest =
       maps.filter(
         (m) => m.id !== id
       );
 
+    // Сначала меняем интерфейс: пользователь видит результат сразу,
+    // не ожидая сетевой ответ базы данных.
     setMaps(rest);
+    setIsDeleteOpen(false);
+    setMapToDelete(null);
 
     if (id === activeMapId) {
       if (rest[0]) {
@@ -3494,8 +3600,31 @@ export default function App() {
       }
     }
 
-    setIsDeleteOpen(false);
-    setMapToDelete(null);
+    if (!user) return;
+
+    const removeRemotely = async () => {
+      const { error } = await supabase
+        .from("maps")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", user.id);
+
+      if (error) {
+        console.error("Не удалось удалить карту:", error);
+        // Возвращаем карту только если синхронизация действительно не удалась.
+        setMaps((current) =>
+          current.some((map) => map.id === id)
+            ? current
+            : previousMaps
+        );
+      }
+    };
+
+    const request = remoteSaveQueueRef.current.then(
+      removeRemotely,
+      removeRemotely
+    );
+    remoteSaveQueueRef.current = request.catch(() => null);
   }
 
   function downloadMap() {
@@ -4157,6 +4286,7 @@ export default function App() {
           </div>
 
           <div
+            className="legacy-account-summary"
             style={{
               display:
                 "grid",
@@ -4435,6 +4565,81 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </div>
+
+          <div className="account-dashboard">
+            <section className="account-profile-card">
+              <div className="account-avatar">{accountInitial}</div>
+              <div>
+                <span className="account-eyebrow">ТВОЙ ПРОФИЛЬ</span>
+                <h2>{accountName}</h2>
+                <p>{accountEmail}</p>
+              </div>
+              <button className="account-maps-link" onClick={() => setScreen("maps")}>
+                Все мои карты →
+              </button>
+            </section>
+
+            <section className="account-stat-grid">
+              <button className="account-stat-card account-stat-action" onClick={() => setScreen("maps")}>
+                <span>КАРТ СОЗДАНО</span>
+                <strong>{maps.length}</strong>
+                <small>Открыть мои карты →</small>
+              </button>
+              <div className="account-stat-card">
+                <span>КЛЕТОК ЗАКРАШЕНО</span>
+                <strong>{accountPaintedCells}</strong>
+                <small>Во всех картах</small>
+              </div>
+              <div className="account-stat-card">
+                <span>СЕГОДНЯ</span>
+                <strong>{accountTodayCells}</strong>
+                <small>{accountDailyGoal ? `Цель: ${accountDailyGoal} клеток` : "Создай первую карту"}</small>
+              </div>
+            </section>
+
+            <section className="account-plan-card">
+              <div>
+                <span className="account-eyebrow">ТЕМП НА СЕГОДНЯ</span>
+                <h2>{accountDailyGoal ? "Двигайся в своём ритме" : "Начни с первой карты"}</h2>
+                <p>
+                  {accountDailyGoal
+                    ? `Чтобы завершить текущие карты примерно за 30 дней, достаточно закрашивать ${accountDailyGoal} клеток в день.`
+                    : "Создай карту, выбери рисунок — и здесь появится твой личный темп."}
+                </p>
+              </div>
+              <div className="account-goal-ring" style={{ "--progress": `${accountDailyProgress}%` }}>
+                <strong>{accountDailyProgress}%</strong>
+                <span>сегодня</span>
+              </div>
+            </section>
+
+            <section className="account-achievements">
+              <div className="account-section-title">
+                <div>
+                  <span className="account-eyebrow">ДОСТИЖЕНИЯ</span>
+                  <h2>Каждая карта оставляет след</h2>
+                </div>
+                <span>{accountAchievements.filter((item) => item.current >= item.goal).length} / {accountAchievements.length} открыто</span>
+              </div>
+              <div className="achievement-grid">
+                {accountAchievements.map((achievement) => {
+                  const unlocked = achievement.current >= achievement.goal;
+                  const achievementProgress = Math.min(100, Math.round((achievement.current / achievement.goal) * 100));
+                  return (
+                    <article className={`achievement-card ${unlocked ? "unlocked" : ""}`} key={achievement.title}>
+                      <span className="achievement-icon">{achievement.icon}</span>
+                      <div>
+                        <strong>{achievement.title}</strong>
+                        <p>{achievement.text}</p>
+                        <div className="achievement-progress"><i style={{ width: `${achievementProgress}%` }} /></div>
+                        <small>{Math.min(achievement.current, achievement.goal)} / {achievement.goal}</small>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
           </div>
         </section>
       )}
