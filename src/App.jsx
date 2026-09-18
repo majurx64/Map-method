@@ -23,7 +23,7 @@ const BASIC_COLORS = [
   "#FF47CA",
 ];
 
-const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29];
+const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
 
 const translations = {
@@ -4036,7 +4036,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              <div className="pyramid-card-footer">Продолжай — карта помнит каждый шаг.</div>
+              <div className="pyramid-card-footer">Меняй карту — она отвечает на каждое нажатие.</div>
             </div>
           </section>
 
