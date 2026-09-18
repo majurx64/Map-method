@@ -757,6 +757,7 @@ function normalizeMap(map = {}) {
     id: map.id || createMapId(),
     name: typeof map.name === "string" ? map.name : "Моя карта",
     mapType: map.mapType === "image" ? "image" : "free",
+    isGameMode: Boolean(map.isGameMode),
     gridMode: map.gridMode === "manual" ? "manual" : "auto",
     completed: [
       ...new Set(
@@ -1560,6 +1561,7 @@ export default function App() {
     const next = normalizeMap({
       ...activeMap,
       mapType,
+      isGameMode,
       gridMode,
       completed,
       progressCompleted,
@@ -1588,6 +1590,7 @@ export default function App() {
     );
   }, [
     mapType,
+    isGameMode,
     gridMode,
     completed,
     progressCompleted,
@@ -1609,6 +1612,7 @@ export default function App() {
         ? normalizeMap({
             ...activeMapRef.current,
             mapType,
+            isGameMode,
             gridMode,
             completed: [
               ...completedRef.current,
@@ -1631,6 +1635,7 @@ export default function App() {
     [
       activeMapId,
       mapType,
+      isGameMode,
       gridMode,
       image,
       colors,
@@ -3313,7 +3318,7 @@ export default function App() {
     );
     progressCompletedRef.current = new Set(m.progressCompleted);
     setProgressCompleted(m.progressCompleted);
-    setIsGameMode(false);
+    setIsGameMode(m.isGameMode);
 
     setImage(m.image);
 
@@ -3951,7 +3956,7 @@ export default function App() {
               </h1>
 
               <p>
-                MM превращает прогресс в сетку, которую можно увидеть. Закрашивай клетку, продвигай картинку и возвращайся ровно туда, где остановился.
+                Map Method помогает замечать путь: каждый небольшой шаг остаётся на карте и постепенно складывается в историю твоего движения вперёд.
               </p>
 
               <div className="home-actions">
