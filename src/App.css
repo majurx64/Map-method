@@ -2396,7 +2396,7 @@ button:disabled {
 .hero-grid.hero-pyramid {
   display: grid;
   grid-template-columns: 1fr;
-  width: min(100%, 560px);
+  width: min(100%, 960px);
   gap: 4px;
   padding: 26px;
   touch-action: none;
@@ -2418,6 +2418,11 @@ button:disabled {
 .hero-pyramid-row button.filled {
   animation: cell-pop 260ms cubic-bezier(.2,.9,.3,1.25);
   box-shadow: 0 3px 8px rgba(35, 76, 60, 0.22);
+}
+
+.hero-pyramid-row button:not(.filled) {
+  background: #d8d7cc;
+  box-shadow: inset 0 0 0 1px rgba(77, 82, 67, 0.12);
 }
 
 /* Главная построена как спокойная последовательность: вступление, эскиз, идея. */
@@ -2497,7 +2502,7 @@ button:disabled {
 }
 
 .pyramid-card .hero-grid.hero-pyramid {
-  width: min(100%, 570px);
+  width: min(100%, 960px);
   padding: 28px;
   background: transparent;
   border: 0;

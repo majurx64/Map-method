@@ -23,7 +23,7 @@ const BASIC_COLORS = [
   "#FF47CA",
 ];
 
-const DEMO_PYRAMID_ROWS = [4, 8, 12, 16, 20, 24, 28, 28, 28, 28];
+const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
 
 const translations = {
@@ -800,10 +800,16 @@ function normalizeMap(map = {}) {
 }
 
 function saveMapsLocally(maps) {
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(maps.map(normalizeMap))
-  );
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(maps.map(normalizeMap))
+    );
+  } catch (error) {
+    // Большие исходные изображения могут не поместиться в localStorage.
+    // Карта остаётся открытой и продолжает сохраняться в удалённое хранилище.
+    console.warn("Не удалось сохранить карты локально:", error);
+  }
 }
 
 function getInitialData() {
@@ -2689,61 +2695,49 @@ export default function App() {
       new Image();
 
     img.onload = () => {
-      const off =
-        document.createElement(
-          "canvas"
-        );
+      try {
+        if (requestId !== imageProcessingRef.current) return;
 
-      const w =
-        Math.max(
-          1,
-          Number(targetCols) || 1
-        );
+        const off = document.createElement("canvas");
+        const w = Math.max(1, Number(targetCols) || 1);
+        const h = Math.max(1, Number(targetRows) || 1);
 
-      const h =
-        Math.max(
-          1,
-          Number(targetRows) || 1
-        );
+        off.width = w;
+        off.height = h;
 
-      off.width = w;
-      off.height = h;
+        const ctx = off.getContext("2d", {
+          willReadFrequently: true,
+        });
 
-      const ctx =
-        off.getContext("2d");
+        if (!ctx) {
+          throw new Error("Canvas недоступен для обработки изображения");
+        }
 
-      ctx.drawImage(
-        img,
-        0,
-        0,
-        w,
-        h
-      );
+        ctx.drawImage(img, 0, 0, w, h);
+        const data = ctx.getImageData(0, 0, w, h).data;
+        const next = [];
 
-      const data =
-        ctx.getImageData(
-          0,
-          0,
-          w,
-          h
-        ).data;
+        for (let i = 0; i < w * h; i++) {
+          const p = i * 4;
+          next[i] = `rgb(${data[p]}, ${data[p + 1]}, ${data[p + 2]})`;
+        }
 
-      const next = [];
-
-      for (
-        let i = 0;
-        i < w * h;
-        i++
-      ) {
-        const p = i * 4;
-
-        next[i] =
-          `rgb(${data[p]}, ${data[p + 1]}, ${data[p + 2]})`;
+        if (requestId === imageProcessingRef.current) {
+          colorsRef.current = next;
+          setColors(next);
+        }
+      } catch (error) {
+        console.error("Ошибка обработки изображения:", error);
+        if (requestId === imageProcessingRef.current) {
+          setSaveStatus("error");
+        }
       }
+    };
 
+    img.onerror = () => {
       if (requestId === imageProcessingRef.current) {
-        colorsRef.current = next;
-        setColors(next);
+        console.error("Не удалось загрузить изображение для сетки");
+        setSaveStatus("error");
       }
     };
 
@@ -2796,7 +2790,17 @@ export default function App() {
         );
       };
 
+      img.onerror = () => {
+        console.error("Не удалось открыть выбранное изображение");
+        setSaveStatus("error");
+      };
+
       img.src = src;
+    };
+
+    reader.onerror = () => {
+      console.error("Не удалось прочитать выбранный файл");
+      setSaveStatus("error");
     };
 
     reader.readAsDataURL(file);
@@ -3148,6 +3152,7 @@ export default function App() {
   }
 
   function clearImage() {
+    imageProcessingRef.current += 1;
     setImage(null);
     colorsRef.current = [];
     setColors([]);
