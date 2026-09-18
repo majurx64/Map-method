@@ -23,7 +23,7 @@ const BASIC_COLORS = [
   "#FF47CA",
 ];
 
-const DEMO_PYRAMID_ROWS = [4, 8, 12, 16, 20, 20, 20];
+const DEMO_PYRAMID_ROWS = [4, 8, 12, 16, 20, 24, 28, 28, 28, 28];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
 
 const translations = {
@@ -958,7 +958,7 @@ export default function App() {
   );
   const [saveStatus, setSaveStatus] = useState("");
   const [heroDemoCells, setHeroDemoCells] = useState(
-    () => new Set(Array.from({ length: 50 }, (_, index) => index * 2))
+    () => new Set(Array.from({ length: 98 }, (_, index) => index * 2))
   );
   const [cardDemoCells, setCardDemoCells] = useState(
     () => new Set(Array.from({ length: 50 }, (_, index) => index))
@@ -1729,6 +1729,7 @@ export default function App() {
       clearTimeout(saveTimerRef.current);
   }, [
     mapType,
+    isGameMode,
     gridMode,
       completed,
       progressCompleted,
@@ -3994,9 +3995,9 @@ export default function App() {
           <section className="landing-pyramid-section" id="pyramid-demo">
             <div className="pyramid-heading">
               <div>
-                <span className="landing-label">Живой эскиз</span>
-                <h2>30 дней чтения</h2>
-                <p>Нажимай на клетки. Рисунок меняется вместе с тобой.</p>
+                <span className="landing-label">Интерактивная карта</span>
+                <h2>Карта прогресса</h2>
+                <p>Кликай по клеткам — рисунок растёт вместе с твоими шагами.</p>
               </div>
               <div className="hero-demo-progress">
                 <strong>{Math.round((heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100)}%</strong>
@@ -4006,7 +4007,7 @@ export default function App() {
 
             <div className="pyramid-card">
               <div className="pyramid-card-meta">
-                <span>День 01 — День 30</span>
+                <span>Каждая клетка — маленькое действие</span>
                 <span>✓ Сохранено в карте</span>
               </div>
               <div className="hero-demo-wrap">
@@ -4030,7 +4031,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              <div className="pyramid-card-footer">Продолжай. Эта картинка — твоя.</div>
+              <div className="pyramid-card-footer">Продолжай — карта помнит каждый шаг.</div>
             </div>
           </section>
 
@@ -4049,7 +4050,7 @@ export default function App() {
 
                 <h3>Выбери карту</h3>
 
-                <p>Начни с готового эскиза или создай собственную сетку.</p>
+                <p>Нарисуй карту кистью или загрузи изображение — оба способа превращают идею в наглядный путь.</p>
               </article>
 
               <article>
@@ -4072,15 +4073,15 @@ export default function App() {
 
           <section className="landing-final">
             <span className="landing-label">
-              Дальше
+              Твой маршрут
             </span>
 
             <h2>
-              Создавай карты, к которым хочется возвращаться.
+              Начни с одной клетки. Продолжи своей картой.
             </h2>
 
             <p>
-              Сначала личные проекты. Далее — эскизы сообщества, экспорт и полноценный редактор карт.
+              Выбери форму, цвет и ритм. Map Method сохранит путь, чтобы к нему всегда можно было вернуться.
             </p>
 
             <button
@@ -4095,7 +4096,7 @@ export default function App() {
 
           <footer className="landing-footer">
             <strong>
-              MM — Map Method
+              Map Method — путь, который можно увидеть.
             </strong>
 
             <span>

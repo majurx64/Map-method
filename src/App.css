@@ -2409,8 +2409,8 @@ button:disabled {
 }
 
 .hero-pyramid-row button {
-  width: 18px;
-  height: 18px;
+  width: 26px;
+  height: 26px;
   border-radius: 2px;
   transition: transform 150ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
