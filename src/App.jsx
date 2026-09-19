@@ -26,6 +26,10 @@ const BASIC_COLORS = [
 ];
 
 const MAP_CATEGORIES = ["Личное", "Здоровье", "Учёба", "Работа", "Творчество"];
+const LANGUAGE_OPTIONS = [
+  ["ru", "Русский"], ["en", "English"], ["es", "Español"], ["ja", "日本語"], ["de", "Deutsch"],
+  ["fr", "Français"], ["it", "Italiano"], ["pt", "Português"], ["zh", "中文"], ["ko", "한국어"],
+];
 
 const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
@@ -1000,6 +1004,7 @@ export default function App() {
   const [heroDemoCells, setHeroDemoCells] = useState(
     () => new Set(Array.from({ length: 98 }, (_, index) => index * 2))
   );
+  const [showDemoVictory, setShowDemoVictory] = useState(false);
   const [heroNoteCells, setHeroNoteCells] = useState(
     () => new Set([2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 31, 34, 37, 40, 43, 46, 49, 52, 55, 58, 61, 64, 67, 70, 73, 76, 79, 82, 85, 88, 91, 94, 97])
   );
@@ -1200,6 +1205,7 @@ export default function App() {
     isAccountOpen,
     setIsAccountOpen,
   ] = useState(false);
+  const [isLanguageOpen, setIsLanguageOpen] = useState(false);
 
   const canvasRef = useRef(null);
   const viewportRef = useRef(null);
@@ -1211,6 +1217,7 @@ export default function App() {
   const suppressContextMenuRef = useRef(false);
   const suppressHeroContextMenuRef = useRef(false);
   const wasGameCompleteRef = useRef(false);
+  const wasDemoCompleteRef = useRef(false);
   const imageProcessingRef = useRef(0);
   const cellAnimationsRef = useRef(new Map());
   const cellAnimationTimerRef = useRef(null);
@@ -1491,6 +1498,10 @@ export default function App() {
         setIsAccountOpen(false);
         return;
       }
+      if (isLanguageOpen) {
+        setIsLanguageOpen(false);
+        return;
+      }
 
       if (screen === "editor") {
         setScreen("maps");
@@ -1501,7 +1512,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [screen, isCreateOpen, isRenameOpen, isDeleteOpen, isAccountOpen]);
+  }, [screen, isCreateOpen, isRenameOpen, isDeleteOpen, isAccountOpen, isLanguageOpen]);
 
   useEffect(() => {
     if (!isMapInitialized) return;
@@ -1557,6 +1568,17 @@ export default function App() {
     }
     wasGameCompleteRef.current = complete;
   }, [isGameMode, mapType, actualTotal, completed, progressCompleted]);
+
+  useEffect(() => {
+    const complete = heroDemoCells.size === DEMO_PYRAMID_TOTAL;
+    if (complete && !wasDemoCompleteRef.current) {
+      setShowDemoVictory(true);
+      const timer = window.setTimeout(() => setShowDemoVictory(false), 3600);
+      wasDemoCompleteRef.current = true;
+      return () => window.clearTimeout(timer);
+    }
+    if (!complete) wasDemoCompleteRef.current = false;
+  }, [heroDemoCells]);
 
   useEffect(() => {
     colorsRef.current = colors;
@@ -3947,46 +3969,18 @@ export default function App() {
               Как это работает
             </button>
           )}
-          <select
-            className="language-select"
-            value={language}
-            onChange={(e) =>
-              setLanguage(
-                e.target.value
-              )
-            }
-          >
-            <option value="ru">
-              Русский
-            </option>
-            <option value="en">
-              English
-            </option>
-            <option value="es">
-              Español
-            </option>
-            <option value="ja">
-              日本語
-            </option>
-            <option value="de">
-              Deutsch
-            </option>
-            <option value="fr">
-              Français
-            </option>
-            <option value="it">
-              Italiano
-            </option>
-            <option value="pt">
-              Português
-            </option>
-            <option value="zh">
-              中文
-            </option>
-            <option value="ko">
-              한국어
-            </option>
-          </select>
+          <div className="language-menu">
+            <button type="button" className="language-select" onClick={() => setIsLanguageOpen((open) => !open)}>
+              {LANGUAGE_OPTIONS.find(([code]) => code === language)?.[1] || "Русский"} <span>{isLanguageOpen ? "▲" : "▼"}</span>
+            </button>
+            {isLanguageOpen && (
+              <div className="language-popover">
+                {LANGUAGE_OPTIONS.map(([code, label]) => (
+                  <button key={code} className={language === code ? "active" : ""} onClick={() => { setLanguage(code); setIsLanguageOpen(false); }}>{label}</button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {screen === "editor" && (
             <>
@@ -4013,6 +4007,7 @@ export default function App() {
           {user && (
             <div
               ref={accountRef}
+              className="account-menu"
               style={{
                 position:
                   "relative",
@@ -4105,6 +4100,7 @@ export default function App() {
 
               {isAccountOpen && (
                 <div
+                  className="account-popover"
                   style={{
                     position:
                       "absolute",
@@ -4360,8 +4356,14 @@ export default function App() {
             <div className="pyramid-card">
               <div className="pyramid-card-meta">
                 <span>Каждая клетка — маленькое действие</span>
-                <span>✓ Сохранено в карте</span>
               </div>
+              {showDemoVictory && (
+                <div className="demo-victory" role="status">
+                  <div aria-hidden="true">✦ ✺ ✧ ✦ ✺ ✧</div>
+                  <strong>Пирамида собрана!</strong>
+                  <span>Вот это упорство.</span>
+                </div>
+              )}
               <div className="hero-demo-wrap">
                 <div className="hero-grid demo-interactive hero-pyramid" onContextMenu={(event) => event.preventDefault()}>
                   {DEMO_PYRAMID_ROWS.map((count, row) => (
