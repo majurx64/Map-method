@@ -3283,8 +3283,10 @@ export default function App() {
   function beginHeroNoteStroke(event, index) {
     event.preventDefault();
     heroNotePointerRef.current = event.pointerId;
-    // Для мини-карты справа: ЛКМ стирает, ПКМ рисует.
-    heroNoteModeRef.current = event.button === 0 ? "erase" : "draw";
+    // ПКМ всегда добавляет. ЛКМ удаляет заполненную клетку и добавляет пустую:
+    // так мини-карта остаётся понятной и действительно интерактивной.
+    heroNoteModeRef.current =
+      event.button === 2 || !heroNoteCells.has(index) ? "draw" : "erase";
     toggleHeroNoteCell(index, heroNoteModeRef.current === "erase");
   }
 
@@ -4774,7 +4776,7 @@ export default function App() {
                     <article className={`achievement-card ${unlocked ? "unlocked" : ""} ${celebrating ? "achievement-celebration" : ""}`} key={achievement.title}>
                       {celebrating && <span className="achievement-sparkles" aria-hidden="true">✦ ✺ ✧ ✦ ✺</span>}
                       <span className="achievement-icon">{achievement.icon}</span>
-                      <div>
+                      <div className={celebrating ? "achievement-copy achievement-copy-float" : "achievement-copy"}>
                         <strong>{achievement.title}</strong>
                         <p>{achievement.text}</p>
                         <div className="achievement-progress"><i style={{ width: `${achievementProgress}%` }} /></div>
