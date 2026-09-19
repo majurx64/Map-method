@@ -2461,7 +2461,7 @@ button:disabled {
 }
 .hero-note-index { color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .12em; }
 .hero-note-cells { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; width: 146px; margin: 24px 0; }
-.hero-note-cells i { display: block; aspect-ratio: 1; border-radius: 2px; background: #d7d6cc; }.hero-note-cells i.filled { background: #32624f; }
+.hero-note-cells button { display: block; aspect-ratio: 1; padding: 0; border: 0; border-radius: 3px; background: #d7d6cc; cursor: pointer; transition: transform 150ms ease, background-color 150ms ease; }.hero-note-cells button:hover { transform: scale(1.08); }.hero-note-cells button.filled { background: #32624f; }
 .hero-note strong { display: block; max-width: 240px; color: #252621; font-size: 19px; line-height: 1.12; }.hero-note p { margin: 10px 0 0; color: #697168; font-size: 14px; line-height: 1.5; }
 
 .landing-pyramid-section {
@@ -2691,6 +2691,40 @@ button:disabled {
   padding: 0 10px;
   font-size: 12px;
 }
+
+/* Палитра — самостоятельная аккуратная карточка, а не набор случайных кружков. */
+.left-sidebar .color-palette {
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #ddd6ca;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fffefb, #f1ede4);
+}
+.left-sidebar .color-palette-header {
+  align-items: center;
+  margin: 0;
+  padding-bottom: 11px;
+  border-bottom: 1px solid #e2dbd0;
+}
+.left-sidebar .color-palette-title { color: #252621; font-size: 14px; font-weight: 800; }
+.left-sidebar .color-palette-subtitle { margin-top: 3px; color: #7a8177; }
+.left-sidebar .selected-color-preview { width: 34px; height: 34px; box-shadow: 0 0 0 1px #b9b4aa, 0 0 0 4px #fff; }
+.left-sidebar .color-list { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; }
+.left-sidebar .color-item, .left-sidebar .custom-color-wrapper { width: 100%; height: auto; aspect-ratio: 1; }
+.left-sidebar .color-item { border-radius: 9px; border-color: rgba(37, 38, 33, .16); background: #fff; }
+.left-sidebar .color-dot { inset: 3px; border-radius: 6px; }
+.left-sidebar .color-item.selected { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #32624f; }
+.left-sidebar .color-palette-section { margin-top: 0; padding-top: 11px; border-top: 1px solid #e2dbd0; }
+.left-sidebar .color-palette-label { color: #697168; font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+.left-sidebar .custom-color-create { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 0; padding-top: 11px; border-top-color: #e2dbd0; }
+.left-sidebar .color-picker-wrap { height: 42px; padding: 4px 8px 4px 4px; border-color: #cfc7ba; border-radius: 10px; transition: border-color 150ms ease, box-shadow 150ms ease; }
+.left-sidebar .color-picker-wrap:hover { border-color: #32624f; box-shadow: 0 0 0 3px rgba(50, 98, 79, .11); }
+.left-sidebar .color-picker-wrap input[type="color"] { width: 32px; height: 32px; border-radius: 7px; }.left-sidebar .color-picker-value { color: #445047; font-size: 12px; font-weight: 700; }
+.left-sidebar .add-color-btn { justify-content: center; min-height: 40px; border: 0; border-radius: 10px; background: #32624f; color: #fff; font-weight: 800; }
+.left-sidebar .add-color-btn:hover { background: #234c3c; }
+
+.map-card-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: min(100%, 230px); gap: 7px; }
+.map-card-actions .tool-btn { width: 100%; min-width: 0; justify-content: center; }
 
 @media (max-width: 720px) {
   .left-sidebar {

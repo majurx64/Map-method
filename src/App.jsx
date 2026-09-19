@@ -798,6 +798,7 @@ function normalizeMap(map = {}) {
           .filter((i) => i >= 0)
       ),
     ],
+    progressExtra: Math.max(0, Math.floor(Number(map.progressExtra) || 0)),
     image: typeof map.image === "string" ? map.image : null,
     colors: Array.isArray(map.colors) ? map.colors : [],
     customColors: custom,
@@ -917,34 +918,37 @@ function getGridDimensions(
 }
 
 function getLineCells(a, b, cols, rows) {
-  const sr = Math.floor(a / cols);
-  const sc = a % cols;
-  const er = Math.floor(b / cols);
-  const ec = b % cols;
+  let row = Math.floor(a / cols);
+  let col = a % cols;
+  const endRow = Math.floor(b / cols);
+  const endCol = b % cols;
+  const deltaCol = Math.abs(endCol - col);
+  const deltaRow = Math.abs(endRow - row);
+  const stepCol = col < endCol ? 1 : -1;
+  const stepRow = row < endRow ? 1 : -1;
+  let error = deltaCol - deltaRow;
+  const out = [];
 
-  const dx = ec - sc;
-  const dy = er - sr;
-  const steps = Math.max(Math.abs(dx), Math.abs(dy));
+  // Суперпокрывающий вариант Брезенхэма: отмечает каждую клетку,
+  // через которую прошёл курсор, даже когда события мыши редкие.
+  while (true) {
+    if (row >= 0 && row < rows && col >= 0 && col < cols) {
+      out.push(row * cols + col);
+    }
+    if (row === endRow && col === endCol) break;
 
-  if (!steps) return [a];
-
-  const out = new Set();
-
-  for (let s = 0; s <= steps; s++) {
-    const c = Math.round(sc + (dx * s) / steps);
-    const r = Math.round(sr + (dy * s) / steps);
-
-    if (
-      c >= 0 &&
-      c < cols &&
-      r >= 0 &&
-      r < rows
-    ) {
-      out.add(r * cols + c);
+    const twiceError = error * 2;
+    if (twiceError > -deltaRow) {
+      error -= deltaRow;
+      col += stepCol;
+    }
+    if (twiceError < deltaCol) {
+      error += deltaCol;
+      row += stepRow;
     }
   }
 
-  return [...out];
+  return out;
 }
 
 function sameState(a, b) {
@@ -990,11 +994,15 @@ export default function App() {
   const [heroDemoCells, setHeroDemoCells] = useState(
     () => new Set(Array.from({ length: 98 }, (_, index) => index * 2))
   );
+  const [heroNoteCells, setHeroNoteCells] = useState(
+    () => new Set([1, 4, 7, 12, 13, 17, 20, 23])
+  );
   const [cardDemoCells, setCardDemoCells] = useState(
     () => new Set(Array.from({ length: 50 }, (_, index) => index))
   );
   const [isGameMode, setIsGameMode] = useState(false);
   const [progressCompleted, setProgressCompleted] = useState([]);
+  const [progressExtra, setProgressExtra] = useState(0);
   const [isGameFillOpen, setIsGameFillOpen] = useState(false);
   const [gameFillCount, setGameFillCount] = useState("1");
   const [gameFillRandom, setGameFillRandom] = useState(false);
@@ -1177,6 +1185,7 @@ export default function App() {
 
   const completedRef = useRef(new Set());
   const progressCompletedRef = useRef(new Set());
+  const progressExtraRef = useRef(0);
   const colorsRef = useRef([]);
   const drawColorRef = useRef(drawColor);
   const activityLogRef = useRef([]);
@@ -1230,7 +1239,7 @@ export default function App() {
       : completed.length
     : actualTotal;
   const displayedProgress = displayedTotal
-    ? Math.min(100, Math.round((displayedCompleted.length / displayedTotal) * 100))
+    ? Math.round(((displayedCompleted.length + (isPlaying ? progressExtra : 0)) / displayedTotal) * 100)
     : 0;
 
   const t = (key) =>
@@ -1269,7 +1278,7 @@ export default function App() {
       map.manualCols
     );
     const filled = map.isGameMode
-      ? map.progressCompleted?.length || 0
+      ? (map.progressCompleted?.length || 0) + (map.progressExtra || 0)
       : map.completed?.length || 0;
 
     return { ...map, total: dimensions.actualTotal, filled };
@@ -1435,6 +1444,10 @@ export default function App() {
   useEffect(() => {
     progressCompletedRef.current = new Set(progressCompleted);
   }, [progressCompleted]);
+
+  useEffect(() => {
+    progressExtraRef.current = progressExtra;
+  }, [progressExtra]);
 
   useEffect(() => {
     activityLogRef.current = activityLog;
@@ -1647,6 +1660,7 @@ export default function App() {
       gridMode,
       completed,
       progressCompleted,
+      progressExtra,
       image,
       colors,
       imageRatio,
@@ -1677,6 +1691,7 @@ export default function App() {
     gridMode,
     completed,
     progressCompleted,
+    progressExtra,
     image,
     colors,
     imageRatio,
@@ -1704,6 +1719,7 @@ export default function App() {
             progressCompleted: [
               ...progressCompletedRef.current,
             ],
+            progressExtra: progressExtraRef.current,
             image,
             colors,
             imageRatio,
@@ -1722,6 +1738,7 @@ export default function App() {
       mapType,
       isGameMode,
       gridMode,
+      progressExtra,
       image,
       colors,
       imageRatio,
@@ -1819,6 +1836,7 @@ export default function App() {
     gridMode,
       completed,
       progressCompleted,
+      progressExtra,
     image,
     colors,
     imageRatio,
@@ -2403,9 +2421,11 @@ export default function App() {
 
     if (isGameMode) {
       const before = new Set(progressCompletedRef.current);
-      if (!before.size) return;
+      if (!before.size && !progressExtraRef.current) return;
       progressCompletedRef.current = new Set();
       setProgressCompleted([]);
+      progressExtraRef.current = 0;
+      setProgressExtra(0);
       pushHistory(before, new Set(), [], [], "progress");
       return;
     }
@@ -2901,6 +2921,8 @@ export default function App() {
         setIsGameMode(false);
         progressCompletedRef.current = new Set();
         setProgressCompleted([]);
+        progressExtraRef.current = 0;
+        setProgressExtra(0);
         setCompletedDirectly([]);
         clearHistory();
 
@@ -2951,6 +2973,8 @@ export default function App() {
     setIsGameMode(false);
     progressCompletedRef.current = new Set();
     setProgressCompleted([]);
+    progressExtraRef.current = 0;
+    setProgressExtra(0);
 
     setCompletedDirectly([]);
 
@@ -3162,10 +3186,16 @@ export default function App() {
       : available.sort((a, b) => a - b);
     const next = new Set(progressCompletedRef.current);
     const added = cells.slice(0, count);
+    const extra = Math.max(0, count - added.length);
     added.forEach((index) => next.add(index));
     animateCells(added);
     progressCompletedRef.current = next;
     setProgressCompleted([...next]);
+    if (extra) {
+      progressExtraRef.current += extra;
+      setProgressExtra(progressExtraRef.current);
+    }
+    recordPaintedCells(added.length + extra);
     setIsGameFillOpen(false);
   }
 
@@ -3446,6 +3476,8 @@ export default function App() {
     );
     progressCompletedRef.current = new Set(m.progressCompleted);
     setProgressCompleted(m.progressCompleted);
+    progressExtraRef.current = m.progressExtra;
+    setProgressExtra(m.progressExtra);
     setIsGameMode(m.isGameMode);
 
     setImage(m.image);
@@ -3697,18 +3729,6 @@ export default function App() {
     link.download = `${filename}.png`;
     link.href = canvas.toDataURL("image/png");
     link.click();
-  }
-
-  function saveStoredMap(map) {
-    if (!user) return;
-
-    remoteSave(normalizeMap(map)).then((error) => {
-      if (error) setSaveStatus("error");
-      else {
-        setSaveStatus("saved");
-        window.setTimeout(() => setSaveStatus(""), 1200);
-      }
-    });
   }
 
   return (
@@ -4159,8 +4179,21 @@ export default function App() {
 
             <aside className="hero-note" aria-label="Что даёт Map Method">
               <span className="hero-note-index">01</span>
-              <div className="hero-note-cells" aria-hidden="true">
-                {Array.from({ length: 25 }, (_, index) => <i key={index} className={[1, 4, 7, 12, 13, 17, 20, 23].includes(index) ? "filled" : ""} />)}
+              <div className="hero-note-cells">
+                {Array.from({ length: 25 }, (_, index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    className={heroNoteCells.has(index) ? "filled" : ""}
+                    aria-label={`Клетка ${index + 1}`}
+                    onClick={() => setHeroNoteCells((previous) => {
+                      const next = new Set(previous);
+                      if (next.has(index)) next.delete(index);
+                      else next.add(index);
+                      return next;
+                    })}
+                  />
+                ))}
               </div>
               <strong>Путь складывается из маленьких действий.</strong>
               <p>Нарисуй свою форму и отмечай движение так, как удобно тебе.</p>
@@ -4315,16 +4348,6 @@ export default function App() {
               </h1>
             </div>
 
-            <button
-              className="save-map-btn"
-              onClick={() =>
-                setScreen(
-                  "maps"
-                )
-              }
-            >
-              {t("myMaps")}
-            </button>
           </div>
 
           <div
@@ -4642,7 +4665,7 @@ export default function App() {
 
             <section className="account-plan-card">
               <div>
-                <span className="account-eyebrow">ТЕМП НА СЕГОДНЯ</span>
+                <span className="account-eyebrow">ПЛАН НА СЕГОДНЯ</span>
                 <h2>{accountDailyGoal ? "Двигайся в своём ритме" : "Начни с первой карты"}</h2>
                 <p>
                   {accountDailyGoal
@@ -4780,22 +4803,13 @@ export default function App() {
                     );
 
                   const done =
-                    map.progressCompleted
-                      ?.length || 0;
+                    (map.progressCompleted?.length || 0) + (map.progressExtra || 0);
 
                   const completedCells = new Set(
                     map.progressCompleted || []
                   );
 
-                  const p =
-                    Math.min(
-                      100,
-                      Math.round(
-                        (done /
-                          d.actualTotal) *
-                          100
-                      )
-                    );
+                  const p = Math.round((done / d.actualTotal) * 100);
 
                   return (
                     <article
@@ -4947,16 +4961,6 @@ export default function App() {
                               }}
                             >
                               ↓ Скачать
-                            </button>
-
-                            <button
-                              className="tool-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                saveStoredMap(map);
-                              }}
-                            >
-                              {t("save")}
                             </button>
 
                             <button
@@ -5636,10 +5640,7 @@ export default function App() {
                         addCustomColor
                       }
                     >
-                      +{" "}
-                      {t(
-                        "addColor"
-                      )}
+                      + Добавить цвет
                     </button>
                   </div>
                 </div>
@@ -5848,8 +5849,12 @@ export default function App() {
                         key={i}
                         className={cellAnimationsRef.current.has(i) ? "cell-pop" : ""}
                         style={{
-                          backgroundColor: active ? color : "#eeeeea",
-                          opacity: 1,
+                          backgroundColor: active
+                            ? color
+                            : mapType === "image" && showImage && image
+                              ? color
+                              : "#eeeeea",
+                          opacity: !active && mapType === "image" && showImage && image ? 0.35 : 1,
                         }}
                       />
                     );
