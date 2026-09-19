@@ -24,6 +24,16 @@ const BASIC_COLORS = [
   "#FF47CA",
 ];
 
+const MAP_TEMPLATES = [
+  { id: "blank", label: "Своя карта", name: "", description: "", cells: "500" },
+  { id: "reading", label: "Чтение", name: "30 дней чтения", description: "Каждая клетка — время для книги.", cells: "300" },
+  { id: "fitness", label: "Тренировки", name: "100 тренировок", description: "Мой видимый путь к силе и форме.", cells: "100" },
+  { id: "study", label: "Учёба", name: "500 новых слов", description: "Слово за словом — к свободной речи.", cells: "500" },
+  { id: "focus", label: "Фокус", name: "Глубокая работа", description: "Собираю часы сосредоточенной работы.", cells: "120" },
+];
+
+const MAP_CATEGORIES = ["Личное", "Здоровье", "Учёба", "Работа", "Творчество"];
+
 const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
 
@@ -821,6 +831,14 @@ function normalizeMap(map = {}) {
       typeof map.showImage === "boolean" ? map.showImage : true,
     description:
       typeof map.description === "string" ? map.description : "",
+    category: MAP_CATEGORIES.includes(map.category) ? map.category : "Личное",
+    deadline: /^\d{4}-\d{2}-\d{2}$/.test(map.deadline || "") ? map.deadline : "",
+    coverStyle: ["grid", "poster", "fragment"].includes(map.coverStyle) ? map.coverStyle : "grid",
+    cellNotes: Object.fromEntries(
+      Object.entries(map.cellNotes && typeof map.cellNotes === "object" ? map.cellNotes : {})
+        .filter(([key, value]) => Number.isInteger(Number(key)) && typeof value === "string" && value.trim())
+        .slice(0, 400)
+    ),
     activityLog: normalizeActivityLog(map.activityLog),
   };
 }
@@ -1118,6 +1136,10 @@ export default function App() {
     setNewMapName,
   ] = useState("");
   const [newMapDescription, setNewMapDescription] = useState("");
+  const [newMapTemplate, setNewMapTemplate] = useState("blank");
+  const [newMapCategory, setNewMapCategory] = useState("Личное");
+  const [newMapDeadline, setNewMapDeadline] = useState("");
+  const [newMapCoverStyle, setNewMapCoverStyle] = useState("grid");
 
   const [
     newMapType,
@@ -1149,6 +1171,12 @@ export default function App() {
     setRenameValue,
   ] = useState("");
   const [renameDescription, setRenameDescription] = useState("");
+  const [renameCategory, setRenameCategory] = useState("Личное");
+  const [renameDeadline, setRenameDeadline] = useState("");
+  const [renameCoverStyle, setRenameCoverStyle] = useState("grid");
+  const [cellNotes, setCellNotes] = useState({});
+  const [selectedNoteCell, setSelectedNoteCell] = useState(null);
+  const [mapCategoryFilter, setMapCategoryFilter] = useState("Все");
   const [celebratingAchievements, setCelebratingAchievements] = useState(() => {
     try {
       return new Set(JSON.parse(sessionStorage.getItem(ACHIEVEMENT_SESSION_KEY) || "[]"));
@@ -1324,6 +1352,16 @@ export default function App() {
   const accountDailyGoal = accountRemainingCells
     ? Math.ceil(accountRemainingCells / 30)
     : 0;
+  const accountHistory = Array.from({ length: 7 }, (_, offset) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (6 - offset));
+    const key = getActivityDate(date);
+    const cells = maps.reduce((sum, map) => sum + (map.activityLog || [])
+      .filter((entry) => entry.date === key)
+      .reduce((subtotal, entry) => subtotal + entry.cells, 0), 0);
+    return { key, cells, label: `${date.getDate()}.${String(date.getMonth() + 1).padStart(2, "0")}` };
+  });
+  const accountHistoryMax = Math.max(1, ...accountHistory.map((item) => item.cells));
   const accountAchievements = [
     { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: maps.length, goal: 1 },
     { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: maps.length, goal: 3 },
@@ -1331,6 +1369,8 @@ export default function App() {
     { icon: "●", title: "Первый шаг", text: "Закрасить 100 клеток", current: accountPaintedCells, goal: 100 },
     { icon: "◆", title: "Ритм", text: "Закрасить 200 клеток", current: accountPaintedCells, goal: 200 },
     { icon: "✺", title: "Большая картина", text: "Закрасить 500 клеток", current: accountPaintedCells, goal: 500 },
+    { icon: "☼", title: "Ритм недели", text: "Закрасить клетки в 7 дней", current: accountHistory.filter((item) => item.cells > 0).length, goal: 7 },
+    { icon: "♜", title: "Финиш", text: "Завершить 3 карты", current: accountFinishedMaps, goal: 3 },
   ];
 
   useEffect(() => {
@@ -1728,6 +1768,7 @@ export default function App() {
       manualCols,
       showImage,
       description,
+      cellNotes,
       activityLog,
       drawColor,
       customColors,
@@ -1759,6 +1800,7 @@ export default function App() {
     manualCols,
     showImage,
     description,
+    cellNotes,
     activityLog,
     drawColor,
     customColors,
@@ -1787,6 +1829,7 @@ export default function App() {
             manualCols,
             showImage,
             description,
+            cellNotes,
             activityLog: activityLogRef.current,
             drawColor,
             customColors,
@@ -1806,6 +1849,7 @@ export default function App() {
       manualCols,
       showImage,
       description,
+      cellNotes,
       activityLog,
       drawColor,
       customColors,
@@ -2201,6 +2245,9 @@ export default function App() {
       animateCells(changed, mode);
       progressCompletedRef.current = next;
       setProgressCompleted([...next]);
+      if (changed.length && mode === "draw") {
+        setSelectedNoteCell(changed[changed.length - 1]);
+      }
       if (mode === "draw") recordPaintedCells(changed.length);
       return;
     }
@@ -3456,12 +3503,24 @@ export default function App() {
   function openCreateModal() {
     setNewMapName("");
     setNewMapDescription("");
+    setNewMapTemplate("blank");
+    setNewMapCategory("Личное");
+    setNewMapDeadline("");
+    setNewMapCoverStyle("grid");
     setNewMapType("free");
     setNewMapGridMode("auto");
     setNewMapCells("500");
     setNewMapRows("20");
     setNewMapCols("25");
     setIsCreateOpen(true);
+  }
+
+  function selectMapTemplate(templateId) {
+    const template = MAP_TEMPLATES.find((item) => item.id === templateId) || MAP_TEMPLATES[0];
+    setNewMapTemplate(template.id);
+    if (template.name) setNewMapName(template.name);
+    if (template.description) setNewMapDescription(template.description);
+    setNewMapCells(template.cells);
   }
 
   async function createMap() {
@@ -3471,6 +3530,9 @@ export default function App() {
         newMapName.trim() ||
         "Новая карта",
       description: newMapDescription.trim(),
+      category: newMapCategory,
+      deadline: newMapDeadline,
+      coverStyle: newMapCoverStyle,
       mapType: newMapType,
       gridMode:
         newMapGridMode,
@@ -3610,6 +3672,8 @@ export default function App() {
     setDescription(
       m.description
     );
+    setCellNotes(m.cellNotes);
+    setSelectedNoteCell(null);
 
     activityLogRef.current = m.activityLog;
     setActivityLog(m.activityLog);
@@ -3631,6 +3695,9 @@ export default function App() {
       map.name || ""
     );
     setRenameDescription(map.description || "");
+    setRenameCategory(map.category || "Личное");
+    setRenameDeadline(map.deadline || "");
+    setRenameCoverStyle(map.coverStyle || "grid");
 
     setRenameMapId(map.id);
     setIsRenameOpen(true);
@@ -3660,6 +3727,9 @@ export default function App() {
         ...old,
         name,
         description: renameDescription.trim(),
+        category: renameCategory,
+        deadline: renameDeadline,
+        coverStyle: renameCoverStyle,
       });
 
     setMaps((p) =>
@@ -3696,6 +3766,9 @@ export default function App() {
     setIsRenameOpen(false);
     setRenameValue("");
     setRenameDescription("");
+    setRenameCategory("Личное");
+    setRenameDeadline("");
+    setRenameCoverStyle("grid");
     setRenameMapId(null);
   }
 
@@ -3819,6 +3892,27 @@ export default function App() {
     link.download = `${filename}.png`;
     link.href = canvas.toDataURL("image/png");
     link.click();
+  }
+
+  function downloadMapHistory(map) {
+    const dimensions = getGridDimensions(
+      Math.max(1, Number(map.totalCells) || 1), map.imageRatio || 1,
+      map.gridMode, map.manualRows, map.manualCols
+    );
+    const done = (map.progressCompleted?.length || 0) + (map.progressExtra || 0);
+    const lines = [
+      "Map Method — отчёт по карте", `Карта: ${map.name}`,
+      `Категория: ${map.category || "Личное"}`, `Описание: ${map.description || "—"}`,
+      `Срок: ${map.deadline || "не задан"}`, `Прогресс: ${done} / ${dimensions.actualTotal} клеток`,
+      "", "История заполнения:", "Дата;Клеток",
+      ...(map.activityLog || []).map((entry) => `${entry.date};${entry.cells}`),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${(map.name || "map-method").replace(/[\\/:*?\"<>|]+/g, "-")}-отчёт.txt`;
+    link.click();
+    URL.revokeObjectURL(link.href);
   }
 
   return (
@@ -4749,6 +4843,23 @@ export default function App() {
               </div>
             </section>
 
+            <section className="account-history-card">
+              <div>
+                <span className="account-eyebrow">ИСТОРИЯ ДВИЖЕНИЯ</span>
+                <h2>Твоя неделя на карте</h2>
+                <p>Каждая колонка — клетки, которые ты отметил в этот день.</p>
+              </div>
+              <div className="history-chart">
+                {accountHistory.map((item) => (
+                  <div className="history-day" key={item.key} title={`${item.label}: ${item.cells} клеток`}>
+                    <i style={{ height: `${Math.max(item.cells ? 12 : 3, (item.cells / accountHistoryMax) * 100)}%` }} />
+                    <strong>{item.cells || "—"}</strong>
+                    <span>{item.label}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
             <section className="account-plan-card">
               <div>
                 <span className="account-eyebrow">ПЛАН НА СЕГОДНЯ</span>
@@ -4872,8 +4983,14 @@ export default function App() {
               </button>
             </div>
           ) : (
+            <>
+              <div className="maps-filter" role="group" aria-label="Фильтр карт">
+                {["Все", ...MAP_CATEGORIES].map((category) => (
+                  <button key={category} className={mapCategoryFilter === category ? "active" : ""} onClick={() => setMapCategoryFilter(category)}>{category}</button>
+                ))}
+              </div>
             <div className="maps-list">
-              {maps.map(
+              {maps.filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
                 (map) => {
                   const d =
                     getGridDimensions(
@@ -4904,7 +5021,7 @@ export default function App() {
 
                   return (
                     <article
-                      className="map-card"
+                      className={`map-card cover-${map.coverStyle || "grid"}`}
                       key={
                         map.id
                       }
@@ -4984,6 +5101,7 @@ export default function App() {
                                 {map.description}
                               </span>
                             )}
+                            <span className="map-card-meta">{map.category || "Личное"}{map.deadline ? ` · до ${map.deadline.split("-").reverse().join(".")}` : ""}</span>
                           </div>
 
                           <strong className="map-card-percent">
@@ -5060,6 +5178,16 @@ export default function App() {
                             </button>
 
                             <button
+                              className="tool-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadMapHistory(map);
+                              }}
+                            >
+                              ↧ Отчёт
+                            </button>
+
+                            <button
                               className="tool-btn danger-action"
                               onClick={(
                                 e
@@ -5083,6 +5211,7 @@ export default function App() {
                 }
               )}
             </div>
+            </>
           )}
         </section>
       )}
@@ -5556,6 +5685,24 @@ export default function App() {
               </div>
             </section>
 
+            {isGameMode && (
+              <section className="sidebar-section note-section">
+                <div className="section-heading">Заметка к клетке</div>
+                {selectedNoteCell === null ? (
+                  <p className="note-empty">Закрась клетку — здесь можно будет оставить короткую заметку о шаге.</p>
+                ) : (
+                  <>
+                    <span className="note-cell-label">Клетка № {selectedNoteCell + 1}</span>
+                    <textarea
+                      value={cellNotes[selectedNoteCell] || ""}
+                      placeholder="Например: прочитал главу или сделал тренировку"
+                      onChange={(event) => setCellNotes((previous) => ({ ...previous, [selectedNoteCell]: event.target.value }))}
+                    />
+                  </>
+                )}
+              </section>
+            )}
+
             {mapType === "free" && !isGameMode && (
               <section className="sidebar-section palette-section">
                 <div className="section-heading">
@@ -5986,6 +6133,14 @@ export default function App() {
                 </strong>
               </div>
 
+              {isGameMode && (
+                <div className="milestone-list" aria-label="Вехи карты">
+                  {[25, 50, 75, 100].map((milestone) => (
+                    <span key={milestone} className={displayedProgress >= milestone ? "reached" : ""}>{displayedProgress >= milestone ? "✦" : "○"} {milestone}%</span>
+                  ))}
+                </div>
+              )}
+
               <button
                 className="clear-btn"
                 onClick={
@@ -6006,7 +6161,13 @@ export default function App() {
           <div className="create-modal game-fill-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><h2>Заполнить клетки</h2><button className="modal-close" onClick={() => setIsGameFillOpen(false)}>×</button></div>
             <div className="modal-field"><label>Сколько клеток отметить</label><input type="number" min="1" value={gameFillCount} onChange={(event) => setGameFillCount(event.target.value)} /></div>
-            <label className="image-toggle"><input type="checkbox" checked={gameFillRandom} onChange={(event) => setGameFillRandom(event.target.checked)} /> В случайном порядке</label>
+            <div className="modal-field">
+              <label>Как заполнить</label>
+              <div className="template-picker fill-mode-picker">
+                <button type="button" className={!gameFillRandom ? "active" : ""} onClick={() => setGameFillRandom(false)}>По порядку</button>
+                <button type="button" className={gameFillRandom ? "active" : ""} onClick={() => setGameFillRandom(true)}>Хаотично</button>
+              </div>
+            </div>
             <button className="modal-create-btn" onClick={fillGameCells}>Заполнить</button>
           </div>
         </div>
@@ -6045,6 +6206,15 @@ export default function App() {
             </div>
 
             <div className="modal-field">
+              <label>Начать с шаблона</label>
+              <div className="template-picker">
+                {MAP_TEMPLATES.map((template) => (
+                  <button key={template.id} type="button" className={newMapTemplate === template.id ? "active" : ""} onClick={() => selectMapTemplate(template.id)}>{template.label}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="modal-field">
               <label>
                 {t("name")}
               </label>
@@ -6070,6 +6240,26 @@ export default function App() {
                 placeholder="Можешь написать, для чего тебе эта карта — например, «30 тренировок» или «Мой путь к цели»."
                 onChange={(e) => setNewMapDescription(e.target.value)}
               />
+            </div>
+
+            <div className="modal-inline-fields">
+              <div className="modal-field">
+                <label>Категория</label>
+                <select value={newMapCategory} onChange={(event) => setNewMapCategory(event.target.value)}>
+                  {MAP_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+                </select>
+              </div>
+              <div className="modal-field">
+                <label>Срок (необязательно)</label>
+                <input type="date" value={newMapDeadline} onChange={(event) => setNewMapDeadline(event.target.value)} />
+              </div>
+            </div>
+
+            <div className="modal-field">
+              <label>Обложка карты</label>
+              <div className="template-picker cover-picker">
+                {[['grid', 'Сетка'], ['poster', 'Постер'], ['fragment', 'Фрагмент']].map(([style, label]) => <button key={style} type="button" className={newMapCoverStyle === style ? "active" : ""} onClick={() => setNewMapCoverStyle(style)}>{label}</button>)}
+              </div>
             </div>
 
             <div className="modal-field">
@@ -6308,6 +6498,26 @@ export default function App() {
                 placeholder="Коротко: для чего эта карта?"
                 onChange={(e) => setRenameDescription(e.target.value)}
               />
+            </div>
+
+            <div className="modal-inline-fields">
+              <div className="modal-field">
+                <label>Категория</label>
+                <select value={renameCategory} onChange={(event) => setRenameCategory(event.target.value)}>
+                  {MAP_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+                </select>
+              </div>
+              <div className="modal-field">
+                <label>Срок</label>
+                <input type="date" value={renameDeadline} onChange={(event) => setRenameDeadline(event.target.value)} />
+              </div>
+            </div>
+
+            <div className="modal-field">
+              <label>Обложка карты</label>
+              <div className="template-picker cover-picker">
+                {[['grid', 'Сетка'], ['poster', 'Постер'], ['fragment', 'Фрагмент']].map(([style, label]) => <button key={style} type="button" className={renameCoverStyle === style ? "active" : ""} onClick={() => setRenameCoverStyle(style)}>{label}</button>)}
+              </div>
             </div>
 
             <button
