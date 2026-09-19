@@ -1347,12 +1347,9 @@ export default function App() {
       window.scrollTo(0, target);
       restored = true;
     };
-    // Карточки и изображения могут увеличить страницу уже после первого кадра.
-    // Повторяем восстановление несколько раз, чтобы браузер не обрезал позицию
-    // до высоты ещё не отрисованного содержимого.
-    const restoreTimers = [0, 80, 300, 700, 1200].map((delay) =>
-      window.setTimeout(restore, delay)
-    );
+    // Восстанавливаем позицию только один раз. Повторные таймеры перехватывали
+    // ручную прокрутку и иногда возвращали страницу наверх.
+    const restoreTimers = [window.setTimeout(restore, 0)];
     const savePosition = () => {
       if (!restored) return;
       const next = JSON.parse(
@@ -2540,15 +2537,27 @@ export default function App() {
 
       const isErasing = animation?.mode === "erase" && elapsed < 260;
 
-      // Новая клетка мягко появляется, но её базовый цвет виден сразу.
-      // Поэтому при быстром штрихе не остаётся визуальных пробелов.
+      // Базовый цвет появляется сразу — быстрый штрих не даёт пустых клеток.
       ctx.fillStyle = fill;
       ctx.fillRect(
-        isErasing ? x : x + (cw * (1 - scale)) / 2,
-        isErasing ? y : y + (ch * (1 - scale)) / 2,
-        isErasing ? cw + 0.5 : cw * scale + 0.5,
-        isErasing ? ch + 0.5 : ch * scale + 0.5
+        x,
+        y,
+        cw + 0.5,
+        ch + 0.5
       );
+
+      // Поверх основы остаётся мягкий «пульс», поэтому анимация не исчезает.
+      if (!isErasing && elapsed < 260) {
+        ctx.globalAlpha = 0.2 * (1 - animationProgress);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(
+          x + (cw * (1 - scale)) / 2,
+          y + (ch * (1 - scale)) / 2,
+          cw * scale + 0.5,
+          ch * scale + 0.5
+        );
+        ctx.globalAlpha = 1;
+      }
 
       if (
         mapType === "image" &&
@@ -3657,6 +3666,51 @@ export default function App() {
     a.click();
   }
 
+  function downloadStoredMap(map) {
+    const dimensions = getGridDimensions(
+      Math.max(1, Number(map.totalCells) || 1),
+      map.imageRatio || 1,
+      map.gridMode,
+      map.manualRows,
+      map.manualCols
+    );
+    const cellSize = 18;
+    const canvas = document.createElement("canvas");
+    canvas.width = dimensions.cols * cellSize;
+    canvas.height = dimensions.rows * cellSize;
+    const ctx = canvas.getContext("2d");
+    const progressCells = new Set(map.progressCompleted || []);
+
+    for (let i = 0; i < dimensions.actualTotal; i++) {
+      const x = (i % dimensions.cols) * cellSize;
+      const y = Math.floor(i / dimensions.cols) * cellSize;
+      ctx.fillStyle = progressCells.has(i)
+        ? map.colors?.[i] || "#32624f"
+        : "#eeeeea";
+      ctx.fillRect(x, y, cellSize, cellSize);
+      ctx.strokeStyle = "#d8d4cc";
+      ctx.strokeRect(x + 0.5, y + 0.5, cellSize, cellSize);
+    }
+
+    const link = document.createElement("a");
+    const filename = (map.name || "MM-map").replace(/[\\/:*?\"<>|]/g, "").trim() || "MM-map";
+    link.download = `${filename}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  }
+
+  function saveStoredMap(map) {
+    if (!user) return;
+
+    remoteSave(normalizeMap(map)).then((error) => {
+      if (error) setSaveStatus("error");
+      else {
+        setSaveStatus("saved");
+        window.setTimeout(() => setSaveStatus(""), 1200);
+      }
+    });
+  }
+
   return (
     <div className="app">
       {showVictory && (
@@ -3767,38 +3821,17 @@ export default function App() {
             </option>
           </select>
 
-          <button
-            className="download-map-btn"
-            onClick={
-              downloadMap
-            }
-            disabled={
-              screen !==
-                "editor" ||
-              !activeMap
-            }
-          >
-            ↓ Скачать
-          </button>
+          {screen === "editor" && (
+            <>
+              <button className="download-map-btn" onClick={downloadMap} disabled={!activeMap}>
+                ↓ Скачать
+              </button>
 
-          <button
-            className="save-map-btn"
-            onClick={
-              saveActiveMap
-            }
-            disabled={
-              screen !==
-                "editor" ||
-              !activeMap
-            }
-          >
-            {saveStatus ===
-            "error"
-              ? "Ошибка"
-              : saveStatus
-              ? t("saved")
-              : t("save")}
-          </button>
+              <button className="save-map-btn" onClick={saveActiveMap} disabled={!activeMap}>
+                {saveStatus === "error" ? "Ошибка" : saveStatus ? t("saved") : t("save")}
+              </button>
+            </>
+          )}
 
           {!user && (
             <button
@@ -4123,6 +4156,15 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            <aside className="hero-note" aria-label="Что даёт Map Method">
+              <span className="hero-note-index">01</span>
+              <div className="hero-note-cells" aria-hidden="true">
+                {Array.from({ length: 25 }, (_, index) => <i key={index} className={[1, 4, 7, 12, 13, 17, 20, 23].includes(index) ? "filled" : ""} />)}
+              </div>
+              <strong>Путь складывается из маленьких действий.</strong>
+              <p>Нарисуй свою форму и отмечай движение так, как удобно тебе.</p>
+            </aside>
 
           </section>
 
@@ -4738,11 +4780,11 @@ export default function App() {
                     );
 
                   const done =
-                    map.completed
+                    map.progressCompleted
                       ?.length || 0;
 
                   const completedCells = new Set(
-                    map.completed || []
+                    map.progressCompleted || []
                   );
 
                   const p =
@@ -4797,22 +4839,10 @@ export default function App() {
                                       : ""
                                   }`}
                                   style={{
-                                    backgroundColor:
-                                      map.mapType === "image"
-                                        ? completedCells.has(i)
-                                          ? map.colors?.[i] || "#e5e5e5"
-                                          : map.showImage
-                                            ? map.colors?.[i] || "#dcdcdc"
-                                            : "#e5e5e5"
-                                        : completedCells.has(i)
-                                          ? map.colors?.[i] || "#111111"
-                                          : "#deded8",
-                                    opacity:
-                                      map.mapType === "image" &&
-                                      map.showImage &&
-                                      !completedCells.has(i)
-                                        ? 0.35
-                                        : 1,
+                                    backgroundColor: completedCells.has(i)
+                                      ? map.colors?.[i] || "#32624f"
+                                      : "#deded8",
+                                    opacity: 1,
                                   }}
                                 />
                               )
@@ -4907,6 +4937,26 @@ export default function App() {
                               {t(
                                 "edit"
                               )}
+                            </button>
+
+                            <button
+                              className="tool-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadStoredMap(map);
+                              }}
+                            >
+                              ↓ Скачать
+                            </button>
+
+                            <button
+                              className="tool-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                saveStoredMap(map);
+                              }}
+                            >
+                              {t("save")}
                             </button>
 
                             <button
@@ -5090,7 +5140,7 @@ export default function App() {
               "auto" ? (
                 <div className="compact-field">
                   <label>
-                    {t("cells")}
+                    {language === "ru" ? "Клеток" : t("cells")}
                   </label>
 
                   <input
@@ -5266,7 +5316,7 @@ export default function App() {
                 {rows} ×{" "}
                 {cols} ·{" "}
                 {actualTotal}{" "}
-                {t("cells")}
+                {language === "ru" ? "Клеток" : t("cells")}
               </div>
             </section>
 
@@ -5558,8 +5608,9 @@ export default function App() {
                   )}
 
                   <div className="custom-color-create">
-                    <div className="color-picker-wrap">
+                    <label className="color-picker-wrap" htmlFor="new-color-picker">
                       <input
+                        id="new-color-picker"
                         type="color"
                         value={
                           newColor
@@ -5577,7 +5628,7 @@ export default function App() {
                       <span className="color-picker-value">
                         {newColor.toUpperCase()}
                       </span>
-                    </div>
+                    </label>
 
                     <button
                       className="add-color-btn"
@@ -5784,9 +5835,9 @@ export default function App() {
                       actualTotal,
                   },
                   (_, i) => {
-                    const active = isGameMode
-                      ? progressCompleted.includes(i)
-                      : completed.includes(i);
+                    // Превью всегда показывает реальный прогресс режима игры,
+                    // а не рабочий эскиз из режима рисования.
+                    const active = progressCompleted.includes(i);
 
                     const color =
                       colors[i] ||
@@ -5797,23 +5848,8 @@ export default function App() {
                         key={i}
                         className={cellAnimationsRef.current.has(i) ? "cell-pop" : ""}
                         style={{
-                          backgroundColor:
-                            active
-                              ? color
-                              : mapType ===
-                                  "image" &&
-                                showImage &&
-                                image
-                              ? color
-                              : "#eeeeea",
-                          opacity:
-                            !active &&
-                            mapType ===
-                              "image" &&
-                            showImage &&
-                            image
-                              ? 0.35
-                              : 1,
+                          backgroundColor: active ? color : "#eeeeea",
+                          opacity: 1,
                         }}
                       />
                     );

@@ -811,6 +811,8 @@ button:disabled {
 .color-picker-wrap {
   display: flex;
 
+  cursor: pointer;
+
   align-items: center;
 
   gap: 5px;
@@ -2427,7 +2429,11 @@ button:disabled {
 
 /* Главная построена как спокойная последовательность: вступление, эскиз, идея. */
 .landing-hero-intro {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 760px) minmax(250px, 330px);
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(42px, 8vw, 150px);
   min-height: min(720px, calc(100vh - 58px));
   padding: clamp(104px, 11vw, 156px) 0 clamp(86px, 10vw, 132px);
 }
@@ -2444,6 +2450,19 @@ button:disabled {
 .landing-hero-intro p {
   max-width: 620px;
 }
+
+.hero-note {
+  align-self: center;
+  padding: 26px;
+  border: 1px solid #d8d0c4;
+  border-radius: 20px;
+  background: rgba(238, 232, 220, .72);
+  box-shadow: 0 14px 30px rgba(51, 46, 38, .05);
+}
+.hero-note-index { color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+.hero-note-cells { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; width: 146px; margin: 24px 0; }
+.hero-note-cells i { display: block; aspect-ratio: 1; border-radius: 2px; background: #d7d6cc; }.hero-note-cells i.filled { background: #32624f; }
+.hero-note strong { display: block; max-width: 240px; color: #252621; font-size: 19px; line-height: 1.12; }.hero-note p { margin: 10px 0 0; color: #697168; font-size: 14px; line-height: 1.5; }
 
 .landing-pyramid-section {
   padding: 74px 0 112px;
@@ -2554,8 +2573,9 @@ button:disabled {
 .landing-final .save-map-btn { grid-column: 2; grid-row: 1 / span 3; }
 
 @media (max-width: 720px) {
-  .landing-hero-intro { min-height: auto; padding: 78px 0 58px; }
+  .landing-hero-intro { grid-template-columns: 1fr; min-height: auto; padding: 78px 0 58px; }
   .landing-hero-intro h1 { font-size: clamp(48px, 14vw, 66px); }
+  .hero-note { max-width: 360px; }
   .landing-pyramid-section { padding: 48px 0 72px; }
   .pyramid-heading { display: grid; align-items: start; }
   .pyramid-heading .hero-demo-progress { justify-items: start; }
@@ -2620,18 +2640,18 @@ button:disabled {
 }
 
 .left-sidebar .palette-section {
-  flex: 1;
+  flex: 0;
   margin-bottom: 0;
 }
 
 .left-sidebar .palette-section .color-palette {
   display: flex;
-  height: 100%;
+  height: auto;
   flex-direction: column;
 }
 
 .left-sidebar .palette-section .custom-color-create {
-  margin-top: auto;
+  margin-top: 10px;
 }
 
 .left-sidebar .color-palette-title {
