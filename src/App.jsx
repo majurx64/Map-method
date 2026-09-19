@@ -9,6 +9,7 @@ const LANGUAGE_KEY = "mm-language";
 const CURRENT_SCREEN_KEY = "mm-current-screen";
 const CUSTOM_COLORS_KEY = "mm-custom-colors";
 const SCROLL_POSITIONS_KEY = "mm-scroll-positions";
+const ACHIEVEMENT_SESSION_KEY = "mm-celebrated-achievements";
 
 const BASIC_COLORS = [
   "#111111",
@@ -995,7 +996,7 @@ export default function App() {
     () => new Set(Array.from({ length: 98 }, (_, index) => index * 2))
   );
   const [heroNoteCells, setHeroNoteCells] = useState(
-    () => new Set([1, 4, 7, 12, 13, 17, 20, 23])
+    () => new Set([2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 31, 34, 37, 40, 43, 46, 49, 52, 55, 58, 61, 64, 67, 70, 73, 76, 79, 82, 85, 88, 91, 94, 97])
   );
   const [cardDemoCells, setCardDemoCells] = useState(
     () => new Set(Array.from({ length: 50 }, (_, index) => index))
@@ -1116,6 +1117,7 @@ export default function App() {
     newMapName,
     setNewMapName,
   ] = useState("");
+  const [newMapDescription, setNewMapDescription] = useState("");
 
   const [
     newMapType,
@@ -1146,6 +1148,15 @@ export default function App() {
     renameValue,
     setRenameValue,
   ] = useState("");
+  const [renameDescription, setRenameDescription] = useState("");
+  const [celebratingAchievements, setCelebratingAchievements] = useState(() => {
+    try {
+      return new Set(JSON.parse(sessionStorage.getItem(ACHIEVEMENT_SESSION_KEY) || "[]"));
+    } catch {
+      return new Set();
+    }
+  });
+  const [newAchievementAnimations, setNewAchievementAnimations] = useState([]);
 
   const [
     renameMapId,
@@ -1172,6 +1183,8 @@ export default function App() {
   const accountRef = useRef(null);
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
+  const heroNotePointerRef = useRef(null);
+  const heroNoteModeRef = useRef("draw");
   const wasGameCompleteRef = useRef(false);
   const imageProcessingRef = useRef(0);
   const cellAnimationsRef = useRef(new Map());
@@ -1277,9 +1290,10 @@ export default function App() {
       map.manualRows,
       map.manualCols
     );
-    const filled = map.isGameMode
-      ? (map.progressCompleted?.length || 0) + (map.progressExtra || 0)
-      : map.completed?.length || 0;
+    // В статистике и в превью важен именно пройденный путь в игре,
+    // а не контур, который был нарисован при создании карты.
+    const filled =
+      (map.progressCompleted?.length || 0) + (map.progressExtra || 0);
 
     return { ...map, total: dimensions.actualTotal, filled };
   });
@@ -1299,12 +1313,15 @@ export default function App() {
         .reduce((subtotal, entry) => subtotal + entry.cells, 0),
     0
   );
-  const accountDailyGoal = accountTotalCells
-    ? Math.max(1, Math.ceil(Math.max(0, accountTotalCells - accountPaintedCells) / 30))
+  const accountRemainingCells = Math.max(0, accountTotalCells - accountPaintedCells);
+  const accountDailyGoal = accountRemainingCells
+    ? Math.ceil(accountRemainingCells / 30)
     : 0;
   const accountDailyProgress = accountDailyGoal
     ? Math.min(100, Math.round((accountTodayCells / accountDailyGoal) * 100))
-    : 0;
+    : accountTotalCells
+      ? 100
+      : 0;
   const accountAchievements = [
     { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: maps.length, goal: 1 },
     { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: maps.length, goal: 3 },
@@ -1313,6 +1330,27 @@ export default function App() {
     { icon: "◆", title: "Ритм", text: "Закрасить 200 клеток", current: accountPaintedCells, goal: 200 },
     { icon: "✺", title: "Большая картина", text: "Закрасить 500 клеток", current: accountPaintedCells, goal: 500 },
   ];
+
+  useEffect(() => {
+    if (screen !== "account") return;
+
+    const unlocked = accountAchievements
+      .filter((item) => item.current >= item.goal)
+      .map((item) => item.title);
+    const newCelebrations = unlocked.filter((title) => !celebratingAchievements.has(title));
+
+    if (!newCelebrations.length) return;
+
+    setNewAchievementAnimations(newCelebrations);
+    const timer = window.setTimeout(() => setNewAchievementAnimations([]), 3200);
+
+    setCelebratingAchievements((previous) => {
+      const next = new Set([...previous, ...newCelebrations]);
+      sessionStorage.setItem(ACHIEVEMENT_SESSION_KEY, JSON.stringify([...next]));
+      return next;
+    });
+    return () => window.clearTimeout(timer);
+  }, [screen, accountPaintedCells, maps.length]);
 
   useEffect(() => {
     localStorage.setItem(LANGUAGE_KEY, language);
@@ -1342,6 +1380,10 @@ export default function App() {
 
   useEffect(() => {
     if (authLoading || mapsLoading) return;
+
+    // Главная всегда управляется только пользователем и якорными кнопками.
+    // Восстановление старой позиции здесь могло сорвать плавную прокрутку.
+    if (screen === "home") return;
 
     if ("scrollRestoration" in window.history) {
       window.history.scrollRestoration = "manual";
@@ -1448,6 +1490,14 @@ export default function App() {
   useEffect(() => {
     progressExtraRef.current = progressExtra;
   }, [progressExtra]);
+
+  useEffect(() => {
+    if (!isDrawing) return;
+
+    const preventContextMenuWhileDrawing = (event) => event.preventDefault();
+    window.addEventListener("contextmenu", preventContextMenuWhileDrawing);
+    return () => window.removeEventListener("contextmenu", preventContextMenuWhileDrawing);
+  }, [isDrawing]);
 
   useEffect(() => {
     activityLogRef.current = activityLog;
@@ -3214,9 +3264,32 @@ export default function App() {
     toggleDemoCell(setHeroDemoCells, index, demoModeRef.current === "erase");
   }
 
+  function toggleHeroNoteCell(index, erase) {
+    setHeroNoteCells((previous) => {
+      const next = new Set(previous);
+      if (erase) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  function beginHeroNoteStroke(event, index) {
+    event.preventDefault();
+    heroNotePointerRef.current = event.pointerId;
+    // Для мини-карты справа: ЛКМ стирает, ПКМ рисует.
+    heroNoteModeRef.current = event.button === 0 ? "erase" : "draw";
+    toggleHeroNoteCell(index, heroNoteModeRef.current === "erase");
+  }
+
+  function continueHeroNoteStroke(event, index) {
+    if (heroNotePointerRef.current !== event.pointerId) return;
+    toggleHeroNoteCell(index, heroNoteModeRef.current === "erase");
+  }
+
   useEffect(() => {
     const stopDemoStroke = () => {
       demoPointerRef.current = null;
+      heroNotePointerRef.current = null;
     };
     window.addEventListener("pointerup", stopDemoStroke);
     return () => window.removeEventListener("pointerup", stopDemoStroke);
@@ -3367,6 +3440,7 @@ export default function App() {
 
   function openCreateModal() {
     setNewMapName("");
+    setNewMapDescription("");
     setNewMapType("free");
     setNewMapGridMode("auto");
     setNewMapCells("500");
@@ -3381,6 +3455,7 @@ export default function App() {
       name:
         newMapName.trim() ||
         "Новая карта",
+      description: newMapDescription.trim(),
       mapType: newMapType,
       gridMode:
         newMapGridMode,
@@ -3540,6 +3615,7 @@ export default function App() {
     setRenameValue(
       map.name || ""
     );
+    setRenameDescription(map.description || "");
 
     setRenameMapId(map.id);
     setIsRenameOpen(true);
@@ -3568,6 +3644,7 @@ export default function App() {
       normalizeMap({
         ...old,
         name,
+        description: renameDescription.trim(),
       });
 
     setMaps((p) =>
@@ -3577,6 +3654,10 @@ export default function App() {
           : m
       )
     );
+
+    if (renameMapId === activeMapId) {
+      setDescription(renameDescription.trim());
+    }
 
     if (user) {
       const err =
@@ -3599,6 +3680,7 @@ export default function App() {
 
     setIsRenameOpen(false);
     setRenameValue("");
+    setRenameDescription("");
     setRenameMapId(null);
   }
 
@@ -3629,16 +3711,9 @@ export default function App() {
     setMapToDelete(null);
 
     if (id === activeMapId) {
-      if (rest[0]) {
-        openMap(rest[0]);
-        setScreen("editor");
-      } else {
-        setActiveMapId(null);
-        localStorage.removeItem(
-          ACTIVE_MAP_KEY
-        );
-        setScreen("maps");
-      }
+      setActiveMapId(null);
+      localStorage.removeItem(ACTIVE_MAP_KEY);
+      setScreen("maps");
     }
 
     if (!user) return;
@@ -4178,20 +4253,16 @@ export default function App() {
             </div>
 
             <aside className="hero-note" aria-label="Что даёт Map Method">
-              <span className="hero-note-index">01</span>
               <div className="hero-note-cells">
-                {Array.from({ length: 25 }, (_, index) => (
+                {Array.from({ length: 100 }, (_, index) => (
                   <button
                     key={index}
                     type="button"
                     className={heroNoteCells.has(index) ? "filled" : ""}
                     aria-label={`Клетка ${index + 1}`}
-                    onClick={() => setHeroNoteCells((previous) => {
-                      const next = new Set(previous);
-                      if (next.has(index)) next.delete(index);
-                      else next.add(index);
-                      return next;
-                    })}
+                    onPointerDown={(event) => beginHeroNoteStroke(event, index)}
+                    onPointerEnter={(event) => continueHeroNoteStroke(event, index)}
+                    onContextMenu={(event) => event.preventDefault()}
                   />
                 ))}
               </div>
@@ -4641,7 +4712,7 @@ export default function App() {
                 <p>{accountEmail}</p>
               </div>
               <button className="account-maps-link" onClick={() => setScreen("maps")}>
-                Все мои карты →
+                Мои карты →
               </button>
             </section>
 
@@ -4691,8 +4762,10 @@ export default function App() {
                 {accountAchievements.map((achievement) => {
                   const unlocked = achievement.current >= achievement.goal;
                   const achievementProgress = Math.min(100, Math.round((achievement.current / achievement.goal) * 100));
+                  const celebrating = newAchievementAnimations.includes(achievement.title);
                   return (
-                    <article className={`achievement-card ${unlocked ? "unlocked" : ""}`} key={achievement.title}>
+                    <article className={`achievement-card ${unlocked ? "unlocked" : ""} ${celebrating ? "achievement-celebration" : ""}`} key={achievement.title}>
+                      {celebrating && <span className="achievement-sparkles" aria-hidden="true">✦ ✺ ✧ ✦ ✺</span>}
                       <span className="achievement-icon">{achievement.icon}</span>
                       <div>
                         <strong>{achievement.title}</strong>
@@ -4855,8 +4928,13 @@ export default function App() {
                                   style={{
                                     backgroundColor: completedCells.has(i)
                                       ? map.colors?.[i] || "#32624f"
-                                      : "#deded8",
-                                    opacity: 1,
+                                      : map.mapType === "image"
+                                        ? map.colors?.[i] || "#dcdcdc"
+                                        : "#deded8",
+                                    // В карточке всегда оставляем полупрозрачный
+                                    // ориентир полного изображения, чтобы было понятно,
+                                    // какую часть пользователь заполняет в игре.
+                                    opacity: !completedCells.has(i) && map.mapType === "image" ? 0.35 : 1,
                                   }}
                                 />
                               )
@@ -5034,26 +5112,6 @@ export default function App() {
                   </option>
                 ))}
               </select>
-
-              <span className="field-label">
-                {t("description")}
-              </span>
-
-              <input
-                className="map-description"
-                value={
-                  description
-                }
-                placeholder={t(
-                  "mapDescription"
-                )}
-                onChange={(e) =>
-                  setDescription(
-                    e.target
-                      .value
-                  )
-                }
-              />
 
               <div className="map-actions">
                 <button
@@ -5987,6 +6045,15 @@ export default function App() {
             </div>
 
             <div className="modal-field">
+              <label>{t("mapDescription")}</label>
+              <textarea
+                value={newMapDescription}
+                placeholder="Можешь написать, для чего тебе эта карта — например, «30 тренировок» или «Мой путь к цели»."
+                onChange={(e) => setNewMapDescription(e.target.value)}
+              />
+            </div>
+
+            <div className="modal-field">
               <label>
                 {t("mapType")}
               </label>
@@ -6212,6 +6279,15 @@ export default function App() {
                     "Enter" &&
                   saveRename()
                 }
+              />
+            </div>
+
+            <div className="modal-field">
+              <label>{t("mapDescription")}</label>
+              <textarea
+                value={renameDescription}
+                placeholder="Коротко: для чего эта карта?"
+                onChange={(e) => setRenameDescription(e.target.value)}
               />
             </div>
 
