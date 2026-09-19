@@ -1192,6 +1192,7 @@ export default function App() {
   const heroNotePointerRef = useRef(null);
   const heroNoteModeRef = useRef("draw");
   const suppressContextMenuRef = useRef(false);
+  const suppressHeroContextMenuRef = useRef(false);
   const wasGameCompleteRef = useRef(false);
   const imageProcessingRef = useRef(0);
   const cellAnimationsRef = useRef(new Map());
@@ -1494,9 +1495,14 @@ export default function App() {
 
   useEffect(() => {
     const preventContextMenuWhileDrawing = (event) => {
-      if (!isDrawingRef.current && !suppressContextMenuRef.current) return;
+      if (
+        !isDrawingRef.current &&
+        !suppressContextMenuRef.current &&
+        !suppressHeroContextMenuRef.current
+      ) return;
       event.preventDefault();
       suppressContextMenuRef.current = false;
+      suppressHeroContextMenuRef.current = false;
     };
     window.addEventListener("contextmenu", preventContextMenuWhileDrawing);
     return () => window.removeEventListener("contextmenu", preventContextMenuWhileDrawing);
@@ -3283,10 +3289,10 @@ export default function App() {
   function beginHeroNoteStroke(event, index) {
     event.preventDefault();
     heroNotePointerRef.current = event.pointerId;
-    // ПКМ всегда добавляет. ЛКМ удаляет заполненную клетку и добавляет пустую:
-    // так мини-карта остаётся понятной и действительно интерактивной.
-    heroNoteModeRef.current =
-      event.button === 2 || !heroNoteCells.has(index) ? "draw" : "erase";
+    // На мини-карте: ЛКМ добавляет, ПКМ стирает.
+    // Запоминаем ПКМ-штрих, чтобы браузер не открыл своё меню после выхода за сетку.
+    if (event.button === 2) suppressHeroContextMenuRef.current = true;
+    heroNoteModeRef.current = event.button === 2 ? "erase" : "draw";
     toggleHeroNoteCell(index, heroNoteModeRef.current === "erase");
   }
 
