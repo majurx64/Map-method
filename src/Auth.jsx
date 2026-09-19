@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { supabase } from "./lib/supabase";
 
-export default function Auth({ onAuth }) {
+export default function Auth({ onAuth, language = "ru" }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -29,13 +30,19 @@ export default function Auth({ onAuth }) {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          emailRedirectTo: window.location.origin,
+          data: { locale: language || navigator.language || "ru" },
+        },
       });
 
       if (error) {
         setMessage(error.message);
       } else if (data.user) {
-        onAuth?.(data.user);
-        setMessage("Аккаунт создан.");
+        if (data.session) onAuth?.(data.user);
+        setMessage(
+          "Аккаунт создан. Подтверди email по ссылке из письма, затем войди в аккаунт."
+        );
       }
     }
 
@@ -64,14 +71,19 @@ export default function Auth({ onAuth }) {
             required
           />
 
-          <input
-            type="password"
-            placeholder="Пароль"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            minLength={6}
-          />
+          <div className="password-field">
+            <input
+              type={isPasswordVisible ? "text" : "password"}
+              placeholder="Пароль"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              minLength={6}
+            />
+            <button type="button" className="password-visibility" onClick={() => setIsPasswordVisible((visible) => !visible)} aria-label={isPasswordVisible ? "Скрыть пароль" : "Показать пароль"}>
+              {isPasswordVisible ? "Скрыть" : "Показать"}
+            </button>
+          </div>
 
           <button type="submit" disabled={loading}>
             {loading

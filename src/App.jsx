@@ -775,6 +775,13 @@ function normalizeActivityLog(value) {
 }
 
 function normalizeMap(map = {}) {
+  const mapLimit = getGridDimensions(
+    Math.max(1, Number(map.totalCells) || 500),
+    Number(map.imageRatio) > 0 ? Number(map.imageRatio) : 1,
+    map.gridMode === "manual" ? "manual" : "auto",
+    map.manualRows,
+    map.manualCols
+  ).actualTotal;
   const custom = [
     ...new Set(
       (Array.isArray(map.customColors) ? map.customColors : [])
@@ -795,7 +802,7 @@ function normalizeMap(map = {}) {
         (Array.isArray(map.completed) ? map.completed : [])
           .map(Number)
           .filter(Number.isInteger)
-          .filter((i) => i >= 0)
+          .filter((i) => i >= 0 && i < mapLimit)
       ),
     ],
     progressCompleted: [
@@ -803,10 +810,11 @@ function normalizeMap(map = {}) {
         (Array.isArray(map.progressCompleted) ? map.progressCompleted : [])
           .map(Number)
           .filter(Number.isInteger)
-          .filter((i) => i >= 0)
+          .filter((i) => i >= 0 && i < mapLimit)
       ),
     ],
-    progressExtra: Math.max(0, Math.floor(Number(map.progressExtra) || 0)),
+    // Прогресс не должен выходить за пределы самой карты.
+    progressExtra: 0,
     image: typeof map.image === "string" ? map.image : null,
     colors: Array.isArray(map.colors) ? map.colors : [],
     customColors: custom,
@@ -1247,6 +1255,8 @@ export default function App() {
   const remoteSaveQueueRef = useRef(Promise.resolve());
   const activeMapRef = useRef(activeMap);
   const hydrationReleaseTimerRef = useRef(null);
+  const historyReadyRef = useRef(false);
+  const historyNavigationRef = useRef(false);
 
   const requestedTotal = Math.max(
     1,
@@ -1284,7 +1294,7 @@ export default function App() {
       : completed.length
     : actualTotal;
   const displayedProgress = displayedTotal
-    ? Math.round(((displayedCompleted.length + (isPlaying ? progressExtra : 0)) / displayedTotal) * 100)
+    ? Math.min(100, Math.round((displayedCompleted.length / displayedTotal) * 100))
     : 0;
 
   const t = (key) =>
@@ -1324,8 +1334,7 @@ export default function App() {
     );
     // В статистике и в превью важен именно пройденный путь в игре,
     // а не контур, который был нарисован при создании карты.
-    const filled =
-      (map.progressCompleted?.length || 0) + (map.progressExtra || 0);
+    const filled = map.progressCompleted?.length || 0;
 
     return { ...map, total: dimensions.actualTotal, filled };
   });
@@ -1396,6 +1405,31 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(LANGUAGE_KEY, language);
   }, [language]);
+
+  useEffect(() => {
+    if (!historyReadyRef.current) {
+      window.history.replaceState({ mapMethod: true, screen }, "", window.location.href);
+      historyReadyRef.current = true;
+      return;
+    }
+    if (historyNavigationRef.current) {
+      historyNavigationRef.current = false;
+      return;
+    }
+    window.history.pushState({ mapMethod: true, screen }, "", window.location.href);
+  }, [screen]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      // Стрелка «назад» внутри приложения всегда возвращает к списку карт,
+      // а не выбрасывает пользователя на предыдущий сайт.
+      historyNavigationRef.current = true;
+      setScreen("maps");
+      window.history.pushState({ mapMethod: true, screen: "maps" }, "", window.location.href);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(
@@ -2615,6 +2649,9 @@ export default function App() {
       0
     );
 
+    // На большом полотне цвета должны выглядеть так же живо, как в превью.
+    ctx.filter = mapType === "image" ? "saturate(1.16) contrast(1.04)" : "none";
+
     const cw =
       rect.width / cols;
 
@@ -3306,17 +3343,12 @@ export default function App() {
       ? [...available].sort(() => Math.random() - 0.5)
       : available.sort((a, b) => a - b);
     const next = new Set(progressCompletedRef.current);
-    const added = cells.slice(0, count);
-    const extra = Math.max(0, count - added.length);
+    const added = cells.slice(0, Math.min(count, available.length));
     added.forEach((index) => next.add(index));
     animateCells(added);
     progressCompletedRef.current = next;
     setProgressCompleted([...next]);
-    if (extra) {
-      progressExtraRef.current += extra;
-      setProgressExtra(progressExtraRef.current);
-    }
-    recordPaintedCells(added.length + extra);
+    recordPaintedCells(added.length);
     setIsGameFillOpen(false);
   }
 
@@ -3541,7 +3573,7 @@ export default function App() {
         newMapName.trim() ||
         "Новая карта",
       description: newMapDescription.trim(),
-      category: newMapCategory,
+      category: newMapCategory === "__custom__" ? "Личное" : newMapCategory,
       deadline: newMapDeadline,
       mapType: newMapType,
       gridMode:
@@ -3735,7 +3767,7 @@ export default function App() {
         ...old,
         name,
         description: renameDescription.trim(),
-        category: renameCategory,
+        category: renameCategory === "__custom__" ? old.category || "Личное" : renameCategory,
         deadline: renameDeadline,
       });
 
@@ -4462,6 +4494,7 @@ export default function App() {
 
       {screen === "auth" && (
         <Auth
+          language={language}
           onAuth={() => {
             setScreen("account");
           }}
@@ -4972,8 +5005,7 @@ export default function App() {
                       map.manualCols
                     );
 
-                  const done =
-                    (map.progressCompleted?.length || 0) + (map.progressExtra || 0);
+                  const done = Math.min(d.actualTotal, map.progressCompleted?.length || 0);
 
                   const completedCells = new Set(
                     map.progressCompleted || []
@@ -6170,6 +6202,7 @@ export default function App() {
                 <label>Категория</label>
                 <select value={newMapCategory} onChange={(event) => setNewMapCategory(event.target.value)}>
                   {allCategories.map((category) => <option key={category}>{category}</option>)}
+                  <option value="__custom__">Выбрать свою категорию…</option>
                 </select>
               </div>
               <div className="modal-field">
@@ -6178,13 +6211,12 @@ export default function App() {
               </div>
             </div>
 
-            <div className="modal-field">
-              <label>Своя категория</label>
+            {newMapCategory === "__custom__" && (
               <div className="category-create">
-                <input value={newCategoryDraft} placeholder="Например, Финансы" onChange={(event) => setNewCategoryDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addCustomCategory("create")} />
+                <input autoFocus value={newCategoryDraft} placeholder="Например, Финансы" onChange={(event) => setNewCategoryDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addCustomCategory("create")} />
                 <button type="button" onClick={() => addCustomCategory("create")}>Добавить</button>
               </div>
-            </div>
+            )}
 
             <div className="modal-field">
               <label>
@@ -6429,6 +6461,7 @@ export default function App() {
                 <label>Категория</label>
                 <select value={renameCategory} onChange={(event) => setRenameCategory(event.target.value)}>
                   {allCategories.map((category) => <option key={category}>{category}</option>)}
+                  <option value="__custom__">Выбрать свою категорию…</option>
                 </select>
               </div>
               <div className="modal-field">
@@ -6437,13 +6470,12 @@ export default function App() {
               </div>
             </div>
 
-            <div className="modal-field">
-              <label>Своя категория</label>
+            {renameCategory === "__custom__" && (
               <div className="category-create">
-                <input value={newCategoryDraft} placeholder="Например, Финансы" onChange={(event) => setNewCategoryDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addCustomCategory("rename")} />
+                <input autoFocus value={newCategoryDraft} placeholder="Например, Финансы" onChange={(event) => setNewCategoryDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addCustomCategory("rename")} />
                 <button type="button" onClick={() => addCustomCategory("rename")}>Добавить</button>
               </div>
-            </div>
+            )}
 
             <button
               className="modal-create-btn"
