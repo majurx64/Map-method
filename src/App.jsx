@@ -1156,7 +1156,13 @@ export default function App() {
       return new Set();
     }
   });
-  const [newAchievementAnimations, setNewAchievementAnimations] = useState([]);
+  const [newAchievementAnimations, setNewAchievementAnimations] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem(ACHIEVEMENT_SESSION_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  });
 
   const [
     renameMapId,
@@ -1185,6 +1191,7 @@ export default function App() {
   const demoModeRef = useRef("draw");
   const heroNotePointerRef = useRef(null);
   const heroNoteModeRef = useRef("draw");
+  const suppressContextMenuRef = useRef(false);
   const wasGameCompleteRef = useRef(false);
   const imageProcessingRef = useRef(0);
   const cellAnimationsRef = useRef(new Map());
@@ -1306,22 +1313,16 @@ export default function App() {
     (sum, map) => sum + map.total,
     0
   );
-  const accountTodayCells = maps.reduce(
-    (sum, map) =>
-      sum + (map.activityLog || [])
-        .filter((entry) => entry.date === getActivityDate())
-        .reduce((subtotal, entry) => subtotal + entry.cells, 0),
-    0
-  );
+  const accountFinishedMaps = accountMapStats.filter(
+    (map) => map.total > 0 && map.filled >= map.total
+  ).length;
   const accountRemainingCells = Math.max(0, accountTotalCells - accountPaintedCells);
+  const accountProgressPercent = accountTotalCells
+    ? Math.round((accountPaintedCells / accountTotalCells) * 1000) / 10
+    : 0;
   const accountDailyGoal = accountRemainingCells
     ? Math.ceil(accountRemainingCells / 30)
     : 0;
-  const accountDailyProgress = accountDailyGoal
-    ? Math.min(100, Math.round((accountTodayCells / accountDailyGoal) * 100))
-    : accountTotalCells
-      ? 100
-      : 0;
   const accountAchievements = [
     { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: maps.length, goal: 1 },
     { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: maps.length, goal: 3 },
@@ -1341,15 +1342,15 @@ export default function App() {
 
     if (!newCelebrations.length) return;
 
-    setNewAchievementAnimations(newCelebrations);
-    const timer = window.setTimeout(() => setNewAchievementAnimations([]), 3200);
+    setNewAchievementAnimations((previous) => [
+      ...new Set([...previous, ...newCelebrations]),
+    ]);
 
     setCelebratingAchievements((previous) => {
       const next = new Set([...previous, ...newCelebrations]);
       sessionStorage.setItem(ACHIEVEMENT_SESSION_KEY, JSON.stringify([...next]));
       return next;
     });
-    return () => window.clearTimeout(timer);
   }, [screen, accountPaintedCells, maps.length]);
 
   useEffect(() => {
@@ -1492,12 +1493,14 @@ export default function App() {
   }, [progressExtra]);
 
   useEffect(() => {
-    if (!isDrawing) return;
-
-    const preventContextMenuWhileDrawing = (event) => event.preventDefault();
+    const preventContextMenuWhileDrawing = (event) => {
+      if (!isDrawingRef.current && !suppressContextMenuRef.current) return;
+      event.preventDefault();
+      suppressContextMenuRef.current = false;
+    };
     window.addEventListener("contextmenu", preventContextMenuWhileDrawing);
     return () => window.removeEventListener("contextmenu", preventContextMenuWhileDrawing);
-  }, [isDrawing]);
+  }, []);
 
   useEffect(() => {
     activityLogRef.current = activityLog;
@@ -2363,6 +2366,10 @@ export default function App() {
 
   function handlePointerDown(e) {
     e.preventDefault();
+
+    // Браузер присылает contextmenu уже после pointerup. Запоминаем
+    // именно ПКМ-штрих внутри холста, чтобы меню не всплывало снаружи.
+    if (e.button === 2) suppressContextMenuRef.current = true;
 
     const i =
       getCellFromPointerEvent(e);
@@ -4728,9 +4735,9 @@ export default function App() {
                 <small>Во всех картах</small>
               </div>
               <div className="account-stat-card">
-                <span>СЕГОДНЯ</span>
-                <strong>{accountTodayCells}</strong>
-                <small>{accountDailyGoal ? `Цель: ${accountDailyGoal} клеток` : "Создай первую карту"}</small>
+                <span>ЗАВЕРШЕНО</span>
+                <strong>{accountFinishedMaps}</strong>
+                <small>{accountFinishedMaps === 1 ? "Карта пройдена полностью" : "Карт пройдено полностью"}</small>
               </div>
             </section>
 
@@ -4744,9 +4751,9 @@ export default function App() {
                     : "Создай карту, выбери рисунок — и здесь появится твой личный темп."}
                 </p>
               </div>
-              <div className="account-goal-ring" style={{ "--progress": `${accountDailyProgress}%` }}>
-                <strong>{accountDailyProgress}%</strong>
-                <span>сегодня</span>
+              <div className="account-goal-ring" style={{ "--progress": `${Math.min(100, accountProgressPercent)}%` }}>
+                <strong>{accountProgressPercent}%</strong>
+                <span>всего</span>
               </div>
             </section>
 
@@ -4881,8 +4888,11 @@ export default function App() {
                   const completedCells = new Set(
                     map.progressCompleted || []
                   );
+                  const drawingCells = new Set(map.completed || []);
 
-                  const p = Math.round((done / d.actualTotal) * 100);
+                  const p = d.actualTotal
+                    ? Math.round((done / d.actualTotal) * 1000) / 10
+                    : 0;
 
                   return (
                     <article
@@ -4928,13 +4938,13 @@ export default function App() {
                                   style={{
                                     backgroundColor: completedCells.has(i)
                                       ? map.colors?.[i] || "#32624f"
-                                      : map.mapType === "image"
+                                      : map.mapType === "image" || drawingCells.has(i)
                                         ? map.colors?.[i] || "#dcdcdc"
                                         : "#deded8",
                                     // В карточке всегда оставляем полупрозрачный
                                     // ориентир полного изображения, чтобы было понятно,
                                     // какую часть пользователь заполняет в игре.
-                                    opacity: !completedCells.has(i) && map.mapType === "image" ? 0.35 : 1,
+                                    opacity: !completedCells.has(i) && (map.mapType === "image" || drawingCells.has(i)) ? 0.3 : 1,
                                   }}
                                 />
                               )
@@ -6032,6 +6042,7 @@ export default function App() {
               </label>
 
               <input
+                autoFocus
                 value={
                   newMapName
                 }
