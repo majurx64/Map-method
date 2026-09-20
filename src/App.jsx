@@ -1325,6 +1325,7 @@ export default function App() {
   const hydrationReleaseTimerRef = useRef(null);
   const historyReadyRef = useRef(false);
   const historyNavigationRef = useRef(false);
+  const mapCellsHoldRef = useRef({ delay: null, interval: null });
 
   const requestedTotal = Math.max(
     1,
@@ -1473,6 +1474,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(LANGUAGE_KEY, language);
   }, [language]);
+
+  useEffect(() => () => stopMapCellsHold(), []);
 
   useEffect(() => {
     if (!historyReadyRef.current) {
@@ -3623,6 +3626,24 @@ export default function App() {
     setNewMapRows("20");
     setNewMapCols("25");
     setIsCreateOpen(true);
+  }
+
+  function changeNewMapCells(delta) {
+    setNewMapCells((previous) => String(Math.max(1, (Number(previous) || 1) + delta)));
+  }
+
+  function stopMapCellsHold() {
+    window.clearTimeout(mapCellsHoldRef.current.delay);
+    window.clearInterval(mapCellsHoldRef.current.interval);
+    mapCellsHoldRef.current = { delay: null, interval: null };
+  }
+
+  function startMapCellsHold(delta) {
+    stopMapCellsHold();
+    changeNewMapCells(delta);
+    mapCellsHoldRef.current.delay = window.setTimeout(() => {
+      mapCellsHoldRef.current.interval = window.setInterval(() => changeNewMapCells(delta), 70);
+    }, 260);
   }
 
   function addCustomCategory(target) {
@@ -6232,6 +6253,7 @@ export default function App() {
               </label>
 
               <input
+                type="text"
                 autoFocus
                 value={
                   newMapName
@@ -6368,7 +6390,7 @@ export default function App() {
                 </label>
 
                 <div className="map-cells-control">
-                  <button type="button" aria-label="Уменьшить количество клеток" onClick={() => setNewMapCells(String(Math.max(1, (Number(newMapCells) || 1) - 1)))}>−</button>
+                  <button type="button" aria-label="Уменьшить количество клеток" onPointerDown={(event) => { event.preventDefault(); startMapCellsHold(-1); }} onPointerUp={stopMapCellsHold} onPointerLeave={stopMapCellsHold} onPointerCancel={stopMapCellsHold}>−</button>
                   <input
                     className="map-cells-input"
                     type="number"
@@ -6376,7 +6398,7 @@ export default function App() {
                     value={newMapCells}
                     onChange={(e) => setNewMapCells(e.target.value)}
                   />
-                  <button type="button" aria-label="Увеличить количество клеток" onClick={() => setNewMapCells(String((Number(newMapCells) || 0) + 1))}>+</button>
+                  <button type="button" aria-label="Увеличить количество клеток" onPointerDown={(event) => { event.preventDefault(); startMapCellsHold(1); }} onPointerUp={stopMapCellsHold} onPointerLeave={stopMapCellsHold} onPointerCancel={stopMapCellsHold}>+</button>
                 </div>
               </div>
             ) : (
@@ -6483,6 +6505,7 @@ export default function App() {
               </label>
 
               <input
+                type="text"
                 autoFocus
                 value={
                   renameValue
