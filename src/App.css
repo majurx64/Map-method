@@ -3045,3 +3045,8 @@ body {
 .left-sidebar .tool-stack { gap:12px; padding:10px; border:1px solid #e1dbd1; border-radius:13px; background:linear-gradient(145deg,#faf8f3,#f0ece3); }.left-sidebar .tool-type { display:grid; grid-template-columns:1fr 1fr; gap:6px; }.left-sidebar .tool-type .map-type-btn { min-height:40px; }.left-sidebar .map-mode-switch { padding:5px; border-radius:10px; }.left-sidebar .map-mode-switch button { min-height:36px; }.left-sidebar .game-fill-control { padding-top:2px; }.left-sidebar .game-fill-btn { width:100%; min-height:40px; }.left-sidebar .tool-actions { margin-top:2px; gap:8px; }.left-sidebar .tool-actions .tool-btn { min-height:40px; }
 @media (max-width:760px) { .modal-inline-fields, .account-history-card { grid-template-columns:1fr; }.history-chart { height:120px; }.maps-filter { overflow:auto; flex-wrap:nowrap; padding-bottom:4px; }.maps-filter button { white-space:nowrap; } }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; } }
+
+/* У категории шеврон совпадает с оптической линией индикаторов срока. */
+body .modal-inline-fields > .modal-field > .animated-select .animated-select-trigger i {
+  top: calc(50% - 7px);
+}
