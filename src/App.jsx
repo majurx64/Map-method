@@ -6379,6 +6379,7 @@ export default function App() {
                 </label>
 
                 <input
+                  className="map-cells-input"
                   type="number"
                   min="1"
                   value={
