@@ -1293,6 +1293,7 @@ export default function App() {
   const suppressContextMenuRef = useRef(false);
   const suppressHeroContextMenuRef = useRef(false);
   const wasGameCompleteRef = useRef(false);
+  const gameVictoryBaselineMapRef = useRef(null);
   const wasDemoCompleteRef = useRef(false);
   const imageProcessingRef = useRef(0);
   const cellAnimationsRef = useRef(new Map());
@@ -1665,14 +1666,22 @@ export default function App() {
   }, [activityLog]);
 
   useEffect(() => {
+    if (!isMapInitialized || mapsLoading) return;
     const gameTotal = mapType === "image" ? actualTotal : completed.length;
     const complete = isGameMode && gameTotal > 0 && progressCompleted.length >= gameTotal;
+    // Открытие или восстановление уже готовой карты — не повод запускать
+    // поздравление. Оно появляется только после нового завершения в игре.
+    if (gameVictoryBaselineMapRef.current === activeMapId) {
+      wasGameCompleteRef.current = complete;
+      gameVictoryBaselineMapRef.current = null;
+      return;
+    }
     if (complete && !wasGameCompleteRef.current) {
       setShowVictory(true);
       window.setTimeout(() => setShowVictory(false), 3200);
     }
     wasGameCompleteRef.current = complete;
-  }, [isGameMode, mapType, actualTotal, completed, progressCompleted]);
+  }, [isGameMode, mapType, actualTotal, completed, progressCompleted, activeMapId, isMapInitialized, mapsLoading]);
 
   useEffect(() => {
     const complete = heroDemoCells.size === DEMO_PYRAMID_TOTAL;
@@ -3751,6 +3760,7 @@ export default function App() {
     const m =
       normalizeMap(map);
 
+    gameVictoryBaselineMapRef.current = m.id;
     setActiveMapId(m.id);
     setMapType(m.mapType);
     setGridMode(m.gridMode);
