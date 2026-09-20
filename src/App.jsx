@@ -4069,9 +4069,9 @@ export default function App() {
               Как это работает
             </button>
           )}
-          <div className="language-menu">
+          <div className={`language-menu${isLanguageOpen ? " is-open" : ""}`}>
             <button type="button" className="language-select" onClick={() => setIsLanguageOpen((open) => !open)}>
-              {LANGUAGE_OPTIONS.find(([code]) => code === language)?.[1] || "Русский"} <span>{isLanguageOpen ? "▲" : "▼"}</span>
+              {LANGUAGE_OPTIONS.find(([code]) => code === language)?.[1] || "Русский"} <span className="menu-chevron">⌄</span>
             </button>
             {isLanguageOpen && (
               <div className="language-popover">
@@ -4107,7 +4107,7 @@ export default function App() {
           {user && (
             <div
               ref={accountRef}
-              className="account-menu"
+              className={`account-menu${isAccountOpen ? " is-open" : ""}`}
               style={{
                 position:
                   "relative",
@@ -4184,18 +4184,7 @@ export default function App() {
                   {accountName}
                 </span>
 
-                <span
-                  style={{
-                    fontSize:
-                      "10px",
-                    opacity:
-                      0.55,
-                  }}
-                >
-                  {isAccountOpen
-                    ? "▲"
-                    : "▼"}
-                </span>
+                <span className="menu-chevron">⌄</span>
               </button>
 
               {isAccountOpen && (
@@ -6378,20 +6367,17 @@ export default function App() {
                   )}
                 </label>
 
-                <input
-                  className="map-cells-input"
-                  type="number"
-                  min="1"
-                  value={
-                    newMapCells
-                  }
-                  onChange={(e) =>
-                    setNewMapCells(
-                      e.target
-                        .value
-                    )
-                  }
-                />
+                <div className="map-cells-control">
+                  <button type="button" aria-label="Уменьшить количество клеток" onClick={() => setNewMapCells(String(Math.max(1, (Number(newMapCells) || 1) - 1)))}>−</button>
+                  <input
+                    className="map-cells-input"
+                    type="number"
+                    min="1"
+                    value={newMapCells}
+                    onChange={(e) => setNewMapCells(e.target.value)}
+                  />
+                  <button type="button" aria-label="Увеличить количество клеток" onClick={() => setNewMapCells(String((Number(newMapCells) || 0) + 1))}>+</button>
+                </div>
               </div>
             ) : (
               <div className="manual-grid-controls">
