@@ -969,6 +969,51 @@ function getLineCells(a, b, cols, rows) {
   return out;
 }
 
+function DeadlinePicker({ value, onChange, optional = false }) {
+  const parseValue = (date) => {
+    const [year = "", month = "", day = ""] = (date || "").split("-");
+    return { day: day ? String(Number(day)) : "", month: month ? String(Number(month)) : "", year };
+  };
+  const [parts, setParts] = useState(() => parseValue(value));
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 12 }, (_, index) => String(currentYear - 1 + index));
+  const months = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+
+  useEffect(() => setParts(parseValue(value)), [value]);
+
+  function updatePart(part, nextValue) {
+    const next = { ...parts, [part]: nextValue };
+    setParts(next);
+    if (!next.day || !next.month || !next.year) {
+      onChange("");
+      return;
+    }
+    const lastDay = new Date(Number(next.year), Number(next.month), 0).getDate();
+    const safeDay = Math.min(Number(next.day), lastDay);
+    onChange(`${next.year}-${String(next.month).padStart(2, "0")}-${String(safeDay).padStart(2, "0")}`);
+  }
+
+  return (
+    <div className="modal-field deadline-field">
+      <label>Срок{optional ? " (необязательно)" : ""}</label>
+      <div className="deadline-selects">
+        <select aria-label="День" value={parts.day} onChange={(event) => updatePart("day", event.target.value)}>
+          <option value="">День</option>
+          {Array.from({ length: 31 }, (_, index) => String(index + 1)).map((day) => <option key={day} value={day}>{day}</option>)}
+        </select>
+        <select aria-label="Месяц" value={parts.month} onChange={(event) => updatePart("month", event.target.value)}>
+          <option value="">Месяц</option>
+          {months.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}
+        </select>
+        <select aria-label="Год" value={parts.year} onChange={(event) => updatePart("year", event.target.value)}>
+          <option value="">Год</option>
+          {years.map((year) => <option key={year}>{year}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
 function sameState(a, b) {
   return (
     JSON.stringify(a.completed) ===
@@ -6202,13 +6247,10 @@ export default function App() {
                 <label>Категория</label>
                 <select value={newMapCategory} onChange={(event) => setNewMapCategory(event.target.value)}>
                   {allCategories.map((category) => <option key={category}>{category}</option>)}
-                  <option value="__custom__">Выбрать свою категорию…</option>
+                  <option value="__custom__">Своя категория…</option>
                 </select>
               </div>
-              <div className="modal-field">
-                <label>Срок (необязательно)</label>
-                <input type="date" value={newMapDeadline} onChange={(event) => setNewMapDeadline(event.target.value)} />
-              </div>
+              <DeadlinePicker value={newMapDeadline} onChange={setNewMapDeadline} optional />
             </div>
 
             {newMapCategory === "__custom__" && (
@@ -6461,13 +6503,10 @@ export default function App() {
                 <label>Категория</label>
                 <select value={renameCategory} onChange={(event) => setRenameCategory(event.target.value)}>
                   {allCategories.map((category) => <option key={category}>{category}</option>)}
-                  <option value="__custom__">Выбрать свою категорию…</option>
+                  <option value="__custom__">Своя категория…</option>
                 </select>
               </div>
-              <div className="modal-field">
-                <label>Срок</label>
-                <input type="date" value={renameDeadline} onChange={(event) => setRenameDeadline(event.target.value)} />
-              </div>
+              <DeadlinePicker value={renameDeadline} onChange={setRenameDeadline} />
             </div>
 
             {renameCategory === "__custom__" && (
