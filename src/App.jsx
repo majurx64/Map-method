@@ -1198,6 +1198,7 @@ export default function App() {
     isDeleteOpen,
     setIsDeleteOpen,
   ] = useState(false);
+  const [closingModal, setClosingModal] = useState("");
 
   const [
     newMapName,
@@ -1586,17 +1587,17 @@ export default function App() {
       if (event.key !== "Escape") return;
 
       if (isCreateOpen) {
-        setIsCreateOpen(false);
+        closeModal("create");
         return;
       }
 
       if (isRenameOpen) {
-        setIsRenameOpen(false);
+        closeModal("rename");
         return;
       }
 
       if (isDeleteOpen) {
-        setIsDeleteOpen(false);
+        closeModal("delete");
         return;
       }
 
@@ -3623,7 +3624,22 @@ export default function App() {
     );
   }
 
+  function closeModal(kind) {
+    if (closingModal) return;
+    setClosingModal(kind);
+    window.setTimeout(() => {
+      if (kind === "create") setIsCreateOpen(false);
+      if (kind === "rename") setIsRenameOpen(false);
+      if (kind === "delete") {
+        setIsDeleteOpen(false);
+        setMapToDelete(null);
+      }
+      setClosingModal("");
+    }, 260);
+  }
+
   function openCreateModal() {
+    setClosingModal("");
     setNewMapName("");
     setNewMapDescription("");
     setNewMapCategory("Личное");
@@ -3830,6 +3846,7 @@ export default function App() {
   function openRenameModal(
     map
   ) {
+    setClosingModal("");
     setRenameValue(
       map.name || ""
     );
@@ -3912,6 +3929,7 @@ export default function App() {
   function openDeleteModal(
     map
   ) {
+    setClosingModal("");
     setMapToDelete(map);
     setIsDeleteOpen(true);
   }
@@ -6227,12 +6245,8 @@ export default function App() {
 
       {isCreateOpen && (
         <div
-          className="modal-overlay"
-          onMouseDown={() =>
-            setIsCreateOpen(
-              false
-            )
-          }
+          className={`modal-overlay${closingModal === "create" ? " is-closing" : ""}`}
+          onMouseDown={() => closeModal("create")}
         >
           <div
             className="create-modal"
@@ -6247,11 +6261,7 @@ export default function App() {
 
               <button
                 className="modal-close"
-                onClick={() =>
-                  setIsCreateOpen(
-                    false
-                  )
-                }
+                onClick={() => closeModal("create")}
               >
                 ×
               </button>
@@ -6475,12 +6485,8 @@ export default function App() {
 
       {isRenameOpen && (
         <div
-          className="modal-overlay"
-          onMouseDown={() =>
-            setIsRenameOpen(
-              false
-            )
-          }
+          className={`modal-overlay${closingModal === "rename" ? " is-closing" : ""}`}
+          onMouseDown={() => closeModal("rename")}
         >
           <div
             className="create-modal"
@@ -6497,11 +6503,7 @@ export default function App() {
 
               <button
                 className="modal-close"
-                onClick={() =>
-                  setIsRenameOpen(
-                    false
-                  )
-                }
+                onClick={() => closeModal("rename")}
               >
                 ×
               </button>
@@ -6578,12 +6580,8 @@ export default function App() {
       {isDeleteOpen &&
         mapToDelete && (
           <div
-            className="modal-overlay"
-            onMouseDown={() =>
-              setIsDeleteOpen(
-                false
-              )
-            }
+            className={`modal-overlay${closingModal === "delete" ? " is-closing" : ""}`}
+            onMouseDown={() => closeModal("delete")}
           >
             <div
               className="create-modal delete-modal"
@@ -6600,11 +6598,7 @@ export default function App() {
 
                 <button
                   className="modal-close"
-                  onClick={() =>
-                    setIsDeleteOpen(
-                      false
-                    )
-                  }
+                  onClick={() => closeModal("delete")}
                 >
                   ×
                 </button>
@@ -6619,11 +6613,7 @@ export default function App() {
               <div className="delete-modal-actions">
                 <button
                   className="cancel-delete-btn"
-                  onClick={() =>
-                    setIsDeleteOpen(
-                      false
-                    )
-                  }
+                  onClick={() => closeModal("delete")}
                 >
                   {t(
                     "cancel"
