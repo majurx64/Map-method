@@ -49,7 +49,7 @@ const translations = {
     canvasSize: "Размер холста",
     auto: "Авто",
     manual: "Вручную",
-    cells: "клеток",
+    cells: "Клеток",
     rows: "Строки",
     columns: "Столбцы",
     grid: "Сетка",
@@ -969,6 +969,38 @@ function getLineCells(a, b, cols, rows) {
   return out;
 }
 
+function AnimatedSelect({ value, onChange, options, placeholder, ariaLabel }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef(null);
+  const normalizedOptions = options.map((option) => typeof option === "string" ? { value: option, label: option } : option);
+  const selected = normalizedOptions.find((option) => String(option.value) === String(value));
+
+  useEffect(() => {
+    function closeOnOutsidePointer(event) {
+      if (!rootRef.current?.contains(event.target)) setIsOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, []);
+
+  return (
+    <div className={`animated-select${isOpen ? " is-open" : ""}`} ref={rootRef}>
+      <button type="button" className="animated-select-trigger" aria-label={ariaLabel} aria-expanded={isOpen} onClick={() => setIsOpen((open) => !open)}>
+        <span>{selected?.label || placeholder}</span><i>⌄</i>
+      </button>
+      {isOpen && (
+        <div className="animated-select-menu" role="listbox">
+          {normalizedOptions.map((option) => (
+            <button key={option.value} type="button" role="option" aria-selected={String(option.value) === String(value)} className={String(option.value) === String(value) ? "selected" : ""} onClick={() => { onChange(option.value); setIsOpen(false); }}>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DeadlinePicker({ value, onChange, optional = false }) {
   const parseValue = (date) => {
     const [year = "", month = "", day = ""] = (date || "").split("-");
@@ -997,18 +1029,9 @@ function DeadlinePicker({ value, onChange, optional = false }) {
     <div className="modal-field deadline-field">
       <label>Срок{optional ? " (необязательно)" : ""}</label>
       <div className="deadline-selects">
-        <select aria-label="День" value={parts.day} onChange={(event) => updatePart("day", event.target.value)}>
-          <option value="">День</option>
-          {Array.from({ length: 31 }, (_, index) => String(index + 1)).map((day) => <option key={day} value={day}>{day}</option>)}
-        </select>
-        <select aria-label="Месяц" value={parts.month} onChange={(event) => updatePart("month", event.target.value)}>
-          <option value="">Месяц</option>
-          {months.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}
-        </select>
-        <select aria-label="Год" value={parts.year} onChange={(event) => updatePart("year", event.target.value)}>
-          <option value="">Год</option>
-          {years.map((year) => <option key={year}>{year}</option>)}
-        </select>
+        <AnimatedSelect ariaLabel="День" value={parts.day} onChange={(next) => updatePart("day", next)} placeholder="День" options={Array.from({ length: 31 }, (_, index) => String(index + 1))} />
+        <AnimatedSelect ariaLabel="Месяц" value={parts.month} onChange={(next) => updatePart("month", next)} placeholder="Месяц" options={months.map((month, index) => ({ value: String(index + 1), label: month }))} />
+        <AnimatedSelect ariaLabel="Год" value={parts.year} onChange={(next) => updatePart("year", next)} placeholder="Год" options={years} />
       </div>
     </div>
   );
@@ -6245,10 +6268,12 @@ export default function App() {
             <div className="modal-inline-fields">
               <div className="modal-field">
                 <label>Категория</label>
-                <select value={newMapCategory} onChange={(event) => setNewMapCategory(event.target.value)}>
-                  {allCategories.map((category) => <option key={category}>{category}</option>)}
-                  <option value="__custom__">Своя категория…</option>
-                </select>
+                <AnimatedSelect
+                  ariaLabel="Категория"
+                  value={newMapCategory}
+                  onChange={setNewMapCategory}
+                  options={[...allCategories, { value: "__custom__", label: "Своя категория…" }]}
+                />
               </div>
               <DeadlinePicker value={newMapDeadline} onChange={setNewMapDeadline} optional />
             </div>
@@ -6501,10 +6526,12 @@ export default function App() {
             <div className="modal-inline-fields">
               <div className="modal-field">
                 <label>Категория</label>
-                <select value={renameCategory} onChange={(event) => setRenameCategory(event.target.value)}>
-                  {allCategories.map((category) => <option key={category}>{category}</option>)}
-                  <option value="__custom__">Своя категория…</option>
-                </select>
+                <AnimatedSelect
+                  ariaLabel="Категория"
+                  value={renameCategory}
+                  onChange={setRenameCategory}
+                  options={[...allCategories, { value: "__custom__", label: "Своя категория…" }]}
+                />
               </div>
               <DeadlinePicker value={renameDeadline} onChange={setRenameDeadline} />
             </div>
