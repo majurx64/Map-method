@@ -3050,3 +3050,42 @@ body {
 body .modal-inline-fields > .modal-field > .animated-select .animated-select-trigger i {
   top: calc(50% - 7px);
 }
+.grid-viewport {
+  width: 100%;
+  height: clamp(320px, 58vh, 680px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  contain: size layout;
+  border-radius: 10px;
+  background: #eeeae1;
+  scrollbar-gutter: stable;
+}
+.grid-zoom-stage { display: flex; align-items: center; justify-content: center; }
+.grid-viewport .grid-container { border: 0; border-radius: 0; outline: 1px solid #d8d1c6; }
+.grid-container.moving-artwork { outline: 2px dashed #32624f; }
+.moving-artwork .grid-canvas { cursor: grabbing; }
+.workspace { align-self: start; min-height: 0; overflow-anchor: none; }
+.right-sidebar .mini-preview { max-height: 240px; overflow: hidden; }
+.field-error { color: #ba3030; font-size: 12px; line-height: 1.4; margin: 8px 0; }
+.daily-plan { display: block; color: #32624f !important; font-size: 12px !important; line-height: 1.5; margin: 8px 0; }
+.hex-color-input { width: 100%; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid #cfc7ba; border-radius: 8px; font: 14px ui-monospace, monospace; background: #fffefa; color: #25231f; }
+.custom-color-create { flex-wrap: wrap; }
+.custom-color-create .hex-color-input, .custom-color-create .field-error { flex: 1 1 100%; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.maps-drag-hint { font-size: 13px; color: #766f65; margin: 0 0 16px; }
+.maps-list .map-card { position: relative; cursor: grab; user-select: none; touch-action: pan-y; }
+.maps-list .map-card.is-dragging { z-index: 10; cursor: grabbing; transition: none; opacity: .88; box-shadow: 0 20px 55px #253d4938; }
+.maps-list .map-card.is-drop-target { outline: 3px dashed #659176; outline-offset: 5px; }
+.maps-list .map-card.is-deleting { pointer-events: none; overflow: visible; animation: card-dissolve 700ms ease-in forwards; }
+.map-card.is-deleting > .map-card-body, .map-card.is-deleting > .map-card-preview { animation: card-content-dissolve 600ms ease-in forwards; }
+.card-debris { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.card-debris i { position: absolute; left: var(--x); top: var(--y); width: 17px; height: 17px; border-radius: 3px; background: #71967a; animation: debris-fall 680ms ease-in forwards; }
+.card-debris i:nth-child(3n) { background: #d9d0bd; width: 26px; height: 24px; }
+.card-debris i:nth-child(3n + 1) { background: #fffefa; border: 1px solid #d9d0bd; }
+@keyframes card-dissolve { 0% { opacity: 1; } 75% { background: transparent; border-color: transparent; box-shadow: none; } 100% { opacity: 0; background: transparent; border-color: transparent; box-shadow: none; } }
+@keyframes card-content-dissolve { to { opacity: 0; filter: blur(5px); transform: translateY(18px) scale(.95); } }
+@keyframes debris-fall { 0% { opacity: 0; transform: scale(.3); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--turn)) scale(.1); } }
+@media (prefers-reduced-motion: reduce) {
+  .maps-list .map-card.is-deleting, .map-card.is-deleting > *, .card-debris i { animation-duration: 1ms; }
+}

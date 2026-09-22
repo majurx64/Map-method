@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./App.css";
 import { supabase } from "./lib/supabase";
 import Auth from "./Auth";
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta } from "./lib/grid";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -751,6 +752,21 @@ function normalizeHexColor(c) {
   return /^#[0-9a-f]{6}$/i.test(v) ? v : null;
 }
 
+function sampleImageColors(img, cols, rows, offset, total) {
+  const canvas = document.createElement("canvas");
+  canvas.width = cols;
+  canvas.height = rows;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Canvas недоступен для обработки изображения");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, cols, rows);
+  // Keep the complete source inside full rows; a partial tail must not crop it.
+  const placement = imagePlacement(img.width, img.height, cols, rows, total, offset);
+  ctx.drawImage(img, placement.left, placement.top, placement.width, placement.height);
+  const data = ctx.getImageData(0, 0, cols, rows).data;
+  return Array.from({ length: Math.min(MAX_CELLS, cols * rows) }, (_, i) => `rgb(${data[i * 4]}, ${data[i * 4 + 1]}, ${data[i * 4 + 2]})`);
+}
+
 function getActivityDate(date = new Date()) {
   const offset = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
@@ -782,6 +798,7 @@ function normalizeMap(map = {}) {
     map.manualRows,
     map.manualCols
   ).actualTotal;
+  const drawing = new Set((Array.isArray(map.completed) ? map.completed : []).map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < mapLimit));
   const custom = [
     ...new Set(
       (Array.isArray(map.customColors) ? map.customColors : [])
@@ -793,45 +810,33 @@ function normalizeMap(map = {}) {
 
   return {
     id: map.id || createMapId(),
+    order: Number.isFinite(map.order) ? map.order : 0,
+    imageOffset: { x: Number(map.imageOffset?.x) || 0, y: Number(map.imageOffset?.y) || 0 },
     name: typeof map.name === "string" ? map.name : "Моя карта",
     mapType: map.mapType === "image" ? "image" : "free",
     isGameMode: Boolean(map.isGameMode),
     gridMode: map.gridMode === "manual" ? "manual" : "auto",
-    completed: [
-      ...new Set(
-        (Array.isArray(map.completed) ? map.completed : [])
-          .map(Number)
-          .filter(Number.isInteger)
-          .filter((i) => i >= 0 && i < mapLimit)
-      ),
-    ],
+    completed: [...drawing],
     progressCompleted: [
       ...new Set(
         (Array.isArray(map.progressCompleted) ? map.progressCompleted : [])
           .map(Number)
           .filter(Number.isInteger)
           .filter((i) => i >= 0 && i < mapLimit)
+          .filter((i) => map.mapType === "image" || drawing.has(i))
       ),
     ],
     // Прогресс не должен выходить за пределы самой карты.
     progressExtra: 0,
     image: typeof map.image === "string" ? map.image : null,
-    colors: Array.isArray(map.colors) ? map.colors : [],
+    colors: Array.isArray(map.colors) ? map.colors.slice(0, mapLimit) : [],
     customColors: custom,
     drawColor: normalizeHexColor(map.drawColor) || BASIC_COLORS[0],
     imageRatio: Number(map.imageRatio) > 0 ? Number(map.imageRatio) : 1,
-    totalCells:
-      typeof map.totalCells === "string"
-        ? map.totalCells
-        : String(map.totalCells || 500),
-    manualRows:
-      typeof map.manualRows === "string"
-        ? map.manualRows
-        : String(map.manualRows || 20),
-    manualCols:
-      typeof map.manualCols === "string"
-        ? map.manualCols
-        : String(map.manualCols || 25),
+    totalCells: String(Math.min(MAX_CELLS, Math.max(1, Math.floor(Number(map.totalCells) || 500)))),
+    manualRows: String(getGridDimensions(MAX_CELLS, 1, "manual", map.manualRows || 20, map.manualCols || 25).rows),
+    manualCols: String(getGridDimensions(MAX_CELLS, 1, "manual", map.manualRows || 20, map.manualCols || 25).cols),
+
     showImage:
       typeof map.showImage === "boolean" ? map.showImage : true,
     description:
@@ -897,43 +902,7 @@ function mapFromSupabaseRow(row) {
   });
 }
 
-function getGridDimensions(
-  total,
-  ratio = 1,
-  gridMode = "auto",
-  manualRows = 20,
-  manualCols = 25
-) {
-  if (gridMode === "manual") {
-    const rows = Math.max(1, Number(manualRows) || 1);
-    const cols = Math.max(1, Number(manualCols) || 1);
 
-    return {
-      rows,
-      cols,
-      actualTotal: Math.min(
-        rows * cols,
-        Math.max(1, Number(total) || rows * cols)
-      ),
-    };
-  }
-
-  const cols = Math.max(
-    1,
-    Math.round(Math.sqrt(total * ratio))
-  );
-
-  const rows = Math.max(
-    1,
-    Math.ceil(total / cols)
-  );
-
-  return {
-    rows,
-    cols,
-    actualTotal: rows * cols,
-  };
-}
 
 function getLineCells(a, b, cols, rows) {
   let row = Math.floor(a / cols);
@@ -999,6 +968,18 @@ function AnimatedSelect({ value, onChange, options, placeholder, ariaLabel }) {
       )}
     </div>
   );
+}
+
+function GridNumberInput({ value, onChange, ...props }) {
+  const [draft, setDraft] = useState(String(value));
+  const [previousValue, setPreviousValue] = useState(value);
+  if (value !== previousValue) {
+    setPreviousValue(value);
+    setDraft(String(value));
+  }
+  return <input {...props} max={MAX_CELLS} step="1" value={draft}
+    onChange={(event) => { setDraft(event.target.value); onChange(event); }}
+    onBlur={() => setDraft(String(value))} />;
 }
 
 function DeadlinePicker({ value, onChange, optional = false }) {
@@ -1114,6 +1095,18 @@ export default function App() {
   ] = useState([]);
 
   const [image, setImage] = useState(null);
+  const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
+  const [gridError, setGridError] = useState("");
+  const [deletingIds, setDeletingIds] = useState([]);
+  const deletingIdsRef = useRef(new Set());
+  const [mapActionError, setMapActionError] = useState("");
+  const [cardDrag, setCardDrag] = useState(null);
+  const cardDragRef = useRef(null);
+  const suppressCardClick = useRef(false);
+  const artworkDragRef = useRef(null);
+  const [movingArtwork, setMovingArtwork] = useState(false);
+  const [viewportSize, setViewportSize] = useState({ width: 600, height: 500 });
+  const zoomAnchorRef = useRef(null);
   const [colors, setColors] = useState([]);
   const [imageRatio, setImageRatio] = useState(1);
 
@@ -1297,6 +1290,7 @@ export default function App() {
   const gameVictoryBaselineMapRef = useRef(null);
   const wasDemoCompleteRef = useRef(false);
   const imageProcessingRef = useRef(0);
+  const sourceImageRef = useRef(null);
   const cellAnimationsRef = useRef(new Map());
   const cellAnimationTimerRef = useRef(null);
   const canvasAnimationFrameRef = useRef(null);
@@ -1346,27 +1340,19 @@ export default function App() {
     manualCols
   );
 
-  const progress = actualTotal
-    ? Math.min(
-        100,
-        Math.round(
-          (completed.length / actualTotal) * 100
-        )
-      )
-    : 0;
-
-  const isPlaying = isGameMode;
-  const displayedCompleted = isPlaying
-    ? progressCompleted
-    : completed;
-  const displayedTotal = isPlaying
-    ? mapType === "image"
-      ? actualTotal
-      : completed.length
-    : actualTotal;
-  const displayedProgress = displayedTotal
-    ? Math.min(100, Math.round((displayedCompleted.length / displayedTotal) * 100))
-    : 0;
+  const currentStats = getMapStats({ mapType, totalCells, imageRatio, gridMode, manualRows, manualCols, completed, progressCompleted });
+  const drawingSet = new Set(completed);
+  const progressSet = new Set(progressCompleted);
+  const displayedCompleted = progressCompleted.filter((i) => i < actualTotal && (mapType === "image" || drawingSet.has(i)));
+  const displayedTotal = currentStats.total;
+  const displayedProgress = currentStats.percent;
+  const dailyPlan = dailyTarget(activeMap?.deadline, displayedTotal, currentStats.filled);
+  const newMapCount = newMapGridMode === "manual" ? Number(newMapRows) * Number(newMapCols) : Number(newMapCells);
+  const newMapInvalid = !Number.isInteger(newMapCount) || newMapCount < 1 || newMapCount > MAX_CELLS
+    || (newMapGridMode === "manual" && (!Number.isInteger(Number(newMapRows)) || !Number.isInteger(Number(newMapCols)) || Number(newMapRows) < 1 || Number(newMapCols) < 1));
+  const fitScale = Math.min((viewportSize.width - 24) / cols, (viewportSize.height - 24) / rows);
+  const canvasWidth = Math.max(1, cols * fitScale * mapZoom);
+  const canvasHeight = Math.max(1, rows * fitScale * mapZoom);
 
   const t = (key) =>
     additionalTranslations[language]?.[key] ??
@@ -1395,20 +1381,7 @@ export default function App() {
   const accountInitial =
     accountName.trim().charAt(0).toUpperCase() || "M";
 
-  const accountMapStats = maps.map((map) => {
-    const dimensions = getGridDimensions(
-      Math.max(1, Number(map.totalCells) || 1),
-      map.imageRatio || 1,
-      map.gridMode,
-      map.manualRows,
-      map.manualCols
-    );
-    // В статистике и в превью важен именно пройденный путь в игре,
-    // а не контур, который был нарисован при создании карты.
-    const filled = map.progressCompleted?.length || 0;
-
-    return { ...map, total: dimensions.actualTotal, filled };
-  });
+  const accountMapStats = maps.map((map) => ({ ...map, ...getMapStats(map) }));
 
   const accountPaintedCells = accountMapStats.reduce(
     (sum, map) => sum + map.filled,
@@ -1894,6 +1867,7 @@ export default function App() {
       progressCompleted,
       progressExtra,
       image,
+      imageOffset,
       colors,
       imageRatio,
       totalCells,
@@ -1925,6 +1899,7 @@ export default function App() {
     progressCompleted,
     progressExtra,
     image,
+    imageOffset,
     colors,
     imageRatio,
     totalCells,
@@ -1953,6 +1928,7 @@ export default function App() {
             ],
             progressExtra: progressExtraRef.current,
             image,
+            imageOffset,
             colors,
             imageRatio,
             totalCells,
@@ -1972,6 +1948,7 @@ export default function App() {
       gridMode,
       progressExtra,
       image,
+      imageOffset,
       colors,
       imageRatio,
       totalCells,
@@ -1992,6 +1969,7 @@ export default function App() {
       }
 
       const run = async () => {
+        if (deletingIdsRef.current.has(map.id)) return null;
         try {
           const { error } =
             await supabase
@@ -2070,6 +2048,7 @@ export default function App() {
       progressCompleted,
       progressExtra,
     image,
+    imageOffset,
     colors,
     imageRatio,
     totalCells,
@@ -2211,6 +2190,14 @@ export default function App() {
   }
 
   function setSnapshot(s, target = "drawing") {
+    if (s.progressCompleted) {
+      progressCompletedRef.current = new Set(s.progressCompleted);
+      setProgressCompleted(s.progressCompleted);
+    }
+    if (s.imageOffset) {
+      imageProcessingRef.current += 1;
+      setImageOffset(s.imageOffset);
+    }
     const current = target === "progress"
       ? progressCompletedRef.current
       : completedRef.current;
@@ -2245,7 +2232,7 @@ export default function App() {
   }
 
   function undo() {
-    if (isDrawingRef.current) {
+    if (isDrawingRef.current || artworkDragRef.current) {
       return;
     }
 
@@ -2259,7 +2246,7 @@ export default function App() {
   }
 
   function redo() {
-    if (isDrawingRef.current) {
+    if (isDrawingRef.current || artworkDragRef.current) {
       return;
     }
 
@@ -2354,6 +2341,7 @@ export default function App() {
 
   function applyCells(indices, mode) {
     if (!indices?.length) return;
+    indices = indices.filter((i) => i >= 0 && i < actualTotal);
 
     if (isGameMode) {
       const next = new Set(progressCompletedRef.current);
@@ -2545,6 +2533,22 @@ export default function App() {
 
   function handlePointerDown(e) {
     e.preventDefault();
+    if (e.button !== 0 && e.button !== 2) return;
+    if (e.ctrlKey && e.button === 0 && !isGameMode) {
+      finishStroke();
+      const selected = [...completedRef.current];
+      if (mapType === "free" && !selected.length) return;
+      if (mapType === "image" && (!image || sourceImageRef.current?.src !== image)) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      artworkDragRef.current = {
+        pointerId: e.pointerId, x: e.clientX, y: e.clientY, rect,
+        completed: selected, progressCompleted: [...progressCompletedRef.current],
+        colors: [...colorsRef.current], imageOffset: { ...imageOffset }, dx: 0, dy: 0,
+      };
+      canvasRef.current.setPointerCapture(e.pointerId);
+      setMovingArtwork(true);
+      return;
+    }
 
     // Браузер присылает contextmenu уже после pointerup. Запоминаем
     // именно ПКМ-штрих внутри холста, чтобы меню не всплывало снаружи.
@@ -2559,7 +2563,8 @@ export default function App() {
       isGameMode
         ? progressCompletedRef.current
         : completedRef.current;
-    const mode = e.button === 2 || currentSet.has(i) ? "erase" : "draw";
+    const sameColor = isGameMode || mapType === "image" || colorsRef.current[i]?.toLowerCase() === drawColorRef.current.toLowerCase();
+    const mode = e.button === 2 || (currentSet.has(i) && sameColor) ? "erase" : "draw";
 
     try {
       canvasRef.current?.setPointerCapture(
@@ -2575,6 +2580,43 @@ export default function App() {
   }
 
   function handlePointerMove(e) {
+    const drag = artworkDragRef.current;
+    if (drag && drag.pointerId === e.pointerId) {
+      let dx = Math.round((e.clientX - drag.x) / drag.rect.width * cols);
+      let dy = Math.round((e.clientY - drag.y) / drag.rect.height * rows);
+      const selected = mapType === "free" ? drag.completed : Array.from({ length: actualTotal }, (_, i) => i);
+      // The whole selected artwork stays in the field, including irregular last rows.
+      const minX = Math.min(...selected.map((i) => i % cols));
+      const maxX = Math.max(...selected.map((i) => i % cols));
+      const minY = Math.min(...selected.map((i) => Math.floor(i / cols)));
+      const maxY = Math.max(...selected.map((i) => Math.floor(i / cols)));
+      if (mapType === "free") {
+        dx = Math.max(-minX, Math.min(cols - 1 - maxX, dx));
+        dy = Math.max(-minY, Math.min(rows - 1 - maxY, dy));
+        if (selected.some((i) => (Math.floor(i / cols) + dy) * cols + i % cols + dx >= actualTotal)) return;
+      } else {
+        const source = sourceImageRef.current;
+        const placement = imagePlacement(source.width, source.height, cols, rows, actualTotal, drag.imageOffset);
+        dx = Math.max(Math.ceil(-placement.marginX - drag.imageOffset.x * cols), Math.min(Math.floor(placement.marginX - drag.imageOffset.x * cols), dx));
+        dy = Math.max(Math.ceil(-placement.marginY - drag.imageOffset.y * rows), Math.min(Math.floor(placement.marginY - drag.imageOffset.y * rows), dy));
+      }
+      if (dx === drag.dx && dy === drag.dy) return;
+      drag.dx = dx; drag.dy = dy;
+      const dimensions = { cols, rows, actualTotal };
+      setCompletedDirectly(remapCells(drag.completed, dimensions, dimensions, dx, dy));
+      const nextProgress = remapCells(drag.progressCompleted, dimensions, dimensions, dx, dy);
+      progressCompletedRef.current = new Set(nextProgress);
+      setProgressCompleted(nextProgress);
+      let nextColors = remapColors(drag.colors, dimensions, dimensions, dx, dy);
+      if (mapType === "image") {
+        const offset = { x: drag.imageOffset.x + dx / cols, y: drag.imageOffset.y + dy / rows };
+        nextColors = sampleImageColors(sourceImageRef.current, cols, rows, offset, actualTotal);
+        setImageOffset(offset);
+      }
+      colorsRef.current = nextColors;
+      setColors(nextColors);
+      return;
+    }
     if (!isDrawingRef.current)
       return;
 
@@ -2617,6 +2659,11 @@ export default function App() {
   }
 
   function handlePointerUp(e) {
+    if (artworkDragRef.current?.pointerId === e.pointerId) {
+      finishArtworkMove();
+      canvasRef.current?.releasePointerCapture(e.pointerId);
+      return;
+    }
     if (
       activePointerIdRef.current !==
         null &&
@@ -2649,7 +2696,28 @@ export default function App() {
   }
 
   function handlePointerCancel() {
+    if (artworkDragRef.current) {
+      setSnapshot(artworkDragRef.current);
+      artworkDragRef.current = null;
+      setMovingArtwork(false);
+    }
     finishStroke();
+  }
+
+  function finishArtworkMove() {
+    const drag = artworkDragRef.current;
+    if (!drag) return;
+    if (drag.dx || drag.dy) {
+      undoStackRef.current.push({
+        before: drag,
+        after: { completed: [...completedRef.current], colors: [...colorsRef.current], progressCompleted: [...progressCompletedRef.current], imageOffset: { ...imageOffset } },
+        target: "drawing",
+      });
+      if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+      redoStackRef.current = [];
+    }
+    artworkDragRef.current = null;
+    setMovingArtwork(false);
   }
 
   function clearProgress() {
@@ -2706,7 +2774,7 @@ export default function App() {
       c.getBoundingClientRect();
 
     const dpr =
-      window.devicePixelRatio || 1;
+      Math.min(window.devicePixelRatio || 1, 4096 / Math.max(rect.width, rect.height));
 
     c.width = Math.max(
       1,
@@ -2924,9 +2992,11 @@ export default function App() {
     mapType,
     isGameMode,
     image,
+    imageOffset,
     showImage,
     drawColor,
     mapZoom,
+    viewportSize,
   ]);
 
   useEffect(() => {
@@ -2953,67 +3023,54 @@ export default function App() {
     mapType,
     isGameMode,
     image,
+    imageOffset,
     showImage,
     drawColor,
   ]);
 
   useEffect(() => {
-    if (screen !== "editor")
+    if (screen !== "editor" || !viewportRef.current) return;
+    const viewport = viewportRef.current;
+    const observer = new ResizeObserver(() => setViewportSize({ width: viewport.clientWidth, height: viewport.clientHeight }));
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [screen]);
+
+  useLayoutEffect(() => {
+    const anchor = zoomAnchorRef.current;
+    const viewport = viewportRef.current;
+    const canvas = canvasRef.current;
+    if (!viewport || !canvas) return;
+    if (!anchor) {
+      viewport.scrollLeft = (viewport.scrollWidth - viewport.clientWidth) / 2;
+      viewport.scrollTop = (viewport.scrollHeight - viewport.clientHeight) / 2;
       return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const delta = zoomScrollDelta(rect, anchor);
+    viewport.scrollLeft += delta.x;
+    viewport.scrollTop += delta.y;
+    zoomAnchorRef.current = null;
+  }, [mapZoom, canvasWidth, canvasHeight, screen, viewportSize]);
 
+  useEffect(() => {
+    if (screen !== "editor") return;
     const handleWheel = (e) => {
-      if (!e.ctrlKey) return;
-
-      const viewport =
-        viewportRef.current;
-
-      if (
-        !viewport ||
-        !viewport.contains(e.target)
-      ) {
-        return;
-      }
-
+      const viewport = viewportRef.current;
+      const canvas = canvasRef.current;
+      if (!e.ctrlKey || !viewport?.contains(e.target) || !canvas) return;
       e.preventDefault();
       e.stopPropagation();
-
+      const rect = canvas.getBoundingClientRect();
+      zoomAnchorRef.current = { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height, clientX: e.clientX, clientY: e.clientY };
       setMapZoom((z) => {
-        const next =
-          z +
-          (e.deltaY < 0
-            ? 0.1
-            : -0.1);
-
-        return Math.min(
-          4,
-          Math.max(
-            0.5,
-            Number(
-              next.toFixed(1)
-            )
-          )
-        );
+        const next = Math.min(4, Math.max(0.5, Number((z + (e.deltaY < 0 ? 0.1 : -0.1)).toFixed(1))));
+        if (next === z) zoomAnchorRef.current = null;
+        return next;
       });
     };
-
-    window.addEventListener(
-      "wheel",
-      handleWheel,
-      {
-        passive: false,
-        capture: true,
-      }
-    );
-
-    return () => {
-      window.removeEventListener(
-        "wheel",
-        handleWheel,
-        {
-          capture: true,
-        }
-      );
-    };
+    window.addEventListener("wheel", handleWheel, { passive: false, capture: true });
+    return () => window.removeEventListener("wheel", handleWheel, { capture: true });
   }, [screen]);
 
   useEffect(() => {
@@ -3069,7 +3126,9 @@ export default function App() {
     dataUrl,
     ratio,
     targetCols = cols,
-    targetRows = rows
+    targetRows = rows,
+    offset = imageOffset,
+    targetTotal = actualTotal
   ) {
     const requestId = ++imageProcessingRef.current;
     const img =
@@ -3079,31 +3138,13 @@ export default function App() {
       try {
         if (requestId !== imageProcessingRef.current) return;
 
-        const off = document.createElement("canvas");
         const w = Math.max(1, Number(targetCols) || 1);
         const h = Math.max(1, Number(targetRows) || 1);
-
-        off.width = w;
-        off.height = h;
-
-        const ctx = off.getContext("2d", {
-          willReadFrequently: true,
-        });
-
-        if (!ctx) {
-          throw new Error("Canvas недоступен для обработки изображения");
-        }
-
-        ctx.drawImage(img, 0, 0, w, h);
-        const data = ctx.getImageData(0, 0, w, h).data;
-        const next = [];
-
-        for (let i = 0; i < w * h; i++) {
-          const p = i * 4;
-          next[i] = `rgb(${data[p]}, ${data[p + 1]}, ${data[p + 2]})`;
-        }
+        const next = sampleImageColors(img, w, h, offset, targetTotal);
 
         if (requestId === imageProcessingRef.current) {
+          sourceImageRef.current = img;
+          setImageOffset(imagePlacement(img.width, img.height, w, h, targetTotal, offset).offset);
           colorsRef.current = next;
           setColors(next);
         }
@@ -3152,6 +3193,7 @@ export default function App() {
         );
 
         setImage(src);
+        setImageOffset({ x: 0, y: 0 });
 
         setImageRatio(ratio);
 
@@ -3169,7 +3211,9 @@ export default function App() {
           src,
           ratio,
           dimensions.cols,
-          dimensions.rows
+          dimensions.rows,
+          { x: 0, y: 0 },
+          dimensions.actualTotal
         );
       };
 
@@ -3230,186 +3274,53 @@ export default function App() {
     }
   }
 
-  function handleGridModeChange(
-    mode
-  ) {
+  function resizeGrid(total, mode, nextRows = manualRows, nextCols = manualCols) {
     finishStroke();
-
-    if (mode === gridMode) return;
-
-    let nextRows = manualRows;
-    let nextCols = manualCols;
-
-    // В ручном режиме начинаем с компактной, почти квадратной сетки.
-    // Цвета изображения сразу пересчитываются по этим же размерам.
-    if (mode === "manual") {
-      const squareSide = Math.max(
-        1,
-        Math.round(Math.sqrt(requestedTotal))
-      );
-
-      nextRows = String(squareSide);
-      nextCols = String(
-        Math.max(1, Math.ceil(requestedTotal / squareSide))
-      );
-      setManualRows(nextRows);
-      setManualCols(nextCols);
+    const count = Number(total);
+    const capacity = mode === "manual" ? Number(nextRows) * Number(nextCols) : count;
+    if (count > MAX_CELLS || capacity > MAX_CELLS) {
+      setGridError("Лимит — 10000 клеток");
+      return;
     }
-
-    const d =
-      getGridDimensions(
-        requestedTotal,
-        imageRatio,
-        mode,
-        nextRows,
-        nextCols
-      );
-
+    if (!Number.isInteger(count) || count < 1 || (mode === "manual" && (!Number.isInteger(Number(nextRows)) || !Number.isInteger(Number(nextCols)) || Number(nextRows) < 1 || Number(nextCols) < 1))) {
+      setGridError("Введите целое число от 1 до 10000");
+      return;
+    }
+    setGridError("");
+    const before = { rows, cols, actualTotal };
+    const after = getGridDimensions(count, imageRatio, mode, nextRows, nextCols);
+    setCompletedDirectly(remapCells([...completedRef.current], before, after));
+    const nextProgress = remapCells([...progressCompletedRef.current], before, after);
+    progressCompletedRef.current = new Set(nextProgress);
+    setProgressCompleted(nextProgress);
+    if (mapType === "free") {
+      const nextColors = remapColors(colorsRef.current, before, after);
+      colorsRef.current = nextColors;
+      setColors(nextColors);
+    } else if (image) {
+      processImage(image, imageRatio, after.cols, after.rows, imageOffset, after.actualTotal);
+    }
     setGridMode(mode);
-
-    setCompletedDirectly(
-      completedRef.current.size
-        ? [
-            ...completedRef.current,
-          ].filter(
-            (i) =>
-              i < d.actualTotal
-          )
-        : []
-    );
-
-    if (image) {
-      processImage(
-        image,
-        imageRatio,
-        d.cols,
-        d.rows
-      );
-    }
+    setTotalCells(String(count));
+    setManualRows(String(after.rows));
+    setManualCols(String(after.cols));
+    clearHistory();
   }
 
-  function handleManualRowsChange(
-    e
-  ) {
-    const v =
-      e.target.value;
-
-    const nextTotal =
-      Math.max(1, Number(v) || 1) *
-      Math.max(1, Number(manualCols) || 1);
-
-    setManualRows(v);
-    setTotalCells(String(nextTotal));
-
-    const d =
-      getGridDimensions(
-        nextTotal,
-        imageRatio,
-        "manual",
-        v,
-        manualCols
-      );
-
-    setCompletedDirectly(
-      [
-        ...completedRef.current,
-      ].filter(
-        (i) =>
-          i < d.actualTotal
-      )
-    );
-
-    if (image) {
-      processImage(
-        image,
-        imageRatio,
-        d.cols,
-        d.rows
-      );
-    }
+  function handleGridModeChange(mode) {
+    if (mode !== gridMode) resizeGrid(requestedTotal, mode, rows, cols);
   }
 
-  function handleManualColsChange(
-    e
-  ) {
-    const v =
-      e.target.value;
-
-    const nextTotal =
-      Math.max(1, Number(manualRows) || 1) *
-      Math.max(1, Number(v) || 1);
-
-    setManualCols(v);
-    setTotalCells(String(nextTotal));
-
-    const d =
-      getGridDimensions(
-        nextTotal,
-        imageRatio,
-        "manual",
-        manualRows,
-        v
-      );
-
-    setCompletedDirectly(
-      [
-        ...completedRef.current,
-      ].filter(
-        (i) =>
-          i < d.actualTotal
-      )
-    );
-
-    if (image) {
-      processImage(
-        image,
-        imageRatio,
-        d.cols,
-        d.rows
-      );
-    }
+  function handleManualRowsChange(e) {
+    resizeGrid(Number(e.target.value) * Number(manualCols), "manual", e.target.value, manualCols);
   }
 
-  function handleTotalCellsChange(
-    e
-  ) {
-    const v =
-      e.target.value;
+  function handleManualColsChange(e) {
+    resizeGrid(Number(manualRows) * Number(e.target.value), "manual", manualRows, e.target.value);
+  }
 
-    setTotalCells(v);
-
-    if (gridMode === "auto") {
-      const d =
-        getGridDimensions(
-          Math.max(
-            1,
-            Number(v) || 1
-          ),
-          imageRatio,
-          "auto",
-          manualRows,
-          manualCols
-        );
-
-      setCompletedDirectly(
-        [
-          ...completedRef.current,
-        ].filter(
-          (i) =>
-            i < d.actualTotal
-        )
-      );
-
-      if (image) {
-        processImage(
-          image,
-          imageRatio,
-          d.cols,
-          d.rows
-        );
-      }
-    }
-
+  function handleTotalCellsChange(e) {
+    resizeGrid(e.target.value, "auto");
   }
 
   function fillGameCells() {
@@ -3513,53 +3424,12 @@ export default function App() {
   }
 
   function updateManualTotalCells(next) {
-    const safeTotal = Math.max(1, Number(next) || 1);
-    const nextRows = Math.max(
-      1,
-      Math.round(Math.sqrt(safeTotal))
-    );
-    const nextCols = Math.max(1, Math.ceil(safeTotal / nextRows));
-
-    setManualRows(
-      String(nextRows)
-    );
-    setManualCols(
-      String(nextCols)
-    );
-    setTotalCells(
-      String(
-        safeTotal
-      )
-    );
-
-    setCompletedDirectly(
-      [
-        ...completedRef.current,
-      ].filter(
-        (i) =>
-          i <
-          safeTotal
-      )
-    );
-
-    if (image) {
-      processImage(
-        image,
-        imageRatio,
-        nextCols,
-        nextRows
-      );
-    }
+    const nextRows = Math.max(1, Math.floor(Math.sqrt(Number(next) || 1)));
+    resizeGrid(next, "manual", nextRows, Math.ceil(Number(next) / nextRows));
   }
 
   function handleManualTotalCellsChange(e) {
-    const value = e.target.value;
-    setTotalCells(value);
-
-    const next = Number(value);
-    if (!Number.isFinite(next) || next < 1) return;
-
-    updateManualTotalCells(next);
+    updateManualTotalCells(e.target.value);
   }
 
   function clearImage() {
@@ -3681,8 +3551,10 @@ export default function App() {
   }
 
   async function createMap() {
+    if (newMapInvalid) return;
     const map = normalizeMap({
       id: createMapId(),
+      order: Math.max(0, ...maps.map((map) => map.order || 0)) + 1,
       name:
         newMapName.trim() ||
         "Новая карта",
@@ -3692,13 +3564,7 @@ export default function App() {
       mapType: newMapType,
       gridMode:
         newMapGridMode,
-      totalCells: String(
-        Math.max(
-          1,
-          Number(newMapCells) ||
-            500
-        )
-      ),
+      totalCells: String(newMapCount),
       manualRows: String(
         Math.max(
           1,
@@ -3789,7 +3655,28 @@ export default function App() {
     setProgressExtra(m.progressExtra);
     setIsGameMode(m.isGameMode);
 
+    imageProcessingRef.current += 1;
     setImage(m.image);
+    setImageOffset(m.imageOffset);
+    setGridError("");
+    sourceImageRef.current = null;
+    if (m.image) {
+      const source = new Image();
+      const requestId = imageProcessingRef.current;
+      source.onload = () => {
+        if (requestId !== imageProcessingRef.current) return;
+        sourceImageRef.current = source;
+        if (m.mapType === "image") {
+          const dimensions = getGridDimensions(m.totalCells, m.imageRatio, m.gridMode, m.manualRows, m.manualCols);
+          const offset = imagePlacement(source.width, source.height, dimensions.cols, dimensions.rows, dimensions.actualTotal, m.imageOffset).offset;
+          const nextColors = sampleImageColors(source, dimensions.cols, dimensions.rows, offset, dimensions.actualTotal);
+          colorsRef.current = nextColors;
+          setColors(nextColors);
+          setImageOffset(offset);
+        }
+      };
+      source.src = m.image;
+    }
 
     colorsRef.current =
       m.colors;
@@ -3935,55 +3822,104 @@ export default function App() {
   }
 
   async function confirmDeleteMap() {
-    if (!mapToDelete)
-      return;
-
-    const deletingMap = mapToDelete;
-    const id = deletingMap.id;
-    const previousMaps = maps;
-
-    const rest =
-      maps.filter(
-        (m) => m.id !== id
-      );
-
-    // Сначала меняем интерфейс: пользователь видит результат сразу,
-    // не ожидая сетевой ответ базы данных.
-    setMaps(rest);
+    if (!mapToDelete || deletingIdsRef.current.has(mapToDelete.id)) return;
+    const id = mapToDelete.id;
+    deletingIdsRef.current.add(id);
+    setDeletingIds((ids) => [...ids, id]);
+    setMapActionError("");
     setIsDeleteOpen(false);
     setMapToDelete(null);
-
     if (id === activeMapId) {
+      clearTimeout(saveTimerRef.current);
       setActiveMapId(null);
       localStorage.removeItem(ACTIVE_MAP_KEY);
-      setScreen("maps");
     }
+    setScreen("maps");
+    const animation = new Promise((resolve) => window.setTimeout(resolve, 700));
+    try {
+      const remove = async () => {
+        if (!user) return;
+        const { error } = await supabase.from("maps").delete().eq("id", id).eq("user_id", user.id);
+        if (error) throw error;
+      };
+      const request = remoteSaveQueueRef.current.then(remove, remove);
+      remoteSaveQueueRef.current = request.catch(() => null);
+      await Promise.all([animation, request]);
+      setMaps((current) => current.filter((map) => map.id !== id));
+    } catch (error) {
+      await animation;
+      console.error("Не удалось удалить карту:", error);
+      deletingIdsRef.current.delete(id);
+      setMapActionError("Не удалось удалить карту. Проверьте соединение и повторите попытку.");
+    } finally {
+      setDeletingIds((ids) => ids.filter((value) => value !== id));
+    }
+  }
 
-    if (!user) return;
+  function reorderCards(id, targetId) {
+    if (id === targetId) return;
+    const ordered = [...maps].sort((a, b) => a.order - b.order);
+    const from = ordered.findIndex((map) => map.id === id);
+    const to = ordered.findIndex((map) => map.id === targetId);
+    if (from < 0 || to < 0) return;
+    ordered.splice(to, 0, ...ordered.splice(from, 1));
+    const next = ordered.map((map, order) => ({ ...map, order }));
+    const active = next.find((map) => map.id === activeMapId);
+    if (active) activeMapRef.current = active;
+    setMaps(next);
+    saveMapsLocally(next);
+    if (user) {
+      Promise.all(next.map((map) => remoteSave(map))).then((errors) => {
+        if (errors.some(Boolean)) setMapActionError("Порядок сохранён на этом устройстве. Не удалось синхронизировать его с сервером.");
+      });
+    }
+  }
 
-    const removeRemotely = async () => {
-      const { error } = await supabase
-        .from("maps")
-        .delete()
-        .eq("id", id)
-        .eq("user_id", user.id);
-
-      if (error) {
-        console.error("Не удалось удалить карту:", error);
-        // Возвращаем карту только если синхронизация действительно не удалась.
-        setMaps((current) =>
-          current.some((map) => map.id === id)
-            ? current
-            : previousMaps
-        );
-      }
+  function beginCardDrag(event, id) {
+    if (event.button !== 0 || event.target.closest("button, input, textarea, a") || deletingIdsRef.current.has(id)) return;
+    const element = event.currentTarget;
+    const drag = { id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, dy: 0, targetId: id, active: false };
+    cardDragRef.current = drag;
+    suppressCardClick.current = false;
+    const activate = () => {
+      if (cardDragRef.current !== drag) return;
+      drag.active = true;
+      suppressCardClick.current = true;
+      element.setPointerCapture(drag.pointerId);
+      setCardDrag({ ...drag });
     };
-
-    const request = remoteSaveQueueRef.current.then(
-      removeRemotely,
-      removeRemotely
-    );
-    remoteSaveQueueRef.current = request.catch(() => null);
+    const timer = window.setTimeout(activate, 220);
+    const move = (e) => {
+      if (e.pointerId !== drag.pointerId) return;
+      if (!drag.active) {
+        if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) <= 8) return;
+        window.clearTimeout(timer);
+        if (e.pointerType === "touch") return;
+        activate();
+      }
+      e.preventDefault();
+      drag.dx = e.clientX - drag.x; drag.dy = e.clientY - drag.y;
+      const target = document.elementsFromPoint(e.clientX, e.clientY).map((node) => node.closest("[data-map-id]")).find((node) => node && node.dataset.mapId !== id);
+      if (target && !deletingIdsRef.current.has(target.dataset.mapId)) drag.targetId = target.dataset.mapId;
+      if (e.clientY < 65) window.scrollBy(0, -14);
+      if (e.clientY > window.innerHeight - 65) window.scrollBy(0, 14);
+      setCardDrag({ ...drag });
+    };
+    const finish = (e) => {
+      if (e.pointerId !== drag.pointerId) return;
+      window.clearTimeout(timer);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      if (drag.active && e.type !== "pointercancel") reorderCards(id, drag.targetId);
+      if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
+      cardDragRef.current = null;
+      setCardDrag(null);
+      window.setTimeout(() => { suppressCardClick.current = false; }, 0);
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
   }
 
   function downloadMap() {
@@ -5093,8 +5029,10 @@ export default function App() {
                   <button key={category} className={mapCategoryFilter === category ? "active" : ""} onClick={() => setMapCategoryFilter(category)}>{category}</button>
                 ))}
               </div>
+            <p className="maps-drag-hint">Удерживайте карту, чтобы переместить её. С клавиатуры: Alt + ↑ / ↓.</p>
+            {mapActionError && <p className="field-error" role="alert">{mapActionError}</p>}
             <div className="maps-list">
-              {maps.filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
+              {[...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
                 (map) => {
                   const d =
                     getGridDimensions(
@@ -5111,24 +5049,37 @@ export default function App() {
                       map.manualCols
                     );
 
-                  const done = Math.min(d.actualTotal, map.progressCompleted?.length || 0);
+                  const { filled: done, total: playableTotal, percent: p } = getMapStats(map);
+                  const plan = dailyTarget(map.deadline, playableTotal, done);
 
                   const completedCells = new Set(
                     map.progressCompleted || []
                   );
                   const drawingCells = new Set(map.completed || []);
 
-                  const p = d.actualTotal
-                    ? Math.round((done / d.actualTotal) * 1000) / 10
-                    : 0;
+
 
                   return (
                     <article
-                      className="map-card"
+                      className={`map-card${deletingIds.includes(map.id) ? " is-deleting" : ""}${cardDrag?.id === map.id ? " is-dragging" : ""}${cardDrag?.targetId === map.id && cardDrag.id !== map.id ? " is-drop-target" : ""}`}
+                      data-map-id={map.id}
+                      tabIndex={0}
+                      aria-label={`Карта: ${map.name}`}
+                      onPointerDown={(event) => beginCardDrag(event, map.id)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget || !event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+                        event.preventDefault();
+                        const ordered = [...maps].sort((a, b) => a.order - b.order).filter((item) => mapCategoryFilter === "Все" || item.category === mapCategoryFilter);
+                        const index = ordered.findIndex((item) => item.id === map.id);
+                        const next = ordered[index + (event.key === "ArrowUp" ? -1 : 1)];
+                        if (next) reorderCards(map.id, next.id);
+                      }}
+                      style={cardDrag?.id === map.id ? { transform: `translate(${cardDrag.dx}px, ${cardDrag.dy}px) rotate(1deg)` } : undefined}
                       key={
                         map.id
                       }
                       onClick={() => {
+                        if (suppressCardClick.current || deletingIdsRef.current.has(map.id)) return;
                         openMap(
                           map
                         );
@@ -5137,6 +5088,7 @@ export default function App() {
                         );
                       }}
                       >
+                      {deletingIds.includes(map.id) && <div className="card-debris" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ "--x": (i % 6) * 20 + "%", "--y": Math.floor(i / 6) * 30 + "%", "--dx": ((i * 37) % 180 - 90) + "px", "--dy": (40 + i * 7) + "px", "--turn": (i * 47) + "deg" }} />)}</div>}
                       <div className="map-card-preview">
                         <div
                             className="map-card-grid"
@@ -5204,6 +5156,7 @@ export default function App() {
                                 {map.description}
                               </span>
                             )}
+                            {plan && <span className="daily-plan">{plan}</span>}
                             <span className="map-card-meta">{map.category || "Личное"}{map.deadline ? ` · до ${map.deadline.split("-").reverse().join(".")}` : ""}</span>
                           </div>
 
@@ -5223,9 +5176,7 @@ export default function App() {
                         <div className="map-card-footer">
                           <span>
                             {done} /{" "}
-                            {
-                              d.actualTotal
-                            }{" "}
+                            {playableTotal}{" "}
                             {t(
                               "cells"
                             )}
@@ -5445,7 +5396,7 @@ export default function App() {
                     {language === "ru" ? "Клеток" : t("cells")}
                   </label>
 
-                  <input
+                  <GridNumberInput
                     type="number"
                     min="1"
                     value={totalCells}
@@ -5461,7 +5412,7 @@ export default function App() {
                       )}
                     </label>
 
-                    <input
+                    <GridNumberInput
                       type="number"
                       min="1"
                       value={
@@ -5480,7 +5431,7 @@ export default function App() {
                       )}
                     </label>
 
-                    <input
+                    <GridNumberInput
                       type="number"
                       min="1"
                       value={
@@ -5558,7 +5509,7 @@ export default function App() {
                         )
                       )}
 
-                      <input
+                      <GridNumberInput
                         type="number"
                         min="1"
                         aria-label={language === "ru" ? "Количество клеток" : t("cells")}
@@ -5613,6 +5564,7 @@ export default function App() {
                 </div>
               )}
 
+              {gridError && <p className="field-error" role="alert">{gridError}</p>}
               <div className="grid-info">
                 {t("grid")}{" "}
                 {rows} ×{" "}
@@ -5927,7 +5879,7 @@ export default function App() {
                         id="new-color-picker"
                         type="color"
                         value={
-                          newColor
+                          normalizeHexColor(newColor) || "#111111"
                         }
                         onChange={(
                           e
@@ -5944,7 +5896,12 @@ export default function App() {
                       </span>
                     </label>
 
+                    <input className="hex-color-input" aria-label="Код цвета HEX" placeholder="#ecb40d" value={newColor} maxLength={7}
+                      onChange={(e) => { const value = e.target.value; setNewColor(value); if (normalizeHexColor(value)) { setDrawColor(value.toLowerCase()); drawColorRef.current = value.toLowerCase(); } }}
+                      onKeyDown={(e) => { if (e.key === "Enter") addCustomColor(); }} />
+                    {newColor && !normalizeHexColor(newColor) && <span className="field-error">Формат: #ecb40d</span>}
                     <button
+                      disabled={!normalizeHexColor(newColor)}
                       className="add-color-btn"
                       onClick={
                         addCustomColor
@@ -6056,30 +6013,12 @@ export default function App() {
               >
                 <div
                   className="grid-zoom-stage"
-                  style={{
-                    width: `${
-                      mapZoom *
-                      100
-                    }%`,
-                    height: `${
-                      mapZoom *
-                      100
-                    }%`,
-                    minWidth: `${
-                      mapZoom *
-                      100
-                    }%`,
-                    minHeight: `${
-                      mapZoom *
-                      100
-                    }%`,
-                  }}
+                  style={{ width: viewportSize.width + canvasWidth, height: viewportSize.height + canvasHeight }}
                 >
                   <div
-                    className="grid-container"
-                    style={{
-                      aspectRatio: `${cols}/${rows}`,
-                    }}
+                    className={`grid-container${movingArtwork ? " moving-artwork" : ""}`}
+                    style={{ width: canvasWidth, height: canvasHeight, flex: "0 0 auto" }}
+
                     onContextMenu={(
                       e
                     ) =>
@@ -6121,7 +6060,7 @@ export default function App() {
             <div className="drawing-hint">
               {t(
                 "drawHint"
-              )} · Ctrl+Z / Ctrl+Y
+              )} · Ctrl+Z / Ctrl+Y · Ctrl + колесо — масштаб · Ctrl + ЛКМ — переместить рисунок
             </div>
           </section>
 
@@ -6148,7 +6087,7 @@ export default function App() {
                   (_, i) => {
                     // Превью всегда показывает реальный прогресс режима игры,
                     // а не рабочий эскиз из режима рисования.
-                    const active = progressCompleted.includes(i);
+                    const active = progressSet.has(i) && (mapType === "image" || drawingSet.has(i));
 
                     const color =
                       colors[i] ||
@@ -6161,10 +6100,10 @@ export default function App() {
                         style={{
                           backgroundColor: active
                             ? color
-                            : mapType === "image" && showImage && image
+                            : ((mapType === "image" && showImage && image) || (mapType === "free" && drawingSet.has(i)))
                               ? color
                               : "#eeeeea",
-                          opacity: !active && mapType === "image" && showImage && image ? 0.35 : 1,
+                          opacity: !active && ((mapType === "image" && showImage && image) || (mapType === "free" && drawingSet.has(i))) ? 0.35 : 1,
                         }}
                       />
                     );
@@ -6172,6 +6111,7 @@ export default function App() {
                 )}
               </div>
 
+              {dailyPlan && <p className="daily-plan" aria-live="polite">{dailyPlan}</p>}
               <div className="preview-progress">
                 <strong>
                   {displayedProgress}%
@@ -6469,8 +6409,10 @@ export default function App() {
               </div>
             )}
 
+            {newMapInvalid && <p className="field-error" role="alert">{newMapCount > MAX_CELLS ? "Лимит — 10000 клеток" : "Введите целое число от 1 до 10000"}</p>}
             <button
               className="modal-create-btn"
+              disabled={newMapInvalid}
               onClick={
                 createMap
               }
