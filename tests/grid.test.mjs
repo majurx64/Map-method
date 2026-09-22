@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta } from '../src/lib/grid.js';
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset } from '../src/lib/grid.js';
 
 test('Auto grids contain exactly the requested number of playable cells up to the limit', () => {
   for (let total = 1; total <= MAX_CELLS; total++) {
@@ -91,4 +91,50 @@ test('Zoom preserves the exact content point under the mouse, at the center and 
       assert.ok(Math.abs(rect.top - delta.y + y * rect.height - anchor.clientY) < 1e-10);
     }
   }
+});
+
+test('Every expansion side preserves drawing, colors and progress in the same cells', () => {
+  const before = { cols: 3, rows: 2, actualTotal: 6 };
+  const after = { cols: 5, rows: 4, actualTotal: 20 };
+  const colors = ['#111111', '#ecb40d', '#007aff', '#ff3b30', '#ffffff', '#34c759'];
+  for (const [rowSide, colSide, expected] of [
+    ['bottom', 'right', [0, 1, 2, 5, 6, 7]],
+    ['top', 'right', [10, 11, 12, 15, 16, 17]],
+    ['bottom', 'left', [2, 3, 4, 7, 8, 9]],
+    ['top', 'left', [12, 13, 14, 17, 18, 19]],
+  ]) {
+    const { dx, dy } = gridResizeShift(before, after, rowSide, colSide);
+    assert.deepEqual(remapCells([0, 1, 2, 3, 4, 5], before, after, dx, dy), expected);
+    assert.deepEqual(remapCells([1, 4], before, after, dx, dy), [expected[1], expected[4]]);
+    const nextColors = remapColors(colors, before, after, dx, dy);
+    expected.forEach((cell, index) => assert.equal(nextColors[cell], colors[index]));
+    const reverse = gridResizeShift(after, before, rowSide, colSide);
+    assert.deepEqual(remapCells(expected, after, before, reverse.dx, reverse.dy), [0, 1, 2, 3, 4, 5]);
+  }
+});
+
+test('Shrinking crops only the selected edges, without wrapping remaining pixels', () => {
+  const before = { cols: 3, rows: 3, actualTotal: 9 };
+  const after = { cols: 2, rows: 2, actualTotal: 4 };
+  const colors = Array.from({length: 9}, (_, i) => `color-${i}`);
+  const topLeft = gridResizeShift(before, after, 'top', 'left');
+  assert.deepEqual(remapColors(colors, before, after, topLeft.dx, topLeft.dy), ['color-4', 'color-5', 'color-7', 'color-8']);
+  const bottomRight = gridResizeShift(before, after);
+  assert.deepEqual(remapColors(colors, before, after, bottomRight.dx, bottomRight.dy), ['color-0', 'color-1', 'color-3', 'color-4']);
+});
+
+test('Uploaded artwork retains its size when extending above and left, including after save/load', () => {
+  const before = { cols: 10, rows: 10, actualTotal: 100 };
+  const after = { cols: 13, rows: 12, actualTotal: 156 };
+  const original = imagePlacement(200, 100, 10, 10, 100);
+  const { dx, dy } = gridResizeShift(before, after, 'top', 'left');
+  const offset = resizeImageOffset(200, 100, before, { x: 0, y: 0 }, dx, dy);
+  const reloaded = normalizeImageOffset(JSON.parse(JSON.stringify(offset)));
+  const next = imagePlacement(200, 100, after.cols, after.rows, after.actualTotal, reloaded);
+  assert.equal(next.width, original.width);
+  assert.equal(next.height, original.height);
+  assert.equal(next.left, original.left + 3);
+  assert.equal(next.top, original.top + 2);
+  const restored = resizeImageOffset(200, 100, after, reloaded, -3, -2);
+  assert.deepEqual(restored.frame, { left: original.left, top: original.top, width: original.width, height: original.height });
 });

@@ -3089,3 +3089,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media (prefers-reduced-motion: reduce) {
   .maps-list .map-card.is-deleting, .map-card.is-deleting > *, .card-debris i { animation-duration: 1ms; }
 }
+.grid-side-choice { min-width: 0; margin: -2px 0 6px; }
+.grid-side-choice > span { display: block; margin-bottom: 6px; color: #766f65; font-size: 11px; line-height: 1.4; }
+.grid-side-choice > div { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.grid-side-choice button { min-width: 0; min-height: 32px; padding: 5px; border: 1px solid #d5cdc1; border-radius: 8px; background: #fffefa; color: #526151; font: inherit; font-size: 12px; cursor: pointer; }
+.grid-side-choice button[aria-pressed="true"] { border-color: #32624f; background: #32624f; color: #fff; }
+.grid-side-choice button:focus-visible { outline: 2px solid #32624f; outline-offset: 2px; }

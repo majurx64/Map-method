@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import "./App.css";
 import { supabase } from "./lib/supabase";
 import Auth from "./Auth";
-import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta } from "./lib/grid";
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset } from "./lib/grid";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -811,7 +811,7 @@ function normalizeMap(map = {}) {
   return {
     id: map.id || createMapId(),
     order: Number.isFinite(map.order) ? map.order : 0,
-    imageOffset: { x: Number(map.imageOffset?.x) || 0, y: Number(map.imageOffset?.y) || 0 },
+    imageOffset: normalizeImageOffset(map.imageOffset),
     name: typeof map.name === "string" ? map.name : "Моя карта",
     mapType: map.mapType === "image" ? "image" : "free",
     isGameMode: Boolean(map.isGameMode),
@@ -1097,6 +1097,12 @@ export default function App() {
   const [image, setImage] = useState(null);
   const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
   const [gridError, setGridError] = useState("");
+  const [rowAddSide, setRowAddSide] = useState(() => localStorage.getItem("mm-row-add-side") === "top" ? "top" : "bottom");
+  const [colAddSide, setColAddSide] = useState(() => localStorage.getItem("mm-col-add-side") === "left" ? "left" : "right");
+  useEffect(() => {
+    localStorage.setItem("mm-row-add-side", rowAddSide);
+    localStorage.setItem("mm-col-add-side", colAddSide);
+  }, [rowAddSide, colAddSide]);
   const [deletingIds, setDeletingIds] = useState([]);
   const deletingIdsRef = useRef(new Set());
   const [mapActionError, setMapActionError] = useState("");
@@ -2597,8 +2603,10 @@ export default function App() {
       } else {
         const source = sourceImageRef.current;
         const placement = imagePlacement(source.width, source.height, cols, rows, actualTotal, drag.imageOffset);
-        dx = Math.max(Math.ceil(-placement.marginX - drag.imageOffset.x * cols), Math.min(Math.floor(placement.marginX - drag.imageOffset.x * cols), dx));
-        dy = Math.max(Math.ceil(-placement.marginY - drag.imageOffset.y * rows), Math.min(Math.floor(placement.marginY - drag.imageOffset.y * rows), dy));
+        const fullRows = Math.max(1, Math.floor(actualTotal / cols));
+        const edgeX = cols - placement.width, edgeY = fullRows - placement.height;
+        dx = Math.max(Math.ceil(Math.min(0, edgeX) - placement.left), Math.min(Math.floor(Math.max(0, edgeX) - placement.left), dx));
+        dy = Math.max(Math.ceil(Math.min(0, edgeY) - placement.top), Math.min(Math.floor(Math.max(0, edgeY) - placement.top), dy));
       }
       if (dx === drag.dx && dy === drag.dy) return;
       drag.dx = dx; drag.dy = dy;
@@ -2609,7 +2617,9 @@ export default function App() {
       setProgressCompleted(nextProgress);
       let nextColors = remapColors(drag.colors, dimensions, dimensions, dx, dy);
       if (mapType === "image") {
-        const offset = { x: drag.imageOffset.x + dx / cols, y: drag.imageOffset.y + dy / rows };
+        const offset = drag.imageOffset.frame
+          ? { ...drag.imageOffset, frame: { ...drag.imageOffset.frame, left: drag.imageOffset.frame.left + dx, top: drag.imageOffset.frame.top + dy } }
+          : { x: drag.imageOffset.x + dx / cols, y: drag.imageOffset.y + dy / rows };
         nextColors = sampleImageColors(sourceImageRef.current, cols, rows, offset, actualTotal);
         setImageOffset(offset);
       }
@@ -3274,7 +3284,7 @@ export default function App() {
     }
   }
 
-  function resizeGrid(total, mode, nextRows = manualRows, nextCols = manualCols) {
+  function resizeGrid(total, mode, nextRows = manualRows, nextCols = manualCols, sides = null) {
     finishStroke();
     const count = Number(total);
     const capacity = mode === "manual" ? Number(nextRows) * Number(nextCols) : count;
@@ -3289,16 +3299,21 @@ export default function App() {
     setGridError("");
     const before = { rows, cols, actualTotal };
     const after = getGridDimensions(count, imageRatio, mode, nextRows, nextCols);
-    setCompletedDirectly(remapCells([...completedRef.current], before, after));
-    const nextProgress = remapCells([...progressCompletedRef.current], before, after);
+    const { dx, dy } = sides ? gridResizeShift(before, after, sides.rows, sides.cols) : { dx: 0, dy: 0 };
+    setCompletedDirectly(remapCells([...completedRef.current], before, after, dx, dy));
+    const nextProgress = remapCells([...progressCompletedRef.current], before, after, dx, dy);
     progressCompletedRef.current = new Set(nextProgress);
     setProgressCompleted(nextProgress);
     if (mapType === "free") {
-      const nextColors = remapColors(colorsRef.current, before, after);
+      const nextColors = remapColors(colorsRef.current, before, after, dx, dy);
       colorsRef.current = nextColors;
       setColors(nextColors);
     } else if (image) {
-      processImage(image, imageRatio, after.cols, after.rows, imageOffset, after.actualTotal);
+      const offset = sides
+        ? resizeImageOffset(sourceImageRef.current?.width || imageRatio, sourceImageRef.current?.height || 1, before, imageOffset, dx, dy)
+        : { x: imageOffset.x, y: imageOffset.y };
+      setImageOffset(offset);
+      processImage(image, imageRatio, after.cols, after.rows, offset, after.actualTotal);
     }
     setGridMode(mode);
     setTotalCells(String(count));
@@ -3312,11 +3327,11 @@ export default function App() {
   }
 
   function handleManualRowsChange(e) {
-    resizeGrid(Number(e.target.value) * Number(manualCols), "manual", e.target.value, manualCols);
+    resizeGrid(Number(e.target.value) * Number(manualCols), "manual", e.target.value, manualCols, { rows: rowAddSide, cols: colAddSide });
   }
 
   function handleManualColsChange(e) {
-    resizeGrid(Number(manualRows) * Number(e.target.value), "manual", manualRows, e.target.value);
+    resizeGrid(Number(manualRows) * Number(e.target.value), "manual", manualRows, e.target.value, { rows: rowAddSide, cols: colAddSide });
   }
 
   function handleTotalCellsChange(e) {
@@ -3425,7 +3440,7 @@ export default function App() {
 
   function updateManualTotalCells(next) {
     const nextRows = Math.max(1, Math.floor(Math.sqrt(Number(next) || 1)));
-    resizeGrid(next, "manual", nextRows, Math.ceil(Number(next) / nextRows));
+    resizeGrid(next, "manual", nextRows, Math.ceil(Number(next) / nextRows), { rows: rowAddSide, cols: colAddSide });
   }
 
   function handleManualTotalCellsChange(e) {
@@ -5421,7 +5436,15 @@ export default function App() {
                       onChange={
                         handleManualRowsChange
                       }
+                      aria-label="Количество строк"
                     />
+                  </div>
+                  <div className="grid-side-choice" role="group" aria-label="Сторона изменения строк">
+                    <span>Строки добавлять и убирать</span>
+                    <div>
+                      <button type="button" aria-pressed={rowAddSide === "top"} onClick={() => setRowAddSide("top")}>↑ Сверху</button>
+                      <button type="button" aria-pressed={rowAddSide === "bottom"} onClick={() => setRowAddSide("bottom")}>↓ Снизу</button>
+                    </div>
                   </div>
 
                   <div className="compact-field">
@@ -5440,7 +5463,15 @@ export default function App() {
                       onChange={
                         handleManualColsChange
                       }
+                      aria-label="Количество столбцов"
                     />
+                  </div>
+                  <div className="grid-side-choice" role="group" aria-label="Сторона изменения столбцов">
+                    <span>Столбцы добавлять и убирать</span>
+                    <div>
+                      <button type="button" aria-pressed={colAddSide === "left"} onClick={() => setColAddSide("left")}>← Слева</button>
+                      <button type="button" aria-pressed={colAddSide === "right"} onClick={() => setColAddSide("right")}>→ Справа</button>
+                    </div>
                   </div>
 
                   <div

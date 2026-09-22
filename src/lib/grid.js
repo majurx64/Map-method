@@ -24,6 +24,24 @@ export function remapCells(indices, before, after, dx = 0, dy = 0) {
   });
 }
 
+export function gridResizeShift(before, after, rowSide = "bottom", colSide = "right") {
+  return { dx: colSide === "left" ? after.cols - before.cols : 0, dy: rowSide === "top" ? after.rows - before.rows : 0 };
+}
+
+export function normalizeImageOffset(value) {
+  const offset = { x: Number.isFinite(Number(value?.x)) ? Number(value.x) : 0, y: Number.isFinite(Number(value?.y)) ? Number(value.y) : 0 };
+  const frame = value?.frame;
+  if (frame && [frame.left, frame.top, frame.width, frame.height].every(Number.isFinite) && frame.width > 0 && frame.height > 0) {
+    offset.frame = { left: frame.left, top: frame.top, width: frame.width, height: frame.height };
+  }
+  return offset;
+}
+
+export function resizeImageOffset(width, height, before, offset, dx, dy) {
+  const placement = imagePlacement(width, height, before.cols, before.rows, before.actualTotal, offset);
+  return { x: 0, y: 0, frame: { left: placement.left + dx, top: placement.top + dy, width: placement.width, height: placement.height } };
+}
+
 export function remapColors(colors, before, after, dx = 0, dy = 0) {
   const next = [];
   colors.slice(0, before.actualTotal).forEach((color, index) => {
@@ -35,6 +53,9 @@ export function remapColors(colors, before, after, dx = 0, dy = 0) {
 }
 
 export function imagePlacement(width, height, cols, rows, total, offset = { x: 0, y: 0 }) {
+  if (normalizeImageOffset(offset).frame) {
+    return { ...offset.frame, offset: normalizeImageOffset(offset) };
+  }
   const fullRows = Math.max(1, Math.floor(total / cols));
   const scale = Math.min(cols / width, fullRows / height);
   const drawWidth = Math.min(cols, width * scale), drawHeight = Math.min(fullRows, height * scale);
