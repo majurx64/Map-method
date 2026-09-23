@@ -3126,6 +3126,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .deadline-selects .animated-select.is-open .animated-select-trigger i { transform:translateY(-50%) rotate(180deg); }
 .deadline-selects .animated-select-menu { min-width:100%; }
 .deadline-selects .animated-select-menu button { min-height:36px; font-size:13px; text-align:center; }
+.create-modal { overflow-x:hidden; scrollbar-gutter:stable; }
+.modal-inline-fields .animated-select-menu { top:auto; bottom:calc(100% + 7px); max-height:300px; transform-origin:bottom center; animation-name:select-menu-arrive-up; }
+.deadline-selects .animated-select-menu { max-height:320px; }
+.modal-inline-fields .animated-select.is-closing .animated-select-menu { animation-name:select-menu-leave-up; }
+@keyframes select-menu-arrive-up { from { opacity:0; transform:translateY(8px) scale(.96); filter:blur(3px); } to { opacity:1; transform:translateY(0) scale(1); filter:blur(0); } }
+@keyframes select-menu-leave-up { to { opacity:0; transform:translateY(6px) scale(.97); filter:blur(2px); } }
 .map-select-control .animated-select-trigger { height:40px; border-radius:7px; }
 .map-select-control .animated-select-menu { z-index:35; max-height:250px; }
 .segmented-control .map-type-btn,.tool-type .map-type-btn,.map-mode-switch button,.tool-stack > .map-type-btn,.game-fill-btn,.game-fill-inline button { transition:color 240ms ease,background 240ms ease,border-color 240ms ease,box-shadow 240ms ease,transform 240ms cubic-bezier(.2,.8,.2,1); }

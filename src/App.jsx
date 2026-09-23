@@ -777,6 +777,10 @@ function getActivityDate(date = new Date()) {
 }
 
 function dailyPlanCompleted(map, total, filled, today = new Date()) {
+  return Boolean(map?.deadline) && map.dailyPlanDoneOn === getActivityDate(today);
+}
+
+function dailyQuotaMet(map, total, filled, today = new Date()) {
   if (!map?.deadline || !total) return false;
   const [year, month, day] = map.deadline.split("-").map(Number);
   const end = Date.UTC(year, month - 1, day);
@@ -785,7 +789,8 @@ function dailyPlanCompleted(map, total, filled, today = new Date()) {
   if (!Number.isFinite(end) || days <= 0) return false;
   const todayKey = getActivityDate(today);
   const paintedToday = (map.activityLog || []).filter((entry) => entry.date === todayKey).reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
-  const target = Math.ceil(Math.max(0, total - filled) / days);
+  const filledBeforeToday = Math.max(0, filled - paintedToday);
+  const target = Math.ceil(Math.max(0, total - filledBeforeToday) / days);
   return target > 0 && paintedToday >= target;
 }
 
@@ -861,6 +866,7 @@ function normalizeMap(map = {}) {
     category: typeof map.category === "string" && map.category.trim().slice(0, 36) ? map.category.trim().slice(0, 36) : "Личное",
     deadline: /^\d{4}-\d{2}-\d{2}$/.test(map.deadline || "") ? map.deadline : "",
     activityLog: normalizeActivityLog(map.activityLog),
+    dailyPlanDoneOn: /^\d{4}-\d{2}-\d{2}$/.test(map.dailyPlanDoneOn || "") ? map.dailyPlanDoneOn : "",
   };
 }
 
@@ -2435,15 +2441,38 @@ export default function App() {
   function recordPaintedCells(count) {
     if (!count) return;
 
-    const date = getActivityDate();
-    setActivityLog((previous) => {
-      const next = normalizeActivityLog([
-        ...previous,
-        { date, cells: count },
-      ]);
-      activityLogRef.current = next;
-      return next;
-    });
+    const now = new Date();
+    const date = getActivityDate(now);
+    const next = normalizeActivityLog([
+      ...activityLogRef.current,
+      { date, cells: count },
+    ]);
+    activityLogRef.current = next;
+    setActivityLog(next);
+
+    const currentMap = activeMapRef.current;
+    if (currentMap?.deadline) {
+      const mapWithCurrentProgress = {
+        ...currentMap,
+        mapType,
+        gridMode,
+        totalCells,
+        imageRatio,
+        manualRows,
+        manualCols,
+        completed: [...completedRef.current],
+        progressCompleted: [...progressCompletedRef.current],
+        activityLog: next,
+      };
+      const stats = getMapStats(mapWithCurrentProgress);
+
+      if (dailyQuotaMet(mapWithCurrentProgress, stats.total, stats.filled, now)) {
+        activeMapRef.current = { ...currentMap, activityLog: next, dailyPlanDoneOn: date };
+        setMaps((mapsNow) => mapsNow.map((map) =>
+          map.id === activeMapId ? { ...map, dailyPlanDoneOn: date } : map
+        ));
+      }
+    }
   }
 
   function applyCells(indices, mode) {
@@ -2974,8 +3003,8 @@ export default function App() {
             : "#eeeeee";
       } else {
         fill = active
-          ? colors[i] || "#e5e5e5"
-          : "#e5e5e5";
+          ? colors[i] || "#eeeeee"
+          : "#eeeeee";
       }
 
       const animation = cellAnimationsRef.current.get(i);
@@ -3523,10 +3552,10 @@ export default function App() {
         animateCells(batch);
         progressCompletedRef.current = new Set(before);
         setProgressCompleted([...before]);
+        if (start + batchSize >= added.length) recordPaintedCells(added.length);
       }, Math.floor(start / batchSize) * 38);
       gameFillTimersRef.current.push(timer);
     }
-    recordPaintedCells(added.length);
     setIsGameFillOpen(false);
   }
 
