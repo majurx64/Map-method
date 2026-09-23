@@ -15,6 +15,7 @@ const CATEGORY_ORDER_KEY = "mm-category-order";
 const SCROLL_POSITIONS_KEY = "mm-scroll-positions";
 const ACHIEVEMENT_SESSION_KEY = "mm-celebrated-achievements";
 const PRIVATE_LIBRARY_KEY = "mm-private-library";
+const METRO_2035_RECOVERY_KEY = "mm-recovered-metro-2035";
 const UTILITY_COLOR = "#eeeeee";
 
 const BASIC_COLORS = [
@@ -82,6 +83,49 @@ const PUBLIC_LIBRARY = [
   createLibraryTemplate("Гора", ["      #      ", "     ###     ", "    #####    ", "   ### ###   ", "  ###   ###  ", " ###     ### ", "#############"]),
   createLibraryTemplate("Галочка", ["          ##", "         ###", "##      ### ", "###    ###  ", " ###  ###   ", "  ######    ", "   ####     "]),
 ];
+
+const METRO_2035_PATTERN = [
+  "....................",
+  "....###......###....",
+  "...gggg##..##gggg...",
+  "..#.....D##D.....#..",
+  ".#g......DD......g#.",
+  ".#D.gggg....gggg.D#.",
+  "gRD.....g..g.....DRg",
+  "gRD....gg..ggg...DRg",
+  "#RD.gg.........g.DR#",
+  "#RD...ggg..gggg..DR#",
+  "#RD.g..........g.DR#",
+  "#RD..gggg..gggg..DR#",
+  ".D................D.",
+  "gRD..............DRg",
+  "#RRDDDDDD..DDDDDDRR#",
+  ".#RRRRRRR##RRRRRDR#.",
+  "..#g#####RR#####g#..",
+  ".........##.........",
+  "....................",
+  "....................",
+];
+
+function createRecoveredMetroMap(order = 0) {
+  const palette = { ".": UTILITY_COLOR, "#": "#111111", g: "#7a7a7a", R: "#c93434", D: "#8f3534" };
+  const completed = Array.from({ length: 383 }, (_, index) => index);
+  const colors = completed.map((index) => palette[METRO_2035_PATTERN[Math.floor(index / 20)]?.[index % 20] || "."]);
+  return normalizeMap({
+    id: createMapId(),
+    order,
+    name: "Метро 2035",
+    description: "",
+    category: "Чтение",
+    mapType: "free",
+    gridMode: "auto",
+    totalCells: "383",
+    completed,
+    progressCompleted: completed,
+    colors,
+    isGameMode: true,
+  });
+}
 
 const translations = {
   ru: {
@@ -1447,12 +1491,11 @@ export default function App() {
   const availableCategories = [...new Set([...MAP_CATEGORIES, ...customCategories])];
   const allCategories = [...categoryOrder.filter((category) => availableCategories.includes(category)), ...availableCategories.filter((category) => !categoryOrder.includes(category))];
   const categoryDragTransform = (category) => {
-    if (!categoryDrag) return undefined;
+    if (!categoryDrag || category === "Все") return undefined;
     if (categoryDrag.category === category) return `translate3d(${categoryDrag.dx}px,0,0)`;
-    const visualOrder = ["Все", ...allCategories];
-    const from = visualOrder.indexOf(categoryDrag.category);
-    const to = visualOrder.indexOf(categoryDrag.target);
-    const index = visualOrder.indexOf(category);
+    const from = allCategories.indexOf(categoryDrag.category);
+    const to = allCategories.indexOf(categoryDrag.target);
+    const index = allCategories.indexOf(category);
     if (from < to && index > from && index <= to) return `translate3d(-${categoryDrag.width + 7}px,0,0)`;
     if (from > to && index >= to && index < from) return `translate3d(${categoryDrag.width + 7}px,0,0)`;
     return undefined;
@@ -1866,11 +1909,11 @@ export default function App() {
       if (event.key !== "Escape") return;
 
       if (downloadChoice) {
-        setDownloadChoice(null);
+        closeModal("download");
         return;
       }
       if (isFeedbackOpen) {
-        setIsFeedbackOpen(false);
+        closeModal("feedback");
         return;
       }
 
@@ -2129,6 +2172,32 @@ export default function App() {
           migrated[0]?.id ||
           initial.activeMap ||
           null;
+      }
+
+      const recoveryOwner = String(
+        user.user_metadata?.username
+        || user.user_metadata?.user_name
+        || user.user_metadata?.name
+        || user.email?.split("@")[0]
+        || ""
+      ).toLowerCase();
+      const recoveryKey = `${METRO_2035_RECOVERY_KEY}:${user.id}`;
+      const existingMetro = loadedMaps.some((map) => map.name.trim().toLowerCase() === "метро 2035");
+      if (recoveryOwner === "majurx64" && !localStorage.getItem(recoveryKey)) {
+        if (existingMetro) {
+          localStorage.setItem(recoveryKey, "1");
+        } else {
+          const recoveredMetro = createRecoveredMetroMap(loadedMaps.length);
+          const { error: recoveryError } = await supabase
+            .from("maps")
+            .upsert(mapToSupabaseRow(recoveredMetro, user.id), { onConflict: "id" });
+          if (!recoveryError) {
+            loadedMaps = [...loadedMaps, recoveredMetro];
+            localStorage.setItem(recoveryKey, "1");
+          } else {
+            console.error("Не удалось восстановить карту Метро 2035:", recoveryError);
+          }
+        }
       }
 
       setMaps(loadedMaps);
@@ -4028,6 +4097,8 @@ export default function App() {
     window.setTimeout(() => {
       if (kind === "create") setIsCreateOpen(false);
       if (kind === "rename") setIsRenameOpen(false);
+      if (kind === "feedback") setIsFeedbackOpen(false);
+      if (kind === "download") setDownloadChoice(null);
       if (kind === "delete") {
         setIsDeleteOpen(false);
         setMapToDelete(null);
@@ -4440,7 +4511,7 @@ export default function App() {
       e.preventDefault();
       drag.dx = e.clientX - drag.x;
       const targets = [...document.querySelectorAll(".maps-filter [data-category]")]
-        .filter((node) => node.dataset.category !== category);
+        .filter((node) => node.dataset.category !== category && node.dataset.category !== "Все");
       const target = targets.reduce((nearest, node) => {
         const rect = node.getBoundingClientRect();
         const distance = Math.hypot(
@@ -4592,7 +4663,7 @@ export default function App() {
     if (!feedbackMessage.trim()) return;
     setFeedbackStatus("sending");
     try {
-      const response = await fetch("https://formsubmit.co/ajax/majurx64@yandex.ru", {
+      const response = await fetch("https://formsubmit.co/ajax/majurx64@yande.ru", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
@@ -4655,9 +4726,7 @@ export default function App() {
             setScreen("home");
           }}
         >
-          <span className="brand-mark">
-            MM
-          </span>
+          <img className="brand-mark" src="/mm-logo.png" alt="" />
 
           <span>
             {screen === "home"
@@ -4701,7 +4770,7 @@ export default function App() {
 
           {screen === "editor" && (
             <>
-              <button className="download-map-btn" onClick={() => setDownloadChoice({ type: "current" })} disabled={!activeMap}>
+              <button className="download-map-btn" onClick={() => { setClosingModal(""); setDownloadChoice({ type: "current" }); }} disabled={!activeMap}>
                 ↓ Скачать
               </button>
 
@@ -4958,8 +5027,9 @@ export default function App() {
                     className="account-popover-action feedback-menu-action"
                     onClick={() => {
                       setIsAccountOpen(false);
-                      setFeedbackEmail((value) => value || user?.email || "");
+                      setFeedbackEmail("");
                       setFeedbackStatus("");
+                      setClosingModal("");
                       setIsFeedbackOpen(true);
                     }}
                   >
@@ -5911,6 +5981,7 @@ export default function App() {
                               className="tool-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                setClosingModal("");
                                 setDownloadChoice({ type: "stored", map });
                               }}
                             >
@@ -7124,14 +7195,14 @@ export default function App() {
       )}
 
       {isFeedbackOpen && (
-        <div className="modal-overlay" onMouseDown={() => setIsFeedbackOpen(false)}>
+        <div className={`modal-overlay${closingModal === "feedback" ? " is-closing" : ""}`} onMouseDown={() => closeModal("feedback")}>
           <form className="create-modal feedback-modal" onSubmit={submitFeedback} onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h2>Обратная связь</h2>
                 <p>Расскажите о предложении, ошибке или любой другой идее.</p>
               </div>
-              <button type="button" className="modal-close" onClick={() => setIsFeedbackOpen(false)}>×</button>
+              <button type="button" className="modal-close" onClick={() => closeModal("feedback")}>×</button>
             </div>
             <div className="modal-field">
               <label>Тема</label>
@@ -7167,20 +7238,20 @@ export default function App() {
       )}
 
       {downloadChoice && (
-        <div className="modal-overlay" onMouseDown={() => setDownloadChoice(null)}>
+        <div className={`modal-overlay${closingModal === "download" ? " is-closing" : ""}`} onMouseDown={() => closeModal("download")}>
           <div className="create-modal download-choice-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h2>Скачать карту</h2>
                 <p>Выберите, как сохранить рисунок.</p>
               </div>
-              <button type="button" className="modal-close" onClick={() => setDownloadChoice(null)}>×</button>
+              <button type="button" className="modal-close" onClick={() => closeModal("download")}>×</button>
             </div>
             <div className="download-choice-actions">
               <button type="button" onClick={() => {
                 if (downloadChoice.type === "current") downloadMap(true);
                 else downloadStoredMap(downloadChoice.map, true);
-                setDownloadChoice(null);
+                closeModal("download");
               }}>
                 <span className="download-choice-icon with-grid" aria-hidden="true" />
                 <strong>Оставить сетку</strong>
@@ -7189,11 +7260,11 @@ export default function App() {
               <button type="button" onClick={() => {
                 if (downloadChoice.type === "current") downloadMap(false);
                 else downloadStoredMap(downloadChoice.map, false);
-                setDownloadChoice(null);
+                closeModal("download");
               }}>
                 <span className="download-choice-icon without-grid" aria-hidden="true" />
                 <strong>Убрать сетку</strong>
-                <small>Чистый рисунок как в просмотре</small>
+                <small>Чистый рисунок как в предпросмотре</small>
               </button>
             </div>
           </div>

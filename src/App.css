@@ -106,20 +106,11 @@ button:disabled {
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
-
-  width: 23px;
-  height: 23px;
-
-  border-radius: 7px;
-
-  background: var(--green);
-  color: #fff;
-
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: -0.5px;
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
 }
 
 .header-actions {
@@ -2857,10 +2848,7 @@ body {
   background: rgba(255, 253, 249, 0.96);
 }
 
-.brand-mark {
-  border-radius: 7px;
-  background: var(--green);
-}
+.brand-mark { border-radius:8px; background:transparent; }
 
 .save-map-btn,
 .tool-btn,
@@ -3003,7 +2991,7 @@ body {
 @media (max-width: 760px) { .account-profile-card { grid-template-columns: 56px minmax(0,1fr); padding: 18px; }.account-avatar { width:56px; height:56px; border-radius:16px; }.account-maps-link { grid-column:1 / -1; }.account-stat-grid, .achievement-grid { grid-template-columns: 1fr; }.account-plan-card { align-items: flex-start; padding: 22px; }.account-goal-ring { width: 88px; height: 88px; }.account-goal-ring::before { width:70px; height:70px; } }
 .auth-page { display:grid; min-height:calc(100vh - 58px); place-items:center; padding:26px; background:#e9dfd1; }
 .auth-card { width:min(400px,100%); padding:30px; border:1px solid #cfc3b3; border-radius:15px; background:#fffdf9; box-shadow:0 14px 32px rgba(70,55,32,.1); }
-.auth-logo { display:grid; width:38px; height:38px; place-items:center; border-radius:10px; background:#3f7d4a; color:#fff; font-weight:800; }
+.auth-logo { display:block; width:52px; height:52px; margin:0 auto; border-radius:14px; object-fit:cover; }
 .auth-card h1 { margin:20px 0 8px; font-size:27px; }.auth-card p { margin:0 0 21px; color:#6f756d; line-height:1.5; }.auth-card form { display:grid; gap:10px; }.auth-card input { min-height:42px; border:1px solid #b9ab99; border-radius:8px; padding:0 11px; background:#fff; }.password-field { position:relative; }.password-field input { width:100%; padding-right:84px; }.auth-card form button { min-height:42px; border:0; border-radius:8px; background:#3f7d4a; color:#fff; font-weight:700; cursor:pointer; }.password-field .password-visibility { position:absolute; right:5px; top:5px; min-height:32px; padding:0 8px; border-radius:6px; background:#edf4ec; color:#32624f; font-size:11px; }.auth-switch { width:100%; margin-top:14px; border:0; background:transparent; color:#31683b; cursor:pointer; }.auth-message { margin-top:12px; color:#ad4a3e; font-size:13px; }
 
 /* Следующий слой Map Method: личный маршрут и мягкая динамика. */

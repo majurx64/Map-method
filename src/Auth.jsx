@@ -52,7 +52,7 @@ export default function Auth({ onAuth, language = "ru" }) {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="auth-logo">MM</div>
+        <img className="auth-logo" src="/mm-logo.png" alt="Map Method" />
 
         <h1>{mode === "login" ? "Вход" : "Регистрация"}</h1>
 
