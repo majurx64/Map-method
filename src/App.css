@@ -3128,7 +3128,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .deadline-selects .animated-select-menu button { min-height:36px; font-size:13px; text-align:center; }
 .create-modal { overflow-x:hidden; scrollbar-gutter:stable; }
 .modal-inline-fields .animated-select-menu { top:auto; bottom:calc(100% + 7px); max-height:300px; transform-origin:bottom center; animation-name:select-menu-arrive-up; }
-.deadline-selects .animated-select-menu { max-height:320px; }
+.deadline-selects .animated-select-menu { height:190px; max-height:190px; }
 .modal-inline-fields .animated-select.is-closing .animated-select-menu { animation-name:select-menu-leave-up; }
 @keyframes select-menu-arrive-up { from { opacity:0; transform:translateY(8px) scale(.96); filter:blur(3px); } to { opacity:1; transform:translateY(0) scale(1); filter:blur(0); } }
 @keyframes select-menu-leave-up { to { opacity:0; transform:translateY(6px) scale(.97); filter:blur(2px); } }

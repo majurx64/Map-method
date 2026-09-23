@@ -829,6 +829,31 @@ function normalizeMap(map = {}) {
         .filter((c) => !BASIC_COLORS.includes(c))
     ),
   ];
+  const normalizeModeDraft = (draft, type) => {
+    if (!draft || typeof draft !== "object") return null;
+    const draftDrawing = new Set(
+      (Array.isArray(draft.completed) ? draft.completed : [])
+        .map(Number)
+        .filter((i) => Number.isInteger(i) && i >= 0 && i < mapLimit)
+    );
+
+    return {
+      completed: [...draftDrawing],
+      progressCompleted: [
+        ...new Set(
+          (Array.isArray(draft.progressCompleted) ? draft.progressCompleted : [])
+            .map(Number)
+            .filter((i) => Number.isInteger(i) && i >= 0 && i < mapLimit)
+            .filter((i) => type === "image" || draftDrawing.has(i))
+        ),
+      ],
+      colors: Array.isArray(draft.colors) ? draft.colors.slice(0, mapLimit) : [],
+      imageOffset: normalizeImageOffset(draft.imageOffset),
+      showImage: type === "image" && draft.showImage !== false,
+    };
+  };
+  const freeDraft = normalizeModeDraft(map.modeDrafts?.free, "free");
+  const imageDraft = normalizeModeDraft(map.modeDrafts?.image, "image");
 
   return {
     id: map.id || createMapId(),
@@ -867,6 +892,10 @@ function normalizeMap(map = {}) {
     deadline: /^\d{4}-\d{2}-\d{2}$/.test(map.deadline || "") ? map.deadline : "",
     activityLog: normalizeActivityLog(map.activityLog),
     dailyPlanDoneOn: /^\d{4}-\d{2}-\d{2}$/.test(map.dailyPlanDoneOn || "") ? map.dailyPlanDoneOn : "",
+    modeDrafts: {
+      ...(freeDraft ? { free: freeDraft } : {}),
+      ...(imageDraft ? { image: imageDraft } : {}),
+    },
   };
 }
 
@@ -2954,8 +2983,8 @@ export default function App() {
       0
     );
 
-    // На большом полотне цвета должны выглядеть так же живо, как в превью.
-    ctx.filter = mapType === "image" ? "saturate(1.16) contrast(1.04)" : "none";
+    // Одинаковый фильтр сохраняет один оттенок пустых клеток в обоих режимах.
+    ctx.filter = "none";
 
     const cw =
       rect.width / cols;
@@ -3447,29 +3476,53 @@ export default function App() {
   function handleMapTypeChange(
     type
   ) {
+    if (type === mapType) return;
+
     finishStroke();
     setSelection(null);
     setSelectionTool(false);
 
+    const currentMap = activeMapRef.current;
+    const currentDraft = {
+      completed: [...completedRef.current],
+      progressCompleted: [...progressCompletedRef.current],
+      colors: [...colorsRef.current],
+      imageOffset: normalizeImageOffset(imageOffset),
+      showImage,
+    };
+    const modeDrafts = {
+      ...(currentMap?.modeDrafts || {}),
+      [mapType]: currentDraft,
+    };
+    const targetDraft = modeDrafts[type];
+
+    if (currentMap) {
+      activeMapRef.current = { ...currentMap, modeDrafts };
+      setMaps((mapsNow) => mapsNow.map((map) =>
+        map.id === activeMapId ? { ...map, modeDrafts } : map
+      ));
+    }
+
     setMapType(type);
     setIsGameMode(false);
-    progressCompletedRef.current = new Set();
-    setProgressCompleted([]);
+    progressCompletedRef.current = new Set(targetDraft?.progressCompleted || []);
+    setProgressCompleted(targetDraft?.progressCompleted || []);
     progressExtraRef.current = 0;
     setProgressExtra(0);
 
-    setCompletedDirectly([]);
+    setCompletedDirectly(targetDraft?.completed || []);
 
-    colorsRef.current = [];
-    setColors([]);
+    const targetColors = targetDraft?.colors || [];
+    colorsRef.current = targetColors;
+    setColors(targetColors);
+    if (targetDraft?.imageOffset) setImageOffset(targetDraft.imageOffset);
 
     clearHistory();
 
     if (type === "free") {
-      setImage(null);
       setShowImage(false);
     } else {
-      setShowImage(true);
+      setShowImage(targetDraft?.showImage !== false);
     }
   }
 
