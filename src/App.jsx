@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import "./App.css";
 import { supabase } from "./lib/supabase";
 import Auth from "./Auth";
@@ -782,7 +783,7 @@ function dailyPlanCompleted(map, total, filled, today = new Date()) {
   if (!Number.isFinite(end) || days <= 0) return false;
   const todayKey = getActivityDate(today);
   const paintedToday = (map.activityLog || []).filter((entry) => entry.date === todayKey).reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
-  const target = Math.ceil(Math.max(0, total - filled + paintedToday) / days);
+  const target = Math.ceil(Math.max(0, total - filled) / days);
   return target > 0 && paintedToday >= target;
 }
 
@@ -1299,6 +1300,16 @@ export default function App() {
 
   const availableCategories = [...new Set([...MAP_CATEGORIES, ...customCategories])];
   const allCategories = [...categoryOrder.filter((category) => availableCategories.includes(category)), ...availableCategories.filter((category) => !categoryOrder.includes(category))];
+  const categoryDragTransform = (category) => {
+    if (!categoryDrag) return undefined;
+    if (categoryDrag.category === category) return `translateX(${categoryDrag.dx}px)`;
+    const from = allCategories.indexOf(categoryDrag.category);
+    const to = allCategories.indexOf(categoryDrag.target);
+    const index = allCategories.indexOf(category);
+    if (from < to && index > from && index <= to) return `translateX(-${categoryDrag.width + 7}px)`;
+    if (from > to && index >= to && index < from) return `translateX(${categoryDrag.width + 7}px)`;
+    return undefined;
+  };
 
   const [
     isAccountOpen,
@@ -2638,7 +2649,6 @@ export default function App() {
       mode,
       e.pointerId
     );
-    if (mode === "draw" && e.button === 0) setStrokeCounter({ x: e.clientX, y: e.clientY, count: strokeCountRef.current });
   }
 
   function handlePointerMove(e) {
@@ -2716,7 +2726,7 @@ export default function App() {
     ) {
       continueStroke(i);
     }
-    if (drawModeRef.current === "draw") setStrokeCounter({ x: e.clientX, y: e.clientY, count: strokeCountRef.current });
+    if (drawModeRef.current === "draw" && strokeCountRef.current >= 2) setStrokeCounter({ x: e.clientX, y: e.clientY, count: strokeCountRef.current });
   }
 
   function handlePointerUp(e) {
@@ -3154,7 +3164,7 @@ export default function App() {
       if (heldDirections.size && !isDrawingRef.current && !artworkDragRef.current && !selectionGestureRef.current && !panGestureRef.current) {
         const horizontal = Number(heldDirections.has("KeyD") || heldDirections.has("ArrowRight")) - Number(heldDirections.has("KeyA") || heldDirections.has("ArrowLeft"));
         const vertical = Number(heldDirections.has("KeyS") || heldDirections.has("ArrowDown")) - Number(heldDirections.has("KeyW") || heldDirections.has("ArrowUp"));
-        viewportRef.current?.scrollBy({ left: horizontal * 9, top: vertical * 9, behavior: "instant" });
+        viewportRef.current?.scrollBy({ left: horizontal * 6, top: vertical * 6, behavior: "instant" });
       }
       panFrame = heldDirections.size ? window.requestAnimationFrame(pan) : 0;
     };
@@ -4019,7 +4029,7 @@ export default function App() {
   function beginCategoryDrag(event, category) {
     if (event.button !== 0) return;
     const element = event.currentTarget;
-    const drag = { category, pointerId: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, target: category, active: false };
+    const drag = { category, pointerId: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, width: element.offsetWidth, target: category, active: false };
     categoryDragRef.current = drag;
     suppressCategoryClick.current = false;
     const move = (e) => {
@@ -4090,7 +4100,7 @@ export default function App() {
       const row = Math.max(0, Math.floor((e.clientY - listRect.top) / (cellHeight + rowGap)));
       const visibleCount = list.querySelectorAll("[data-map-id]").length;
       drag.targetIndex = Math.min(visibleCount - 1, row * columns + column);
-      drag.dropRect = { left: listRect.left + column * (cellWidth + columnGap), top: listRect.top + row * (cellHeight + rowGap), width: cellWidth, height: cellHeight };
+      drag.dropRect = { left: column * (cellWidth + columnGap), top: row * (cellHeight + rowGap), width: cellWidth, height: cellHeight };
       if (e.clientY < 65) window.scrollBy(0, -14);
       if (e.clientY > window.innerHeight - 65) window.scrollBy(0, 14);
       setCardDrag({ ...drag });
@@ -5230,7 +5240,7 @@ export default function App() {
                       if (suppressCategoryClick.current) return;
                       setMapCategoryFilter(category);
                     }}
-                    style={categoryDrag?.category === category ? { transform: `translateX(${categoryDrag.dx}px)` } : undefined}
+                    style={{ transform: categoryDragTransform(category) }}
                   >{category}</button>
                 ))}
               </div>
@@ -6285,7 +6295,7 @@ export default function App() {
               </div>
             </div>
 
-            {strokeCounter && <span className="stroke-counter" style={{ left: strokeCounter.x + 14, top: strokeCounter.y + 16 }}>{strokeCounter.count}</span>}
+            {strokeCounter && createPortal(<span className="stroke-counter" style={{ left: strokeCounter.x + 12, top: strokeCounter.y + 12 }}>{strokeCounter.count}</span>, document.body)}
             <div className="drawing-hint">
               {t(
                 "drawHint"
