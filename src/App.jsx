@@ -39,6 +39,17 @@ const LANGUAGE_OPTIONS = [
 
 const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13, 15, 17];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
+const DEMO_PYRAMID_INITIAL = (() => {
+  const filled = [];
+  let offset = 0;
+  DEMO_PYRAMID_ROWS.forEach((count) => {
+    const innerWidth = Math.max(1, Math.round(count * 0.36) | 1);
+    const start = Math.floor((count - innerWidth) / 2);
+    for (let column = start; column < start + innerWidth; column++) filled.push(offset + column);
+    offset += count;
+  });
+  return filled;
+})();
 
 function createLibraryTemplate(name, lines) {
   const rows = lines.length;
@@ -1209,7 +1220,7 @@ export default function App() {
   const todayDate = new Date(todayYear, todayMonth - 1, todayDay);
   const [saveStatus, setSaveStatus] = useState("");
   const [heroDemoCells, setHeroDemoCells] = useState(
-    () => new Set(Array.from({ length: 98 }, (_, index) => index * 2))
+    () => new Set(DEMO_PYRAMID_INITIAL)
   );
   const [showDemoVictory, setShowDemoVictory] = useState(false);
   const [heroNoteCells, setHeroNoteCells] = useState(
@@ -1437,12 +1448,13 @@ export default function App() {
   const allCategories = [...categoryOrder.filter((category) => availableCategories.includes(category)), ...availableCategories.filter((category) => !categoryOrder.includes(category))];
   const categoryDragTransform = (category) => {
     if (!categoryDrag) return undefined;
-    if (categoryDrag.category === category) return `translateX(${categoryDrag.dx}px)`;
-    const from = allCategories.indexOf(categoryDrag.category);
-    const to = categoryDrag.target === "Все" ? 0 : allCategories.indexOf(categoryDrag.target);
-    const index = allCategories.indexOf(category);
-    if (from < to && index > from && index <= to) return `translateX(-${categoryDrag.width + 7}px)`;
-    if (from > to && index >= to && index < from) return `translateX(${categoryDrag.width + 7}px)`;
+    if (categoryDrag.category === category) return `translate3d(${categoryDrag.dx}px,0,0)`;
+    const visualOrder = ["Все", ...allCategories];
+    const from = visualOrder.indexOf(categoryDrag.category);
+    const to = visualOrder.indexOf(categoryDrag.target);
+    const index = visualOrder.indexOf(category);
+    if (from < to && index > from && index <= to) return `translate3d(-${categoryDrag.width + 7}px,0,0)`;
+    if (from > to && index >= to && index < from) return `translate3d(${categoryDrag.width + 7}px,0,0)`;
     return undefined;
   };
 
@@ -1451,6 +1463,12 @@ export default function App() {
     setIsAccountOpen,
   ] = useState(false);
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [feedbackKind, setFeedbackKind] = useState("Предложение");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackEmail, setFeedbackEmail] = useState("");
+  const [feedbackStatus, setFeedbackStatus] = useState("");
+  const [downloadChoice, setDownloadChoice] = useState(null);
 
   const [selectionTool, setSelectionTool] = useState(false);
   const [selection, setSelection] = useState(null);
@@ -1497,6 +1515,7 @@ export default function App() {
 
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
+  const gridRestoreRef = useRef(null);
 
   const hydratingRef = useRef(true);
   const saveTimerRef = useRef(null);
@@ -1845,6 +1864,15 @@ export default function App() {
   useEffect(() => {
     const handleEscape = (event) => {
       if (event.key !== "Escape") return;
+
+      if (downloadChoice) {
+        setDownloadChoice(null);
+        return;
+      }
+      if (isFeedbackOpen) {
+        setIsFeedbackOpen(false);
+        return;
+      }
 
       if (isCreateOpen) {
         closeModal("create");
@@ -2491,6 +2519,7 @@ export default function App() {
   function setSnapshot(s, target = "drawing") {
     setSelection(null);
     if (target === "grid") {
+      gridRestoreRef.current = null;
       setGridMode(s.gridMode);
       setTotalCells(String(s.totalCells));
       setManualRows(String(s.manualRows));
@@ -2678,6 +2707,7 @@ export default function App() {
 
   function applyCells(indices, mode) {
     if (!indices?.length) return;
+    gridRestoreRef.current = null;
     indices = indices.filter((i) => i >= 0 && i < actualTotal);
 
     if (isGameMode) {
@@ -3725,15 +3755,35 @@ export default function App() {
       colors: [...colorsRef.current],
       imageOffset: normalizeImageOffset(imageOffset),
     };
-    const nextCompleted = remapCells([...completedRef.current], before, after, dx, dy);
+    const canRestoreCroppedCells = mapType === "free" || imageOffset.cellsEdited;
+    const shrinking = after.rows < before.rows || after.cols < before.cols;
+    let restore = canRestoreCroppedCells ? gridRestoreRef.current : null;
+    if (shrinking && !restore) {
+      restore = {
+        dimensions: before,
+        completed: [...completedRef.current],
+        progressCompleted: [...progressCompletedRef.current],
+        colors: [...colorsRef.current],
+        dx: 0,
+        dy: 0,
+      };
+    }
+    if (restore) {
+      restore.dx += dx;
+      restore.dy += dy;
+    }
+    const restoreBefore = restore?.dimensions || before;
+    const restoreDx = restore?.dx ?? dx;
+    const restoreDy = restore?.dy ?? dy;
+    const nextCompleted = remapCells(restore?.completed || [...completedRef.current], restoreBefore, after, restoreDx, restoreDy);
     setCompletedDirectly(nextCompleted);
-    const nextProgress = remapCells([...progressCompletedRef.current], before, after, dx, dy);
+    const nextProgress = remapCells(restore?.progressCompleted || [...progressCompletedRef.current], restoreBefore, after, restoreDx, restoreDy);
     progressCompletedRef.current = new Set(nextProgress);
     setProgressCompleted(nextProgress);
     let nextColors = [...colorsRef.current];
     let nextImageOffset = normalizeImageOffset(imageOffset);
     if (mapType === "free" || imageOffset.cellsEdited) {
-      nextColors = remapColors(colorsRef.current, before, after, dx, dy);
+      nextColors = remapColors(restore?.colors || colorsRef.current, restoreBefore, after, restoreDx, restoreDy);
       colorsRef.current = nextColors;
       setColors(nextColors);
     } else if (image) {
@@ -3743,6 +3793,15 @@ export default function App() {
       nextImageOffset = offset;
       setImageOffset(offset);
       processImage(image, imageRatio, after.cols, after.rows, offset, after.actualTotal);
+    }
+    if (restore) {
+      const fullyRestored = after.rows >= restore.dimensions.rows
+        && after.cols >= restore.dimensions.cols
+        && restore.dx === 0
+        && restore.dy === 0;
+      gridRestoreRef.current = fullyRestored ? null : restore;
+    } else {
+      gridRestoreRef.current = null;
     }
     setGridMode(mode);
     setTotalCells(String(count));
@@ -4107,6 +4166,7 @@ export default function App() {
 
   function openMap(map) {
     finishStroke();
+    gridRestoreRef.current = null;
     setSelection(null);
     setSelectionTool(false);
 
@@ -4379,7 +4439,16 @@ export default function App() {
       }
       e.preventDefault();
       drag.dx = e.clientX - drag.x;
-      const target = document.elementsFromPoint(e.clientX, e.clientY).map((node) => node.closest("[data-category]")).find((node) => node?.dataset.category !== category);
+      const targets = [...document.querySelectorAll(".maps-filter [data-category]")]
+        .filter((node) => node.dataset.category !== category);
+      const target = targets.reduce((nearest, node) => {
+        const rect = node.getBoundingClientRect();
+        const distance = Math.hypot(
+          e.clientX - Math.max(rect.left, Math.min(e.clientX, rect.right)),
+          e.clientY - Math.max(rect.top, Math.min(e.clientY, rect.bottom))
+        );
+        return !nearest || distance < nearest.distance ? { node, distance } : nearest;
+      }, null)?.node;
       if (target) drag.target = target.dataset.category;
       setCategoryDrag({ ...drag });
     };
@@ -4473,37 +4542,40 @@ export default function App() {
     window.addEventListener("pointercancel", finish);
   }
 
-  function downloadMap() {
-    const c =
-      canvasRef.current;
-
-    if (!c) return;
-
-    const a =
-      document.createElement("a");
-
-    const filename =
-      (activeMap?.name ||
-        "MM-map")
-        .replace(
-          /[\\/:*?"<>|]/g,
-          ""
-        )
-        .trim() ||
-      "MM-map";
-
-    a.download =
-      `${filename}.png`;
-
-    a.href =
-      c.toDataURL(
-        "image/png"
-      );
-
-    a.click();
+  function saveMapPng(name, dimensions, filledCells, cellColors, withGrid) {
+    const cellSize = Math.max(4, Math.min(24, Math.floor(4096 / Math.max(dimensions.cols, dimensions.rows))));
+    const canvas = document.createElement("canvas");
+    canvas.width = dimensions.cols * cellSize;
+    canvas.height = dimensions.rows * cellSize;
+    const ctx = canvas.getContext("2d");
+    const filled = new Set(filledCells || []);
+    ctx.fillStyle = "#eeeeee";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < dimensions.actualTotal; i++) {
+      if (filled.has(i)) {
+        ctx.fillStyle = normalizeHexColor(cellColors?.[i]) === UTILITY_COLOR
+          ? "#eeeeee"
+          : cellColors?.[i] || "#32624f";
+        ctx.fillRect((i % dimensions.cols) * cellSize, Math.floor(i / dimensions.cols) * cellSize, cellSize, cellSize);
+      }
+      if (withGrid) {
+        ctx.strokeStyle = "#d8d4cc";
+        ctx.strokeRect((i % dimensions.cols) * cellSize + 0.5, Math.floor(i / dimensions.cols) * cellSize + 0.5, cellSize, cellSize);
+      }
+    }
+    const link = document.createElement("a");
+    const filename = (name || "MM-map").replace(/[\\/:*?"<>|]/g, "").trim() || "MM-map";
+    link.download = `${filename}${withGrid ? "-с-сеткой" : ""}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
   }
 
-  function downloadStoredMap(map) {
+  function downloadMap(withGrid) {
+    const filled = isGameMode ? [...progressCompletedRef.current] : [...completedRef.current];
+    saveMapPng(activeMap?.name, { rows, cols, actualTotal }, filled, colorsRef.current, withGrid);
+  }
+
+  function downloadStoredMap(map, withGrid) {
     const dimensions = getGridDimensions(
       Math.max(1, Number(map.totalCells) || 1),
       map.imageRatio || 1,
@@ -4511,29 +4583,32 @@ export default function App() {
       map.manualRows,
       map.manualCols
     );
-    const cellSize = 18;
-    const canvas = document.createElement("canvas");
-    canvas.width = dimensions.cols * cellSize;
-    canvas.height = dimensions.rows * cellSize;
-    const ctx = canvas.getContext("2d");
-    const progressCells = new Set(map.progressCompleted || []);
+    const filled = map.isGameMode ? map.progressCompleted : map.completed;
+    saveMapPng(map.name, dimensions, filled, map.colors, withGrid);
+  }
 
-    for (let i = 0; i < dimensions.actualTotal; i++) {
-      const x = (i % dimensions.cols) * cellSize;
-      const y = Math.floor(i / dimensions.cols) * cellSize;
-      ctx.fillStyle = progressCells.has(i)
-        ? map.colors?.[i] || "#32624f"
-        : "#eeeeea";
-      ctx.fillRect(x, y, cellSize, cellSize);
-      ctx.strokeStyle = "#d8d4cc";
-      ctx.strokeRect(x + 0.5, y + 0.5, cellSize, cellSize);
+  async function submitFeedback(event) {
+    event.preventDefault();
+    if (!feedbackMessage.trim()) return;
+    setFeedbackStatus("sending");
+    try {
+      const response = await fetch("https://formsubmit.co/ajax/majurx64@yandex.ru", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          _subject: `Map Method — ${feedbackKind}`,
+          Тип: feedbackKind,
+          Сообщение: feedbackMessage.trim(),
+          "Email для ответа": feedbackEmail.trim() || "Не указан",
+          _captcha: "false",
+        }),
+      });
+      if (!response.ok) throw new Error("feedback");
+      setFeedbackMessage("");
+      setFeedbackStatus("sent");
+    } catch {
+      setFeedbackStatus("error");
     }
-
-    const link = document.createElement("a");
-    const filename = (map.name || "MM-map").replace(/[\\/:*?\"<>|]/g, "").trim() || "MM-map";
-    link.download = `${filename}.png`;
-    link.href = canvas.toDataURL("image/png");
-    link.click();
   }
 
   return (
@@ -4626,7 +4701,7 @@ export default function App() {
 
           {screen === "editor" && (
             <>
-              <button className="download-map-btn" onClick={downloadMap} disabled={!activeMap}>
+              <button className="download-map-btn" onClick={() => setDownloadChoice({ type: "current" })} disabled={!activeMap}>
                 ↓ Скачать
               </button>
 
@@ -4842,14 +4917,6 @@ export default function App() {
                     ▧ Библиотека рисунков
                   </button>
 
-                  <a
-                    className="account-popover-action"
-                    href="mailto:majurx64@yandex.ru?subject=Map%20Method%20%E2%80%94%20%D0%BE%D0%B1%D1%80%D0%B0%D1%82%D0%BD%D0%B0%D1%8F%20%D1%81%D0%B2%D1%8F%D0%B7%D1%8C"
-                    onClick={() => setIsAccountOpen(false)}
-                  >
-                    ✉ Обратная связь
-                  </a>
-
                   <button
                     type="button"
                     onClick={() => {
@@ -4884,6 +4951,19 @@ export default function App() {
                     {t(
                       "myMaps"
                     )}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="account-popover-action feedback-menu-action"
+                    onClick={() => {
+                      setIsAccountOpen(false);
+                      setFeedbackEmail((value) => value || user?.email || "");
+                      setFeedbackStatus("");
+                      setIsFeedbackOpen(true);
+                    }}
+                  >
+                    ✉ Обратная связь
                   </button>
 
                   <button
@@ -4990,26 +5070,7 @@ export default function App() {
           </section>
 
           <section className="landing-pyramid-section" id="pyramid-demo">
-            <div className="pyramid-heading">
-              <div>
-                <span className="landing-label">Интерактивная карта</span>
-                <h2>Карта прогресса</h2>
-                <p>Кликай по клеткам — рисунок растёт вместе с твоими шагами.</p>
-              </div>
-              <div className="hero-demo-progress">
-                <strong>{Math.round((heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100)}%</strong>
-                <span>{heroDemoCells.size} / {DEMO_PYRAMID_TOTAL} клеток</span>
-              </div>
-            </div>
-
             <div className="pyramid-card">
-              <div className="pyramid-card-meta">
-                <span>Каждая клетка — маленькое действие</span>
-                <span>{heroDemoCells.size} из {DEMO_PYRAMID_TOTAL}</span>
-              </div>
-              <div className="pyramid-progress" aria-label={`Прогресс пирамиды: ${heroDemoCells.size} из ${DEMO_PYRAMID_TOTAL}`}>
-                <i style={{ width: `${(heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100}%` }} />
-              </div>
               {showDemoVictory && (
                 <div className="demo-victory" role="status">
                   <div aria-hidden="true">✦ ✺ ✧ ✦ ✺ ✧</div>
@@ -5017,28 +5078,42 @@ export default function App() {
                   <span>Вот это упорство.</span>
                 </div>
               )}
-              <div className="hero-demo-wrap">
-                <div className="hero-grid demo-interactive hero-pyramid" onContextMenu={(event) => event.preventDefault()}>
-                  {DEMO_PYRAMID_ROWS.map((count, row) => (
-                    <div className="hero-pyramid-row" key={row}>
-                      {Array.from({ length: count }, (_, column) => {
-                        const index = DEMO_PYRAMID_ROWS.slice(0, row).reduce((sum, value) => sum + value, 0) + column;
-                        return (
-                          <button
-                            key={index}
-                            type="button"
-                            className={heroDemoCells.has(index) ? "filled" : ""}
-                            onPointerDown={(event) => beginDemoStroke(event, index)}
-                            onPointerEnter={(event) => continueDemoStroke(event, index)}
-                            onContextMenu={(event) => event.preventDefault()}
-                          />
-                        );
-                      })}
-                    </div>
-                  ))}
+              <div className="pyramid-layout">
+                <div className="hero-demo-wrap">
+                  <div className="hero-grid demo-interactive hero-pyramid" onContextMenu={(event) => event.preventDefault()}>
+                    {DEMO_PYRAMID_ROWS.map((count, row) => (
+                      <div className="hero-pyramid-row" key={row}>
+                        {Array.from({ length: count }, (_, column) => {
+                          const index = DEMO_PYRAMID_ROWS.slice(0, row).reduce((sum, value) => sum + value, 0) + column;
+                          return (
+                            <button
+                              key={index}
+                              type="button"
+                              className={heroDemoCells.has(index) ? "filled" : ""}
+                              onPointerDown={(event) => beginDemoStroke(event, index)}
+                              onPointerEnter={(event) => continueDemoStroke(event, index)}
+                              onContextMenu={(event) => event.preventDefault()}
+                            />
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="pyramid-copy">
+                  <span className="landing-label">Интерактивная карта</span>
+                  <h2>Каждый шаг становится частью рисунка</h2>
+                  <p>Нажимай на клетки слева и наблюдай, как небольшие ежедневные действия складываются в заметный результат.</p>
+                  <div className="hero-demo-progress">
+                    <strong>{Math.min(100, Math.round((heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100))}%</strong>
+                    <span>{Math.min(heroDemoCells.size, DEMO_PYRAMID_TOTAL)} из {DEMO_PYRAMID_TOTAL} клеток</span>
+                  </div>
+                  <div className="pyramid-progress" aria-label={`Прогресс пирамиды: ${heroDemoCells.size} из ${DEMO_PYRAMID_TOTAL}`}>
+                    <i style={{ width: `${Math.min(100, (heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100)}%` }} />
+                  </div>
+                  <small>Каждая клетка — одно маленькое действие.</small>
                 </div>
               </div>
-              <div className="pyramid-card-footer">Меняй карту — она отвечает на каждое нажатие.</div>
             </div>
           </section>
 
@@ -5836,7 +5911,7 @@ export default function App() {
                               className="tool-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                downloadStoredMap(map);
+                                setDownloadChoice({ type: "stored", map });
                               }}
                             >
                               ↓ Скачать
@@ -7044,6 +7119,83 @@ export default function App() {
                 "createMap"
               )}
             </button>
+          </div>
+        </div>
+      )}
+
+      {isFeedbackOpen && (
+        <div className="modal-overlay" onMouseDown={() => setIsFeedbackOpen(false)}>
+          <form className="create-modal feedback-modal" onSubmit={submitFeedback} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Обратная связь</h2>
+                <p>Расскажите о предложении, ошибке или любой другой идее.</p>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setIsFeedbackOpen(false)}>×</button>
+            </div>
+            <div className="modal-field">
+              <label>Тема</label>
+              <AnimatedSelect
+                ariaLabel="Тема обращения"
+                value={feedbackKind}
+                onChange={setFeedbackKind}
+                options={["Предложение", "Ошибка на сайте", "Вопрос", "Другое"]}
+              />
+            </div>
+            <div className="modal-field">
+              <label>Сообщение</label>
+              <textarea
+                autoFocus
+                required
+                rows="7"
+                value={feedbackMessage}
+                placeholder="Опишите, что хотите предложить или что работает не так"
+                onChange={(event) => { setFeedbackMessage(event.target.value); setFeedbackStatus(""); }}
+              />
+            </div>
+            <div className="modal-field">
+              <label>Email для ответа <span className="optional-label">необязательно</span></label>
+              <input type="email" value={feedbackEmail} placeholder="name@example.com" onChange={(event) => setFeedbackEmail(event.target.value)} />
+            </div>
+            {feedbackStatus === "sent" && <p className="feedback-result success">Спасибо! Сообщение отправлено.</p>}
+            {feedbackStatus === "error" && <p className="feedback-result error">Не удалось отправить. Попробуйте ещё раз чуть позже.</p>}
+            <button className="modal-create-btn" type="submit" disabled={!feedbackMessage.trim() || feedbackStatus === "sending"}>
+              {feedbackStatus === "sending" ? "Отправляем…" : "Отправить"}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {downloadChoice && (
+        <div className="modal-overlay" onMouseDown={() => setDownloadChoice(null)}>
+          <div className="create-modal download-choice-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Скачать карту</h2>
+                <p>Выберите, как сохранить рисунок.</p>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setDownloadChoice(null)}>×</button>
+            </div>
+            <div className="download-choice-actions">
+              <button type="button" onClick={() => {
+                if (downloadChoice.type === "current") downloadMap(true);
+                else downloadStoredMap(downloadChoice.map, true);
+                setDownloadChoice(null);
+              }}>
+                <span className="download-choice-icon with-grid" aria-hidden="true" />
+                <strong>Оставить сетку</strong>
+                <small>Границы клеток будут видны</small>
+              </button>
+              <button type="button" onClick={() => {
+                if (downloadChoice.type === "current") downloadMap(false);
+                else downloadStoredMap(downloadChoice.map, false);
+                setDownloadChoice(null);
+              }}>
+                <span className="download-choice-icon without-grid" aria-hidden="true" />
+                <strong>Убрать сетку</strong>
+                <small>Чистый рисунок как в просмотре</small>
+              </button>
+            </div>
           </div>
         </div>
       )}
