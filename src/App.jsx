@@ -957,27 +957,41 @@ function getLineCells(a, b, cols, rows) {
 
 function AnimatedSelect({ value, onChange, options, placeholder, ariaLabel }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
   const rootRef = useRef(null);
+  const closeTimerRef = useRef(null);
   const normalizedOptions = options.map((option) => typeof option === "string" ? { value: option, label: option } : option);
   const selected = normalizedOptions.find((option) => String(option.value) === String(value));
 
+  function closeMenu() {
+    if (!isOpen) return;
+    setIsOpen(false);
+    setIsClosing(true);
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => setIsClosing(false), 180);
+  }
+
   useEffect(() => {
     function closeOnOutsidePointer(event) {
-      if (!rootRef.current?.contains(event.target)) setIsOpen(false);
+      if (!rootRef.current?.contains(event.target)) closeMenu();
     }
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, []);
+  }, [isOpen]);
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), []);
 
   return (
-    <div className={`animated-select${isOpen ? " is-open" : ""}`} ref={rootRef}>
-      <button type="button" className="animated-select-trigger" aria-label={ariaLabel} aria-expanded={isOpen} onClick={() => setIsOpen((open) => !open)}>
+    <div className={`animated-select${isOpen ? " is-open" : ""}${isClosing ? " is-closing" : ""}`} ref={rootRef}>
+      <button type="button" className="animated-select-trigger" aria-label={ariaLabel} aria-expanded={isOpen} onClick={() => {
+        if (isOpen) closeMenu();
+        else { window.clearTimeout(closeTimerRef.current); setIsClosing(false); setIsOpen(true); }
+      }}>
         <span>{selected?.label || placeholder}</span><i>⌄</i>
       </button>
-      {isOpen && (
+      {(isOpen || isClosing) && (
         <div className="animated-select-menu" role="listbox">
           {normalizedOptions.map((option) => (
-            <button key={option.value} type="button" role="option" aria-selected={String(option.value) === String(value)} className={String(option.value) === String(value) ? "selected" : ""} onClick={() => { onChange(option.value); setIsOpen(false); }}>
+            <button key={option.value} type="button" role="option" aria-selected={String(option.value) === String(value)} className={String(option.value) === String(value) ? "selected" : ""} onClick={() => { onChange(option.value); closeMenu(); }}>
               {option.label}
             </button>
           ))}
@@ -1071,9 +1085,12 @@ export default function App() {
   });
 
   const [maps, setMaps] = useState(initial.maps);
+  const [todayKey, setTodayKey] = useState(() => getActivityDate());
   const [activeMapId, setActiveMapId] = useState(
     initial.activeMap
   );
+  const [todayYear, todayMonth, todayDay] = todayKey.split("-").map(Number);
+  const todayDate = new Date(todayYear, todayMonth - 1, todayDay);
   const [saveStatus, setSaveStatus] = useState("");
   const [heroDemoCells, setHeroDemoCells] = useState(
     () => new Set(Array.from({ length: 98 }, (_, index) => index * 2))
@@ -1372,6 +1389,7 @@ export default function App() {
   const historyReadyRef = useRef(false);
   const historyNavigationRef = useRef(false);
   const mapCellsHoldRef = useRef({ delay: null, interval: null });
+  const gameFillTimersRef = useRef([]);
 
   const requestedTotal = Math.max(
     1,
@@ -1396,7 +1414,7 @@ export default function App() {
   const displayedCompleted = progressCompleted.filter((i) => i < actualTotal && (mapType === "image" || drawingSet.has(i)));
   const displayedTotal = currentStats.total;
   const displayedProgress = currentStats.percent;
-  const dailyPlan = dailyTarget(activeMap?.deadline, displayedTotal, currentStats.filled);
+  const dailyPlan = dailyTarget(activeMap?.deadline, displayedTotal, currentStats.filled, todayDate);
   const newMapCount = newMapGridMode === "manual" ? Number(newMapRows) * Number(newMapCols) : Number(newMapCells);
   const newMapInvalid = !Number.isInteger(newMapCount) || newMapCount < 1 || newMapCount > MAX_CELLS
     || (newMapGridMode === "manual" && (!Number.isInteger(Number(newMapRows)) || !Number.isInteger(Number(newMapCols)) || Number(newMapRows) < 1 || Number(newMapCols) < 1));
@@ -1500,7 +1518,22 @@ export default function App() {
     localStorage.setItem(LANGUAGE_KEY, language);
   }, [language]);
 
+  useEffect(() => {
+    let timer;
+    const scheduleNextDay = () => {
+      const now = new Date();
+      const nextDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      timer = window.setTimeout(() => {
+        setTodayKey(getActivityDate());
+        scheduleNextDay();
+      }, nextDay.getTime() - now.getTime() + 100);
+    };
+    scheduleNextDay();
+    return () => window.clearTimeout(timer);
+  }, []);
+
   useEffect(() => () => stopMapCellsHold(), []);
+  useEffect(() => () => gameFillTimersRef.current.forEach(window.clearTimeout), []);
 
   useEffect(() => {
     if (!historyReadyRef.current) {
@@ -3477,12 +3510,22 @@ export default function App() {
     const cells = gameFillRandom
       ? [...available].sort(() => Math.random() - 0.5)
       : available.sort((a, b) => a - b);
-    const next = new Set(progressCompletedRef.current);
     const added = cells.slice(0, Math.min(count, available.length));
-    added.forEach((index) => next.add(index));
-    animateCells(added);
-    progressCompletedRef.current = next;
-    setProgressCompleted([...next]);
+    gameFillTimersRef.current.forEach(window.clearTimeout);
+    gameFillTimersRef.current = [];
+    const before = new Set(progressCompletedRef.current);
+    const steps = Math.min(12, added.length);
+    const batchSize = Math.max(1, Math.ceil(added.length / Math.max(1, steps)));
+    for (let start = 0; start < added.length; start += batchSize) {
+      const batch = added.slice(start, start + batchSize);
+      const timer = window.setTimeout(() => {
+        batch.forEach((index) => before.add(index));
+        animateCells(batch);
+        progressCompletedRef.current = new Set(before);
+        setProgressCompleted([...before]);
+      }, Math.floor(start / batchSize) * 38);
+      gameFillTimersRef.current.push(timer);
+    }
     recordPaintedCells(added.length);
     setIsGameFillOpen(false);
   }
@@ -5255,7 +5298,7 @@ export default function App() {
                   >{category}</button>
                 ))}
               </div>
-            <p className="maps-drag-hint">Перетаскивайте карты и категории, чтобы менять их порядок. С клавиатуры для карт: Alt + ↑ / ↓.</p>
+            <p className="maps-drag-hint">Перетаскивайте карты и категории, чтобы менять их порядок.</p>
             {mapActionError && <p className="field-error" role="alert">{mapActionError}</p>}
             <div className="maps-list">
               {cardDrag?.dropRect && <div className="map-drop-indicator" aria-hidden="true" style={cardDrag.dropRect} />}
@@ -5277,8 +5320,8 @@ export default function App() {
                     );
 
                   const { filled: done, total: playableTotal, percent: p } = getMapStats(map);
-                  const plan = dailyTarget(map.deadline, playableTotal, done);
-                  const planDoneToday = dailyPlanCompleted(map, playableTotal, done);
+                  const plan = dailyTarget(map.deadline, playableTotal, done, todayDate);
+                  const planDoneToday = dailyPlanCompleted(map, playableTotal, done, todayDate);
 
                   const completedCells = new Set(
                     map.progressCompleted || []
@@ -5389,7 +5432,10 @@ export default function App() {
                                 {map.description}
                               </span>
                             )}
-                            {plan && <span className={`daily-plan${planDoneToday ? " completed" : ""}`}>{planDoneToday ? <><b>✓ План на сегодня выполнен</b><small>Отличный темп — можно продолжить или отдохнуть</small></> : plan}</span>}
+                            {plan && <span className={`daily-plan${planDoneToday ? " completed" : ""}`}>
+                              {planDoneToday && <><b>✓ План на сегодня выполнен</b><small>Отличный темп — можно продолжить или отдохнуть</small></>}
+                              <span className="daily-plan-target">Норма: {plan}</span>
+                            </span>}
                             <span className="map-card-meta">
                               <span>{map.category || "Личное"}</span>
                               {map.deadline && <span>Срок до {map.deadline.split("-").reverse().join(".")}</span>}
@@ -5508,37 +5554,17 @@ export default function App() {
                 {t("name")}
               </label>
 
-              <select
-                className="map-select"
-                value={
-                  activeMapId ||
-                  ""
-                }
-                onChange={(e) => {
-                  const m =
-                    maps.find(
-                      (x) =>
-                        x.id ===
-                        e.target
-                          .value
-                    );
-
-                  if (m) {
-                    openMap(
-                      m
-                    );
-                  }
-                }}
-              >
-                {maps.map((m) => (
-                  <option
-                    key={m.id}
-                    value={m.id}
-                  >
-                    {m.name}
-                  </option>
-                ))}
-              </select>
+              <div className="map-select-control">
+                <AnimatedSelect
+                  ariaLabel={t("name")}
+                  value={activeMapId || ""}
+                  options={maps.map((map) => ({ value: map.id, label: map.name }))}
+                  onChange={(id) => {
+                    const map = maps.find((item) => item.id === id);
+                    if (map) openMap(map);
+                  }}
+                />
+              </div>
 
               <div className="map-actions">
                 <button
@@ -5916,10 +5942,8 @@ export default function App() {
                       undo
                     }
                   >
-                    ↶{" "}
-                    {t(
-                      "undo"
-                    )}
+                    <span className="tool-action-icon" aria-hidden="true">↶</span>
+                    <span>{t("undo")}</span>
                   </button>
 
                   <button
@@ -5928,10 +5952,8 @@ export default function App() {
                       redo
                     }
                   >
-                    ↷{" "}
-                    {t(
-                      "redo"
-                    )}
+                    <span className="tool-action-icon" aria-hidden="true">↷</span>
+                    <span>{t("redo")}</span>
                   </button>
                 </div>
 
@@ -6066,7 +6088,7 @@ export default function App() {
                   <div className="utility-color-section">
                     <div className="utility-color-copy">
                       <strong>Служебные клетки</strong>
-                      <span>Добавляют клетки к количеству карты, когда в рисунке для них уже нет подходящего места. На превью они сливаются с пустым фоном.</span>
+                      <span>Добавляют клетки к количеству карты, когда в рисунке для них уже нет подходящего места. В списке «Мои карты» они выглядят как пустой фон.</span>
                     </div>
                     <button
                       className={`color-item utility-color${drawColor === UTILITY_COLOR ? " selected" : ""}`}

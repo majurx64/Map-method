@@ -3115,6 +3115,32 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .utility-color-copy span { color:#70776e; font-size:10px; line-height:1.35; }
 .utility-color-section .color-item { width:42px !important; height:42px !important; aspect-ratio:1; }
 .utility-color-section .utility-color .color-dot { box-shadow:inset 0 0 0 1px #d1d1cc; }
+
+/* Единая мягкая динамика элементов управления. */
+@keyframes select-menu-leave { to { opacity:0; transform:translateY(-6px) scale(.97); filter:blur(2px); } }
+.animated-select.is-closing .animated-select-menu { pointer-events:none; animation:select-menu-leave 180ms ease both; }
+.deadline-selects { grid-template-columns:minmax(76px,.75fr) minmax(142px,1.35fr) minmax(96px,.9fr); gap:8px; }
+.deadline-selects .animated-select-trigger { position:relative; display:block; height:42px; padding:0 30px 0 10px; }
+.deadline-selects .animated-select-trigger span { display:block; overflow:visible; font-size:14px; line-height:42px; text-align:center; text-overflow:clip; }
+.deadline-selects .animated-select-trigger i { position:absolute; top:50%; right:9px; display:grid !important; width:14px; height:14px; place-items:center; transform:translateY(-50%); }
+.deadline-selects .animated-select.is-open .animated-select-trigger i { transform:translateY(-50%) rotate(180deg); }
+.deadline-selects .animated-select-menu { min-width:100%; }
+.deadline-selects .animated-select-menu button { min-height:36px; font-size:13px; text-align:center; }
+.map-select-control .animated-select-trigger { height:40px; border-radius:7px; }
+.map-select-control .animated-select-menu { z-index:35; max-height:250px; }
+.segmented-control .map-type-btn,.tool-type .map-type-btn,.map-mode-switch button,.tool-stack > .map-type-btn,.game-fill-btn,.game-fill-inline button { transition:color 240ms ease,background 240ms ease,border-color 240ms ease,box-shadow 240ms ease,transform 240ms cubic-bezier(.2,.8,.2,1); }
+.palette-section,.game-fill-control,.grid-side-choice,.image-upload-btn { animation:control-content-in 300ms cubic-bezier(.2,.8,.2,1) both; }
+@keyframes control-content-in { from { opacity:0; transform:translateY(-5px); } }
+.tool-actions .tool-btn { display:grid; grid-template-rows:17px auto; place-items:center; gap:3px; padding:7px 9px; text-align:center; }
+.tool-actions .tool-action-icon { font-size:17px; line-height:1; }
+.map-card .daily-plan-target { display:block; font-size:12px; font-weight:750; }
+.map-card .daily-plan.completed .daily-plan-target { margin-top:4px; padding-top:4px; border-top:1px solid rgba(50,98,79,.18); }
+.utility-color-section { grid-template-columns:minmax(0,1fr) 32px; gap:9px; }
+.utility-color-copy strong { font-size:13px; }
+.utility-color-copy span { font-size:11.5px; line-height:1.45; }
+.utility-color-section .color-item { width:32px !important; height:32px !important; justify-self:end; }
+.left-sidebar .color-list { box-sizing:border-box; padding:4px; margin:-4px; }
+.left-sidebar .color-item,.left-sidebar .custom-color-wrapper { min-width:0; }
 .grid-side-choice { min-width: 0; margin: -2px 0 6px; }
 .grid-side-choice > span { display: block; margin-bottom: 6px; color: #766f65; font-size: 11px; line-height: 1.4; }
 .grid-side-choice > div { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
