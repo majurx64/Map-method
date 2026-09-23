@@ -14,6 +14,7 @@ const CUSTOM_CATEGORIES_KEY = "mm-custom-categories";
 const CATEGORY_ORDER_KEY = "mm-category-order";
 const SCROLL_POSITIONS_KEY = "mm-scroll-positions";
 const ACHIEVEMENT_SESSION_KEY = "mm-celebrated-achievements";
+const UTILITY_COLOR = "#eeeeee";
 
 const BASIC_COLORS = [
   "#111111",
@@ -26,6 +27,7 @@ const BASIC_COLORS = [
   "#007aff",
   "#5856d6",
   "#FF47CA",
+  UTILITY_COLOR,
 ];
 
 const MAP_CATEGORIES = ["Личное", "Здоровье", "Учёба", "Работа", "Творчество"];
@@ -1319,6 +1321,7 @@ export default function App() {
 
   const [selectionTool, setSelectionTool] = useState(false);
   const [selection, setSelection] = useState(null);
+  const [selectionReady, setSelectionReady] = useState(false);
   const selectionGestureRef = useRef(null);
   const panGestureRef = useRef(null);
   const [strokeCounter, setStrokeCounter] = useState(null);
@@ -2622,6 +2625,7 @@ export default function App() {
     }
     if (e.button === 0 && !isGameMode && (selectionTool || e.ctrlKey || selectionContains(selection, i, cols))) {
       if (selectionContains(selection, i, cols)) {
+        setSelectionReady(false);
         artworkDragRef.current = {
           pointerId: e.pointerId, x: e.clientX, y: e.clientY, rect: canvasRef.current.getBoundingClientRect(), area: selection,
           completed: [...completedRef.current], progressCompleted: [...progressCompletedRef.current],
@@ -2629,6 +2633,7 @@ export default function App() {
         };
         setMovingArtwork(true);
       } else {
+        setSelectionReady(false);
         selectionGestureRef.current = { pointerId: e.pointerId, start: i };
         setSelection(selectionFromCells(i, i, cols));
       }
@@ -2732,6 +2737,7 @@ export default function App() {
   function handlePointerUp(e) {
     if (panGestureRef.current?.pointerId === e.pointerId || selectionGestureRef.current?.pointerId === e.pointerId) {
       handlePointerMove(e);
+      if (selectionGestureRef.current?.pointerId === e.pointerId) setSelectionReady(true);
       panGestureRef.current = null;
       selectionGestureRef.current = null;
       canvasRef.current?.releasePointerCapture(e.pointerId);
@@ -2740,6 +2746,7 @@ export default function App() {
     if (artworkDragRef.current?.pointerId === e.pointerId) {
       handlePointerMove(e);
       finishArtworkMove();
+      setSelectionReady(true);
       canvasRef.current?.releasePointerCapture(e.pointerId);
       return;
     }
@@ -2776,11 +2783,15 @@ export default function App() {
 
   function handlePointerCancel() {
     panGestureRef.current = null;
-    if (selectionGestureRef.current) setSelection(null);
+    if (selectionGestureRef.current) {
+      setSelection(null);
+      setSelectionReady(false);
+    }
     selectionGestureRef.current = null;
     if (artworkDragRef.current) {
       setSnapshot(artworkDragRef.current);
       setSelection(artworkDragRef.current.area);
+      setSelectionReady(true);
       artworkDragRef.current = null;
       setMovingArtwork(false);
     }
@@ -5322,7 +5333,9 @@ export default function App() {
                               (
                                 _,
                                 i
-                              ) => (
+                              ) => {
+                                const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[i]) === UTILITY_COLOR;
+                                return (
                                 <span
                                   key={
                                     i
@@ -5333,7 +5346,9 @@ export default function App() {
                                       : ""
                                   }`}
                                   style={{
-                                    backgroundColor: completedCells.has(i)
+                                    backgroundColor: utilityCell
+                                      ? "#deded8"
+                                      : completedCells.has(i)
                                       ? map.colors?.[i] || "#32624f"
                                       : map.mapType === "image" || drawingCells.has(i)
                                         ? map.colors?.[i] || "#dcdcdc"
@@ -5341,10 +5356,11 @@ export default function App() {
                                     // В карточке всегда оставляем полупрозрачный
                                     // ориентир полного изображения, чтобы было понятно,
                                     // какую часть пользователь заполняет в игре.
-                                    opacity: !completedCells.has(i) && (map.mapType === "image" || drawingCells.has(i)) ? 0.3 : 1,
+                                    opacity: utilityCell ? 1 : !completedCells.has(i) && (map.mapType === "image" || drawingCells.has(i)) ? 0.18 : 1,
                                   }}
                                 />
-                              )
+                                );
+                              }
                             )}
                           </div>
                       </div>
@@ -5373,8 +5389,11 @@ export default function App() {
                                 {map.description}
                               </span>
                             )}
-                            {plan && <span className="daily-plan">{plan}</span>}
-                            <span className="map-card-meta">{map.category || "Личное"}{map.deadline ? ` · до ${map.deadline.split("-").reverse().join(".")}` : ""}</span>
+                            {plan && <span className={`daily-plan${planDoneToday ? " completed" : ""}`}>{planDoneToday ? <><b>✓ План на сегодня выполнен</b><small>Отличный темп — можно продолжить или отдохнуть</small></> : plan}</span>}
+                            <span className="map-card-meta">
+                              <span>{map.category || "Личное"}</span>
+                              {map.deadline && <span>Срок до {map.deadline.split("-").reverse().join(".")}</span>}
+                            </span>
                           </div>
 
                           <strong className="map-card-percent">
@@ -6012,7 +6031,7 @@ export default function App() {
                   </div>
 
                   <div className="color-list">
-                    {BASIC_COLORS.map(
+                    {BASIC_COLORS.filter((color) => color !== UTILITY_COLOR).map(
                       (c) => (
                         <button
                           key={c}
@@ -6042,6 +6061,21 @@ export default function App() {
                         </button>
                       )
                     )}
+                  </div>
+
+                  <div className="utility-color-section">
+                    <div className="utility-color-copy">
+                      <strong>Служебные клетки</strong>
+                      <span>Добавляют клетки к количеству карты, когда в рисунке для них уже нет подходящего места. На превью они сливаются с пустым фоном.</span>
+                    </div>
+                    <button
+                      className={`color-item utility-color${drawColor === UTILITY_COLOR ? " selected" : ""}`}
+                      title={`${UTILITY_COLOR} — служебные клетки`}
+                      onClick={() => selectDrawColor(UTILITY_COLOR)}
+                      style={{ "--color": UTILITY_COLOR }}
+                    >
+                      <span className="color-dot" />
+                    </button>
                   </div>
 
                   {customColors.length >
@@ -6289,7 +6323,7 @@ export default function App() {
                         e.preventDefault()
                       }
                     />
-                    {selection && !isGameMode && <div className="grid-selection" style={{ left: `${selection.x / cols * 100}%`, top: `${selection.y / rows * 100}%`, width: `${selection.width / cols * 100}%`, height: `${selection.height / rows * 100}%` }} />}
+                    {selection && !isGameMode && <div className={`grid-selection${selectionReady && !movingArtwork ? " selection-ready" : ""}`} style={{ left: `${selection.x / cols * 100}%`, top: `${selection.y / rows * 100}%`, width: `${selection.width / cols * 100}%`, height: `${selection.height / rows * 100}%` }}>{selectionReady && !movingArtwork && <span>Можно перемещать</span>}</div>}
                   </div>
                 </div>
               </div>
@@ -6331,18 +6365,21 @@ export default function App() {
                     const color =
                       colors[i] ||
                       "#e5e5e5";
+                    const utilityCell = mapType === "free" && normalizeHexColor(colors[i]) === UTILITY_COLOR;
 
                     return (
                       <span
                         key={i}
                         className={cellAnimationsRef.current.has(i) ? "cell-pop" : ""}
                         style={{
-                          backgroundColor: active
+                          backgroundColor: utilityCell
+                            ? "#eeeeea"
+                            : active
                             ? color
                             : ((mapType === "image" && showImage && image) || (mapType === "free" && drawingSet.has(i)))
                               ? color
                               : "#eeeeea",
-                          opacity: !active && ((mapType === "image" && showImage && image) || (mapType === "free" && drawingSet.has(i))) ? 0.35 : 1,
+                          opacity: utilityCell ? 1 : !active && ((mapType === "image" && showImage && image) || (mapType === "free" && drawingSet.has(i))) ? 0.2 : 1,
                         }}
                       />
                     );
