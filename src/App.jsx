@@ -10,6 +10,7 @@ const LANGUAGE_KEY = "mm-language";
 const CURRENT_SCREEN_KEY = "mm-current-screen";
 const CUSTOM_COLORS_KEY = "mm-custom-colors";
 const CUSTOM_CATEGORIES_KEY = "mm-custom-categories";
+const CATEGORY_ORDER_KEY = "mm-category-order";
 const SCROLL_POSITIONS_KEY = "mm-scroll-positions";
 const ACHIEVEMENT_SESSION_KEY = "mm-celebrated-achievements";
 
@@ -772,6 +773,19 @@ function getActivityDate(date = new Date()) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
+function dailyPlanCompleted(map, total, filled, today = new Date()) {
+  if (!map?.deadline || !total) return false;
+  const [year, month, day] = map.deadline.split("-").map(Number);
+  const end = Date.UTC(year, month - 1, day);
+  const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const days = Math.round((end - start) / 86400000) + 1;
+  if (!Number.isFinite(end) || days <= 0) return false;
+  const todayKey = getActivityDate(today);
+  const paintedToday = (map.activityLog || []).filter((entry) => entry.date === todayKey).reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
+  const target = Math.ceil(Math.max(0, total - filled + paintedToday) / days);
+  return target > 0 && paintedToday >= target;
+}
+
 function normalizeActivityLog(value) {
   const totals = new Map();
 
@@ -1108,7 +1122,11 @@ export default function App() {
   const [mapActionError, setMapActionError] = useState("");
   const [cardDrag, setCardDrag] = useState(null);
   const cardDragRef = useRef(null);
+  const [cardSettling, setCardSettling] = useState(null);
   const suppressCardClick = useRef(false);
+  const [categoryDrag, setCategoryDrag] = useState(null);
+  const categoryDragRef = useRef(null);
+  const suppressCategoryClick = useRef(false);
   const artworkDragRef = useRef(null);
   const [movingArtwork, setMovingArtwork] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 600, height: 500 });
@@ -1211,6 +1229,10 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem(CUSTOM_CATEGORIES_KEY) || "[]").filter((item) => typeof item === "string"); }
     catch { return []; }
   });
+  const [categoryOrder, setCategoryOrder] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(CATEGORY_ORDER_KEY) || "[]").filter((item) => typeof item === "string"); }
+    catch { return []; }
+  });
 
   const [
     newMapType,
@@ -1275,7 +1297,8 @@ export default function App() {
     setMapZoom,
   ] = useState(1);
 
-  const allCategories = [...new Set([...MAP_CATEGORIES, ...customCategories])];
+  const availableCategories = [...new Set([...MAP_CATEGORIES, ...customCategories])];
+  const allCategories = [...categoryOrder.filter((category) => availableCategories.includes(category)), ...availableCategories.filter((category) => !categoryOrder.includes(category))];
 
   const [
     isAccountOpen,
@@ -1500,6 +1523,23 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(customCategories));
   }, [customCategories]);
+
+  useEffect(() => {
+    localStorage.setItem(CATEGORY_ORDER_KEY, JSON.stringify(allCategories));
+  }, [categoryOrder, customCategories]);
+
+  useLayoutEffect(() => {
+    if (!cardSettling) return;
+    const element = document.querySelector(`[data-map-id="${CSS.escape(cardSettling.id)}"]`);
+    if (!element) { setCardSettling(null); return; }
+    const destination = element.getBoundingClientRect();
+    const animation = element.animate([
+      { transform: `translate(${cardSettling.left - destination.left}px, ${cardSettling.top - destination.top}px) rotate(1deg)` },
+      { transform: "translate(0, 0) rotate(0deg)" },
+    ], { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" });
+    animation.onfinish = () => setCardSettling(null);
+    return () => animation.cancel();
+  }, [cardSettling]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -3108,6 +3148,16 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
+    const heldDirections = new Set();
+    let panFrame = 0;
+    const pan = () => {
+      if (heldDirections.size && !isDrawingRef.current && !artworkDragRef.current && !selectionGestureRef.current && !panGestureRef.current) {
+        const horizontal = Number(heldDirections.has("KeyD") || heldDirections.has("ArrowRight")) - Number(heldDirections.has("KeyA") || heldDirections.has("ArrowLeft"));
+        const vertical = Number(heldDirections.has("KeyS") || heldDirections.has("ArrowDown")) - Number(heldDirections.has("KeyW") || heldDirections.has("ArrowUp"));
+        viewportRef.current?.scrollBy({ left: horizontal * 9, top: vertical * 9, behavior: "instant" });
+      }
+      panFrame = heldDirections.size ? window.requestAnimationFrame(pan) : 0;
+    };
     const f = (e) => {
       if (screen !== "editor" || isCreateOpen || isRenameOpen || isDeleteOpen || isAccountOpen || isLanguageOpen || e.target?.isContentEditable) return;
       if (
@@ -3122,11 +3172,11 @@ export default function App() {
       }
 
       if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-        const directions = { KeyW: [0, -1], ArrowUp: [0, -1], KeyS: [0, 1], ArrowDown: [0, 1], KeyA: [-1, 0], ArrowLeft: [-1, 0], KeyD: [1, 0], ArrowRight: [1, 0] };
-        const direction = directions[e.code];
-        if (direction && !e.target?.closest('[role="dialog"], [role="listbox"], [role="menu"]')) {
+        const directionKeys = ["KeyW", "ArrowUp", "KeyS", "ArrowDown", "KeyA", "ArrowLeft", "KeyD", "ArrowRight"];
+        if (directionKeys.includes(e.code) && !e.target?.closest('[role="dialog"], [role="listbox"], [role="menu"]')) {
           e.preventDefault();
-          if (!isDrawingRef.current && !artworkDragRef.current && !selectionGestureRef.current && !panGestureRef.current) viewportRef.current?.scrollBy({ left: direction[0] * 40, top: direction[1] * 40, behavior: "instant" });
+          heldDirections.add(e.code);
+          if (!panFrame) panFrame = window.requestAnimationFrame(pan);
           return;
         }
       }
@@ -3152,18 +3202,27 @@ export default function App() {
       }
     };
 
+    const release = (e) => heldDirections.delete(e.code);
+    const releaseAll = () => heldDirections.clear();
+
     window.addEventListener(
       "keydown",
       f,
       true
     );
+    window.addEventListener("keyup", release, true);
+    window.addEventListener("blur", releaseAll);
 
-    return () =>
+    return () => {
       window.removeEventListener(
         "keydown",
         f,
         true
       );
+      window.removeEventListener("keyup", release, true);
+      window.removeEventListener("blur", releaseAll);
+      window.cancelAnimationFrame(panFrame);
+    };
   });
 
   useEffect(() => {
@@ -3921,14 +3980,16 @@ export default function App() {
     }
   }
 
-  function reorderCards(id, targetId) {
-    if (id === targetId) return;
+  function reorderCardsToIndex(id, targetIndex) {
     const ordered = [...maps].sort((a, b) => a.order - b.order);
-    const from = ordered.findIndex((map) => map.id === id);
-    const to = ordered.findIndex((map) => map.id === targetId);
-    if (from < 0 || to < 0) return;
-    ordered.splice(to, 0, ...ordered.splice(from, 1));
-    const next = ordered.map((map, order) => ({ ...map, order }));
+    const visible = ordered.filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
+    const from = visible.findIndex((map) => map.id === id);
+    if (from < 0) return;
+    const rearranged = visible.filter((map) => map.id !== id);
+    rearranged.splice(Math.max(0, Math.min(rearranged.length, targetIndex)), 0, visible[from]);
+    let visibleIndex = 0;
+    const next = ordered.map((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter ? rearranged[visibleIndex++] : map)
+      .map((map, order) => ({ ...map, order }));
     const active = next.find((map) => map.id === activeMapId);
     if (active) activeMapRef.current = active;
     setMaps(next);
@@ -3940,10 +4001,62 @@ export default function App() {
     }
   }
 
+  function reorderCards(id, targetId) {
+    const visible = [...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
+    const targetIndex = visible.findIndex((map) => map.id === targetId);
+    if (targetIndex >= 0) reorderCardsToIndex(id, targetIndex);
+  }
+
+  function reorderCategories(id, targetId) {
+    if (id === targetId) return;
+    const next = [...allCategories];
+    const from = next.indexOf(id), to = next.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    next.splice(to, 0, ...next.splice(from, 1));
+    setCategoryOrder(next);
+  }
+
+  function beginCategoryDrag(event, category) {
+    if (event.button !== 0) return;
+    const element = event.currentTarget;
+    const drag = { category, pointerId: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, target: category, active: false };
+    categoryDragRef.current = drag;
+    suppressCategoryClick.current = false;
+    const move = (e) => {
+      if (e.pointerId !== drag.pointerId) return;
+      if (!drag.active) {
+        if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) <= 6) return;
+        drag.active = true;
+        suppressCategoryClick.current = true;
+        element.setPointerCapture(drag.pointerId);
+      }
+      e.preventDefault();
+      drag.dx = e.clientX - drag.x;
+      const target = document.elementsFromPoint(e.clientX, e.clientY).map((node) => node.closest("[data-category]")).find((node) => node?.dataset.category !== category);
+      if (target) drag.target = target.dataset.category;
+      setCategoryDrag({ ...drag });
+    };
+    const finish = (e) => {
+      if (e.pointerId !== drag.pointerId) return;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      if (drag.active && e.type !== "pointercancel") reorderCategories(category, drag.target);
+      if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
+      categoryDragRef.current = null;
+      setCategoryDrag(null);
+      window.setTimeout(() => { suppressCategoryClick.current = false; }, 0);
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  }
+
   function beginCardDrag(event, id) {
     if (event.button !== 0 || event.target.closest("button, input, textarea, a") || deletingIdsRef.current.has(id)) return;
     const element = event.currentTarget;
-    const drag = { id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, dy: 0, targetId: id, active: false };
+    const visible = [...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
+    const drag = { id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, scrollX: window.scrollX, scrollY: window.scrollY, dx: 0, dy: 0, targetIndex: visible.findIndex((map) => map.id === id), dropRect: null, active: false };
     cardDragRef.current = drag;
     suppressCardClick.current = false;
     const activate = () => {
@@ -3963,9 +4076,21 @@ export default function App() {
         activate();
       }
       e.preventDefault();
-      drag.dx = e.clientX - drag.x; drag.dy = e.clientY - drag.y;
-      const target = document.elementsFromPoint(e.clientX, e.clientY).map((node) => node.closest("[data-map-id]")).find((node) => node && node.dataset.mapId !== id);
-      if (target && !deletingIdsRef.current.has(target.dataset.mapId)) drag.targetId = target.dataset.mapId;
+      drag.dx = e.clientX - drag.x + window.scrollX - drag.scrollX;
+      drag.dy = e.clientY - drag.y + window.scrollY - drag.scrollY;
+      const list = element.closest(".maps-list");
+      const listRect = list.getBoundingClientRect();
+      const style = getComputedStyle(list);
+      const columns = style.gridTemplateColumns.split(" ").length;
+      const columnGap = parseFloat(style.columnGap) || 0;
+      const rowGap = parseFloat(style.rowGap) || 0;
+      const cellWidth = (listRect.width - columnGap * (columns - 1)) / columns;
+      const cellHeight = element.offsetHeight;
+      const column = Math.max(0, Math.min(columns - 1, Math.floor((e.clientX - listRect.left) / (cellWidth + columnGap))));
+      const row = Math.max(0, Math.floor((e.clientY - listRect.top) / (cellHeight + rowGap)));
+      const visibleCount = list.querySelectorAll("[data-map-id]").length;
+      drag.targetIndex = Math.min(visibleCount - 1, row * columns + column);
+      drag.dropRect = { left: listRect.left + column * (cellWidth + columnGap), top: listRect.top + row * (cellHeight + rowGap), width: cellWidth, height: cellHeight };
       if (e.clientY < 65) window.scrollBy(0, -14);
       if (e.clientY > window.innerHeight - 65) window.scrollBy(0, 14);
       setCardDrag({ ...drag });
@@ -3976,7 +4101,11 @@ export default function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
-      if (drag.active && e.type !== "pointercancel") reorderCards(id, drag.targetId);
+      const fromRect = element.getBoundingClientRect();
+      if (drag.active && e.type !== "pointercancel") {
+        reorderCardsToIndex(id, drag.targetIndex);
+        setCardSettling({ id, left: fromRect.left, top: fromRect.top });
+      }
       if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
       cardDragRef.current = null;
       setCardDrag(null);
@@ -4077,9 +4206,10 @@ export default function App() {
       <header className="header">
         <button
           className="back-link"
-          onClick={() =>
-            setScreen("maps")
-          }
+          onClick={() => {
+            setMapCategoryFilter("Все");
+            setScreen("maps");
+          }}
         >
           ← {t("myMaps")}
         </button>
@@ -5091,12 +5221,23 @@ export default function App() {
             <>
               <div className="maps-filter" role="group" aria-label="Фильтр карт">
                 {["Все", ...allCategories].map((category) => (
-                  <button key={category} className={mapCategoryFilter === category ? "active" : ""} onClick={() => setMapCategoryFilter(category)}>{category}</button>
+                  <button
+                    key={category}
+                    data-category={category === "Все" ? undefined : category}
+                    className={`${mapCategoryFilter === category ? "active" : ""}${categoryDrag?.category === category ? " is-dragging" : ""}${categoryDrag?.target === category && categoryDrag.category !== category ? " is-drop-target" : ""}`}
+                    onPointerDown={category === "Все" ? undefined : (event) => beginCategoryDrag(event, category)}
+                    onClick={() => {
+                      if (suppressCategoryClick.current) return;
+                      setMapCategoryFilter(category);
+                    }}
+                    style={categoryDrag?.category === category ? { transform: `translateX(${categoryDrag.dx}px)` } : undefined}
+                  >{category}</button>
                 ))}
               </div>
-            <p className="maps-drag-hint">Удерживайте карту, чтобы переместить её. С клавиатуры: Alt + ↑ / ↓.</p>
+            <p className="maps-drag-hint">Перетаскивайте карты и категории, чтобы менять их порядок. С клавиатуры для карт: Alt + ↑ / ↓.</p>
             {mapActionError && <p className="field-error" role="alert">{mapActionError}</p>}
             <div className="maps-list">
+              {cardDrag?.dropRect && <div className="map-drop-indicator" aria-hidden="true" style={cardDrag.dropRect} />}
               {[...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
                 (map) => {
                   const d =
@@ -5116,6 +5257,7 @@ export default function App() {
 
                   const { filled: done, total: playableTotal, percent: p } = getMapStats(map);
                   const plan = dailyTarget(map.deadline, playableTotal, done);
+                  const planDoneToday = dailyPlanCompleted(map, playableTotal, done);
 
                   const completedCells = new Set(
                     map.progressCompleted || []
@@ -5126,7 +5268,7 @@ export default function App() {
 
                   return (
                     <article
-                      className={`map-card${deletingIds.includes(map.id) ? " is-deleting" : ""}${cardDrag?.id === map.id ? " is-dragging" : ""}${cardDrag?.targetId === map.id && cardDrag.id !== map.id ? " is-drop-target" : ""}`}
+                      className={`map-card${deletingIds.includes(map.id) ? " is-deleting" : ""}${cardDrag?.id === map.id ? " is-dragging" : ""}${cardSettling?.id === map.id ? " is-settling" : ""}${planDoneToday ? " daily-plan-complete" : ""}`}
                       data-map-id={map.id}
                       tabIndex={0}
                       aria-label={`Карта: ${map.name}`}
