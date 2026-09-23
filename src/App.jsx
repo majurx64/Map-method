@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "./App.css";
 import { supabase } from "./lib/supabase";
@@ -14,6 +14,7 @@ const CUSTOM_CATEGORIES_KEY = "mm-custom-categories";
 const CATEGORY_ORDER_KEY = "mm-category-order";
 const SCROLL_POSITIONS_KEY = "mm-scroll-positions";
 const ACHIEVEMENT_SESSION_KEY = "mm-celebrated-achievements";
+const PRIVATE_LIBRARY_KEY = "mm-private-library";
 const UTILITY_COLOR = "#eeeeee";
 
 const BASIC_COLORS = [
@@ -36,8 +37,40 @@ const LANGUAGE_OPTIONS = [
   ["fr", "Français"], ["it", "Italiano"], ["pt", "Português"], ["zh", "中文"], ["ko", "한국어"],
 ];
 
-const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27];
+const DEMO_PYRAMID_ROWS = [1, 3, 5, 7, 9, 11, 13, 15, 17];
 const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count, 0);
+
+function createLibraryTemplate(name, lines) {
+  const rows = lines.length;
+  const cols = Math.max(...lines.map((line) => line.length));
+  const completed = [];
+  const colors = [];
+  lines.forEach((line, row) => [...line.padEnd(cols)].forEach((cell, column) => {
+    if (cell !== "#") return;
+    const index = row * cols + column;
+    completed.push(index);
+    colors[index] = "#111111";
+  }));
+  return {
+    id: `public-${name}`,
+    name,
+    mapType: "free",
+    gridMode: "manual",
+    totalCells: String(rows * cols),
+    manualRows: String(rows),
+    manualCols: String(cols),
+    completed,
+    progressCompleted: [],
+    colors,
+    category: "Творчество",
+  };
+}
+
+const PUBLIC_LIBRARY = [
+  createLibraryTemplate("Сердце", [" ##   ## ", "#### ####", "#########", " ####### ", "  #####  ", "   ###   ", "    #    "]),
+  createLibraryTemplate("Гора", ["      #      ", "     ###     ", "    #####    ", "   ### ###   ", "  ###   ###  ", " ###     ### ", "#############"]),
+  createLibraryTemplate("Галочка", ["          ##", "         ###", "##      ### ", "###    ###  ", " ###  ###   ", "  ######    ", "   ####     "]),
+];
 
 const translations = {
   ru: {
@@ -954,6 +987,46 @@ function mapFromSupabaseRow(row) {
   });
 }
 
+const MapCardGrid = memo(function MapCardGrid({ map, dimensions }) {
+  const completedCells = new Set(map.progressCompleted || []);
+  const drawingCells = new Set(map.completed || []);
+
+  return (
+    <div
+      className="map-card-grid"
+      style={{
+        gridTemplateColumns: `repeat(${dimensions.cols},minmax(0,1fr))`,
+        aspectRatio: `${dimensions.cols}/${dimensions.rows}`,
+      }}
+    >
+      {Array.from({ length: dimensions.actualTotal }, (_, index) => {
+        const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
+        const filled = completedCells.has(index);
+        const isDrawingCell = map.mapType === "image" || drawingCells.has(index);
+        return (
+          <span
+            key={index}
+            className={`map-card-cell${filled ? " filled" : ""}`}
+            style={{
+              backgroundColor: utilityCell
+                ? "#deded8"
+                : filled
+                  ? map.colors?.[index] || "#32624f"
+                  : isDrawingCell
+                    ? map.colors?.[index] || "#dcdcdc"
+                    : "#deded8",
+              opacity: utilityCell ? 1 : !filled && isDrawingCell ? 0.18 : 1,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}, (previous, next) => previous.map === next.map
+  && previous.dimensions.cols === next.dimensions.cols
+  && previous.dimensions.rows === next.dimensions.rows
+  && previous.dimensions.actualTotal === next.dimensions.actualTotal);
+
 
 
 function getLineCells(a, b, cols, rows) {
@@ -1021,7 +1094,7 @@ function AnimatedSelect({ value, onChange, options, placeholder, ariaLabel }) {
         if (isOpen) closeMenu();
         else { window.clearTimeout(closeTimerRef.current); setIsClosing(false); setIsOpen(true); }
       }}>
-        <span>{selected?.label || placeholder}</span><i>⌄</i>
+        <span>{selected?.label || placeholder}</span><i aria-hidden="true" />
       </button>
       {(isOpen || isClosing) && (
         <div className="animated-select-menu" role="listbox">
@@ -1113,6 +1186,7 @@ export default function App() {
       "maps",
       "editor",
       "account",
+      "library",
       "auth",
     ].includes(saved)
       ? saved
@@ -1120,6 +1194,13 @@ export default function App() {
   });
 
   const [maps, setMaps] = useState(initial.maps);
+  const [privateLibrary, setPrivateLibrary] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(PRIVATE_LIBRARY_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  });
   const [todayKey, setTodayKey] = useState(() => getActivityDate());
   const [activeMapId, setActiveMapId] = useState(
     initial.activeMap
@@ -1358,7 +1439,7 @@ export default function App() {
     if (!categoryDrag) return undefined;
     if (categoryDrag.category === category) return `translateX(${categoryDrag.dx}px)`;
     const from = allCategories.indexOf(categoryDrag.category);
-    const to = allCategories.indexOf(categoryDrag.target);
+    const to = categoryDrag.target === "Все" ? 0 : allCategories.indexOf(categoryDrag.target);
     const index = allCategories.indexOf(category);
     if (from < to && index > from && index <= to) return `translateX(-${categoryDrag.width + 7}px)`;
     if (from > to && index >= to && index < from) return `translateX(${categoryDrag.width + 7}px)`;
@@ -1382,6 +1463,7 @@ export default function App() {
   const canvasRef = useRef(null);
   const viewportRef = useRef(null);
   const accountRef = useRef(null);
+  const languageRef = useRef(null);
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
   const heroNotePointerRef = useRef(null);
@@ -1518,15 +1600,85 @@ export default function App() {
     { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: maps.length, goal: 1 },
     { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: maps.length, goal: 3 },
     { icon: "▦", title: "Картограф", text: "Создать 5 карт", current: maps.length, goal: 5 },
-    { icon: "●", title: "Первый шаг", text: "Закрасить 100 клеток", current: accountPaintedCells, goal: 100 },
+    { icon: "◇", title: "Архивариус", text: "Создать 10 карт", current: maps.length, goal: 10 },
+    { icon: "●", title: "Первый шаг", text: "Закрасить 50 клеток", current: accountPaintedCells, goal: 50 },
     { icon: "◆", title: "Ритм", text: "Закрасить 200 клеток", current: accountPaintedCells, goal: 200 },
     { icon: "✺", title: "Большая картина", text: "Закрасить 500 клеток", current: accountPaintedCells, goal: 500 },
     { icon: "✹", title: "Тысяча шагов", text: "Закрасить 1 000 клеток", current: accountPaintedCells, goal: 1000 },
     { icon: "◉", title: "Масштаб", text: "Закрасить 2 000 клеток", current: accountPaintedCells, goal: 2000 },
     { icon: "✦", title: "Своя вселенная", text: "Закрасить 5 000 клеток", current: accountPaintedCells, goal: 5000 },
-    { icon: "☼", title: "Ритм недели", text: "Закрасить клетки в 7 дней", current: accountHistory.filter((item) => item.cells > 0).length, goal: 7 },
+    { icon: "✧", title: "Дальний путь", text: "Закрасить 10 000 клеток", current: accountPaintedCells, goal: 10000 },
+    { icon: "☽", title: "Три дня в ритме", text: "Отмечать прогресс 3 дня за неделю", current: accountHistory.filter((item) => item.cells > 0).length, goal: 3 },
+    { icon: "☼", title: "Ритм недели", text: "Отмечать прогресс каждый день в течение 7 дней", current: accountHistory.filter((item) => item.cells > 0).length, goal: 7 },
+    { icon: "♟", title: "Первый финиш", text: "Полностью завершить 1 карту", current: accountFinishedMaps, goal: 1 },
     { icon: "♜", title: "Финиш", text: "Завершить 3 карты", current: accountFinishedMaps, goal: 3 },
+    { icon: "♛", title: "Серия побед", text: "Завершить 5 карт", current: accountFinishedMaps, goal: 5 },
   ];
+  const libraryUserKey = user?.id || "guest";
+  const personalLibrary = Array.isArray(privateLibrary[libraryUserKey]) ? privateLibrary[libraryUserKey] : [];
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRIVATE_LIBRARY_KEY, JSON.stringify(privateLibrary));
+    } catch (error) {
+      console.warn("Не удалось сохранить личную библиотеку:", error);
+    }
+  }, [privateLibrary]);
+
+  function saveMapToLibrary(map) {
+    const dimensions = getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols);
+    const item = normalizeMap({
+      ...map,
+      id: createMapId(),
+      mapType: "free",
+      image: null,
+      showImage: false,
+      completed: map.mapType === "image"
+        ? Array.from({ length: dimensions.actualTotal }, (_, index) => index)
+        : map.completed,
+      progressCompleted: [],
+      progressExtra: 0,
+      modeDrafts: {},
+    });
+    setPrivateLibrary((current) => ({
+      ...current,
+      [libraryUserKey]: [...(current[libraryUserKey] || []), item],
+    }));
+  }
+
+  function removeLibraryItem(id) {
+    setPrivateLibrary((current) => ({
+      ...current,
+      [libraryUserKey]: (current[libraryUserKey] || []).filter((item) => item.id !== id),
+    }));
+  }
+
+  async function createMapFromLibrary(item) {
+    const map = normalizeMap({
+      ...item,
+      id: createMapId(),
+      order: maps.length,
+      name: item.name,
+      progressCompleted: [],
+      progressExtra: 0,
+      activityLog: [],
+      dailyPlanDoneOn: "",
+      modeDrafts: {},
+    });
+    if (user) {
+      const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(map, user.id), { onConflict: "id" });
+      if (error) {
+        setMapActionError("Не удалось добавить рисунок из библиотеки.");
+        return;
+      }
+    }
+    const next = [...maps, map];
+    setMaps(next);
+    saveMapsLocally(next);
+    setActiveMapId(map.id);
+    openMap(map);
+    setScreen("editor");
+  }
 
   useEffect(() => {
     if (screen !== "account") return;
@@ -1726,7 +1878,7 @@ export default function App() {
       }
       if (screen === "editor") {
         setScreen("maps");
-      } else if (["maps", "account", "auth"].includes(screen)) {
+      } else if (["maps", "account", "library", "auth"].includes(screen)) {
         setScreen("home");
       }
     };
@@ -2215,6 +2367,12 @@ export default function App() {
       ) {
         setIsAccountOpen(false);
       }
+      if (
+        languageRef.current &&
+        !languageRef.current.contains(e.target)
+      ) {
+        setIsLanguageOpen(false);
+      }
     };
 
     document.addEventListener(
@@ -2332,6 +2490,20 @@ export default function App() {
 
   function setSnapshot(s, target = "drawing") {
     setSelection(null);
+    if (target === "grid") {
+      setGridMode(s.gridMode);
+      setTotalCells(String(s.totalCells));
+      setManualRows(String(s.manualRows));
+      setManualCols(String(s.manualCols));
+      completedRef.current = new Set(s.completed);
+      progressCompletedRef.current = new Set(s.progressCompleted);
+      colorsRef.current = [...s.colors];
+      setCompleted([...s.completed]);
+      setProgressCompleted([...s.progressCompleted]);
+      setColors([...s.colors]);
+      if (s.imageOffset) setImageOffset(s.imageOffset);
+      return;
+    }
     if (s.progressCompleted) {
       progressCompletedRef.current = new Set(s.progressCompleted);
       setProgressCompleted(s.progressCompleted);
@@ -3543,18 +3715,32 @@ export default function App() {
     const before = { rows, cols, actualTotal };
     const after = getGridDimensions(count, imageRatio, mode, nextRows, nextCols);
     const { dx, dy } = sides ? gridResizeShift(before, after, sides.rows, sides.cols) : { dx: 0, dy: 0 };
-    setCompletedDirectly(remapCells([...completedRef.current], before, after, dx, dy));
+    const beforeSnapshot = {
+      gridMode,
+      totalCells,
+      manualRows,
+      manualCols,
+      completed: [...completedRef.current],
+      progressCompleted: [...progressCompletedRef.current],
+      colors: [...colorsRef.current],
+      imageOffset: normalizeImageOffset(imageOffset),
+    };
+    const nextCompleted = remapCells([...completedRef.current], before, after, dx, dy);
+    setCompletedDirectly(nextCompleted);
     const nextProgress = remapCells([...progressCompletedRef.current], before, after, dx, dy);
     progressCompletedRef.current = new Set(nextProgress);
     setProgressCompleted(nextProgress);
+    let nextColors = [...colorsRef.current];
+    let nextImageOffset = normalizeImageOffset(imageOffset);
     if (mapType === "free" || imageOffset.cellsEdited) {
-      const nextColors = remapColors(colorsRef.current, before, after, dx, dy);
+      nextColors = remapColors(colorsRef.current, before, after, dx, dy);
       colorsRef.current = nextColors;
       setColors(nextColors);
     } else if (image) {
       const offset = sides
         ? resizeImageOffset(sourceImageRef.current?.width || imageRatio, sourceImageRef.current?.height || 1, before, imageOffset, dx, dy)
         : { x: imageOffset.x, y: imageOffset.y };
+      nextImageOffset = offset;
       setImageOffset(offset);
       processImage(image, imageRatio, after.cols, after.rows, offset, after.actualTotal);
     }
@@ -3562,7 +3748,22 @@ export default function App() {
     setTotalCells(String(count));
     setManualRows(String(after.rows));
     setManualCols(String(after.cols));
-    clearHistory();
+    undoStackRef.current.push({
+      before: beforeSnapshot,
+      after: {
+        gridMode: mode,
+        totalCells: String(count),
+        manualRows: String(after.rows),
+        manualCols: String(after.cols),
+        completed: nextCompleted,
+        progressCompleted: nextProgress,
+        colors: nextColors,
+        imageOffset: nextImageOffset,
+      },
+      target: "grid",
+    });
+    if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+    redoStackRef.current = [];
   }
 
   function handleGridModeChange(mode) {
@@ -4156,7 +4357,7 @@ export default function App() {
   function reorderCategories(id, targetId) {
     if (id === targetId) return;
     const next = [...allCategories];
-    const from = next.indexOf(id), to = next.indexOf(targetId);
+    const from = next.indexOf(id), to = targetId === "Все" ? 0 : next.indexOf(targetId);
     if (from < 0 || to < 0) return;
     next.splice(to, 0, ...next.splice(from, 1));
     setCategoryOrder(next);
@@ -4234,12 +4435,21 @@ export default function App() {
       const cellHeight = element.offsetHeight;
       const column = Math.max(0, Math.min(columns - 1, Math.floor((e.clientX - listRect.left) / (cellWidth + columnGap))));
       const row = Math.max(0, Math.floor((e.clientY - listRect.top) / (cellHeight + rowGap)));
-      const visibleCount = list.querySelectorAll("[data-map-id]").length;
+      const cards = [...list.querySelectorAll("[data-map-id]")];
+      const visibleCount = cards.length;
       drag.targetIndex = Math.min(visibleCount - 1, row * columns + column);
-      drag.dropRect = { left: column * (cellWidth + columnGap), top: row * (cellHeight + rowGap), width: cellWidth, height: cellHeight };
+      const targetCard = cards[drag.targetIndex];
+      drag.dropRect = targetCard
+        ? { left: targetCard.offsetLeft, top: targetCard.offsetTop, width: targetCard.offsetWidth, height: targetCard.offsetHeight }
+        : { left: column * (cellWidth + columnGap), top: row * (cellHeight + rowGap), width: cellWidth, height: cellHeight };
       if (e.clientY < 65) window.scrollBy(0, -14);
       if (e.clientY > window.innerHeight - 65) window.scrollBy(0, 14);
-      setCardDrag({ ...drag });
+      if (!drag.frame) {
+        drag.frame = window.requestAnimationFrame(() => {
+          drag.frame = 0;
+          setCardDrag({ ...drag });
+        });
+      }
     };
     const finish = (e) => {
       if (e.pointerId !== drag.pointerId) return;
@@ -4247,6 +4457,7 @@ export default function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
+      if (drag.frame) window.cancelAnimationFrame(drag.frame);
       const fromRect = element.getBoundingClientRect();
       if (drag.active && e.type !== "pointercancel") {
         reorderCardsToIndex(id, drag.targetIndex);
@@ -4360,11 +4571,14 @@ export default function App() {
           ← {t("myMaps")}
         </button>
 
-        <button
+        <a
+          href="/"
           className="editor-brand"
-          onClick={() =>
-            setScreen("home")
-          }
+          onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            setScreen("home");
+          }}
         >
           <span className="brand-mark">
             MM
@@ -4377,6 +4591,8 @@ export default function App() {
               ? `MM / ${t(
                   "myMaps"
                 )}`
+              : screen === "library"
+              ? "MM / Библиотека"
               : screen ===
                 "account"
               ? `MM / ${t(
@@ -4384,7 +4600,7 @@ export default function App() {
                 )}`
               : t("editor")}
           </span>
-        </button>
+        </a>
 
         <div className="header-actions">
           {screen === "home" && (
@@ -4395,9 +4611,9 @@ export default function App() {
               Как это работает
             </button>
           )}
-          <div className={`language-menu${isLanguageOpen ? " is-open" : ""}`}>
-            <button type="button" className="language-select" onClick={() => setIsLanguageOpen((open) => !open)}>
-              {LANGUAGE_OPTIONS.find(([code]) => code === language)?.[1] || "Русский"} <span className="menu-chevron">⌄</span>
+          <div ref={languageRef} className={`language-menu${isLanguageOpen ? " is-open" : ""}`}>
+            <button type="button" className="language-select" onClick={() => { setIsAccountOpen(false); setIsLanguageOpen((open) => !open); }}>
+              {LANGUAGE_OPTIONS.find(([code]) => code === language)?.[1] || "Русский"} <span className="menu-chevron" aria-hidden="true" />
             </button>
             {isLanguageOpen && (
               <div className="language-popover">
@@ -4443,11 +4659,10 @@ export default function App() {
             >
               <button
                 type="button"
-                onClick={() =>
-                  setIsAccountOpen(
-                    (v) => !v
-                  )
-                }
+                onClick={() => {
+                  setIsLanguageOpen(false);
+                  setIsAccountOpen((v) => !v);
+                }}
                 style={{
                   display: "flex",
                   alignItems:
@@ -4510,7 +4725,7 @@ export default function App() {
                   {accountName}
                 </span>
 
-                <span className="menu-chevron">⌄</span>
+                <span className="menu-chevron" aria-hidden="true" />
               </button>
 
               {isAccountOpen && (
@@ -4615,6 +4830,25 @@ export default function App() {
                       "account"
                     )}
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAccountOpen(false);
+                      setScreen("library");
+                    }}
+                    className="account-popover-action"
+                  >
+                    ▧ Библиотека рисунков
+                  </button>
+
+                  <a
+                    className="account-popover-action"
+                    href="mailto:majurx64@yandex.ru?subject=Map%20Method%20%E2%80%94%20%D0%BE%D0%B1%D1%80%D0%B0%D1%82%D0%BD%D0%B0%D1%8F%20%D1%81%D0%B2%D1%8F%D0%B7%D1%8C"
+                    onClick={() => setIsAccountOpen(false)}
+                  >
+                    ✉ Обратная связь
+                  </a>
 
                   <button
                     type="button"
@@ -4771,6 +5005,10 @@ export default function App() {
             <div className="pyramid-card">
               <div className="pyramid-card-meta">
                 <span>Каждая клетка — маленькое действие</span>
+                <span>{heroDemoCells.size} из {DEMO_PYRAMID_TOTAL}</span>
+              </div>
+              <div className="pyramid-progress" aria-label={`Прогресс пирамиды: ${heroDemoCells.size} из ${DEMO_PYRAMID_TOTAL}`}>
+                <i style={{ width: `${(heroDemoCells.size / DEMO_PYRAMID_TOTAL) * 100}%` }} />
               </div>
               {showDemoVictory && (
                 <div className="demo-victory" role="status">
@@ -5289,6 +5527,66 @@ export default function App() {
         </section>
       )}
 
+      {screen === "library" && (
+        <section className="library-page">
+          <div className="library-heading">
+            <div>
+              <span className="account-eyebrow">БИБЛИОТЕКА РИСУНКОВ</span>
+              <h1>Готовые идеи и личные эскизы</h1>
+              <p>Публичные рисунки видят все. Личные эскизы сохраняются только в вашей библиотеке.</p>
+            </div>
+          </div>
+
+          <section className="library-section">
+            <div className="account-section-title">
+              <div><span className="account-eyebrow">ДЛЯ ВСЕХ</span><h2>Публичная коллекция</h2></div>
+              <span>Добавлять и изменять этот набор может только владелец Map Method</span>
+            </div>
+            <div className="library-grid">
+              {PUBLIC_LIBRARY.map((item) => {
+                const dimensions = getGridDimensions(item.totalCells, 1, item.gridMode, item.manualRows, item.manualCols);
+                return (
+                  <article className="library-card" key={item.id}>
+                    <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} /></div>
+                    <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
+                    <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="library-section">
+            <div className="account-section-title">
+              <div><span className="account-eyebrow">ТОЛЬКО ДЛЯ ВАС</span><h2>Личная библиотека</h2></div>
+              <span>Сохраняйте сюда свои рисунки и используйте их повторно</span>
+            </div>
+            {!!maps.length && (
+              <div className="library-save-list">
+                {maps.map((map) => <button type="button" key={map.id} onClick={() => saveMapToLibrary(map)}>+ {map.name}</button>)}
+              </div>
+            )}
+            {personalLibrary.length ? (
+              <div className="library-grid">
+                {personalLibrary.map((item) => {
+                  const dimensions = getGridDimensions(item.totalCells, item.imageRatio, item.gridMode, item.manualRows, item.manualCols);
+                  return (
+                    <article className="library-card" key={item.id}>
+                      <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} /></div>
+                      <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
+                      <div className="library-card-actions">
+                        <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
+                        <button type="button" className="danger-action" onClick={() => removeLibraryItem(item.id)}>Удалить</button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : <p className="library-empty">Добавьте сюда одну из своих карт — она останется только в вашей личной коллекции.</p>}
+          </section>
+        </section>
+      )}
+
       {screen === "maps" && (
         <section className="maps-page">
           <div className="maps-page-header">
@@ -5369,7 +5667,7 @@ export default function App() {
                 {["Все", ...allCategories].map((category) => (
                   <button
                     key={category}
-                    data-category={category === "Все" ? undefined : category}
+                    data-category={category}
                     className={`${mapCategoryFilter === category ? "active" : ""}${categoryDrag?.category === category ? " is-dragging" : ""}${categoryDrag?.target === category && categoryDrag.category !== category ? " is-drop-target" : ""}`}
                     onPointerDown={category === "Все" ? undefined : (event) => beginCategoryDrag(event, category)}
                     onClick={() => {
@@ -5405,13 +5703,6 @@ export default function App() {
                   const plan = dailyTarget(map.deadline, playableTotal, done, todayDate);
                   const planDoneToday = dailyPlanCompleted(map, playableTotal, done, todayDate);
 
-                  const completedCells = new Set(
-                    map.progressCompleted || []
-                  );
-                  const drawingCells = new Set(map.completed || []);
-
-
-
                   return (
                     <article
                       className={`map-card${deletingIds.includes(map.id) ? " is-deleting" : ""}${cardDrag?.id === map.id ? " is-dragging" : ""}${cardSettling?.id === map.id ? " is-settling" : ""}${planDoneToday ? " daily-plan-complete" : ""}`}
@@ -5427,7 +5718,7 @@ export default function App() {
                         const next = ordered[index + (event.key === "ArrowUp" ? -1 : 1)];
                         if (next) reorderCards(map.id, next.id);
                       }}
-                      style={cardDrag?.id === map.id ? { transform: `translate(${cardDrag.dx}px, ${cardDrag.dy}px) rotate(1deg)` } : undefined}
+                      style={cardDrag?.id === map.id ? { transform: `translate3d(${cardDrag.dx}px, ${cardDrag.dy}px, 0) rotate(1deg)` } : undefined}
                       key={
                         map.id
                       }
@@ -5443,51 +5734,7 @@ export default function App() {
                       >
                       {deletingIds.includes(map.id) && <div className="card-debris" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ "--x": (i % 6) * 20 + "%", "--y": Math.floor(i / 6) * 30 + "%", "--dx": ((i * 37) % 180 - 90) + "px", "--dy": (40 + i * 7) + "px", "--turn": (i * 47) + "deg" }} />)}</div>}
                       <div className="map-card-preview">
-                        <div
-                            className="map-card-grid"
-                            style={{
-                              gridTemplateColumns: `repeat(${d.cols},minmax(0,1fr))`,
-                              aspectRatio: `${d.cols}/${d.rows}`,
-                            }}
-                          >
-                            {Array.from(
-                              {
-                                length:
-                                  d.actualTotal,
-                              },
-                              (
-                                _,
-                                i
-                              ) => {
-                                const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[i]) === UTILITY_COLOR;
-                                return (
-                                <span
-                                  key={
-                                    i
-                                  }
-                                  className={`map-card-cell ${
-                                    completedCells.has(i)
-                                      ? "filled"
-                                      : ""
-                                  }`}
-                                  style={{
-                                    backgroundColor: utilityCell
-                                      ? "#deded8"
-                                      : completedCells.has(i)
-                                      ? map.colors?.[i] || "#32624f"
-                                      : map.mapType === "image" || drawingCells.has(i)
-                                        ? map.colors?.[i] || "#dcdcdc"
-                                        : "#deded8",
-                                    // В карточке всегда оставляем полупрозрачный
-                                    // ориентир полного изображения, чтобы было понятно,
-                                    // какую часть пользователь заполняет в игре.
-                                    opacity: utilityCell ? 1 : !completedCells.has(i) && (map.mapType === "image" || drawingCells.has(i)) ? 0.18 : 1,
-                                  }}
-                                />
-                                );
-                              }
-                            )}
-                          </div>
+                        <MapCardGrid map={map} dimensions={d} />
                       </div>
 
                       <div className="map-card-body">
@@ -5769,10 +6016,9 @@ export default function App() {
                     />
                   </div>
                   <div className="grid-side-choice" role="group" aria-label="Сторона изменения строк">
-                    <span>Строки добавлять и убирать</span>
                     <div>
-                      <button type="button" aria-pressed={rowAddSide === "top"} onClick={() => setRowAddSide("top")}>↑ Сверху</button>
-                      <button type="button" aria-pressed={rowAddSide === "bottom"} onClick={() => setRowAddSide("bottom")}>↓ Снизу</button>
+                      <button type="button" aria-pressed={rowAddSide === "top"} onClick={() => setRowAddSide("top")}>Сверху</button>
+                      <button type="button" aria-pressed={rowAddSide === "bottom"} onClick={() => setRowAddSide("bottom")}>Снизу</button>
                     </div>
                   </div>
 
@@ -5796,10 +6042,9 @@ export default function App() {
                     />
                   </div>
                   <div className="grid-side-choice" role="group" aria-label="Сторона изменения столбцов">
-                    <span>Столбцы добавлять и убирать</span>
                     <div>
-                      <button type="button" aria-pressed={colAddSide === "left"} onClick={() => setColAddSide("left")}>← Слева</button>
-                      <button type="button" aria-pressed={colAddSide === "right"} onClick={() => setColAddSide("right")}>→ Справа</button>
+                      <button type="button" aria-pressed={colAddSide === "left"} onClick={() => setColAddSide("left")}>Слева</button>
+                      <button type="button" aria-pressed={colAddSide === "right"} onClick={() => setColAddSide("right")}>Справа</button>
                     </div>
                   </div>
 
@@ -6167,21 +6412,6 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="utility-color-section">
-                    <div className="utility-color-copy">
-                      <strong>Служебные клетки</strong>
-                      <span>Добавляют клетки к количеству карты, когда в рисунке для них уже нет подходящего места. В списке «Мои карты» они выглядят как пустой фон.</span>
-                    </div>
-                    <button
-                      className={`color-item utility-color${drawColor === UTILITY_COLOR ? " selected" : ""}`}
-                      title={`${UTILITY_COLOR} — служебные клетки`}
-                      onClick={() => selectDrawColor(UTILITY_COLOR)}
-                      style={{ "--color": UTILITY_COLOR }}
-                    >
-                      <span className="color-dot" />
-                    </button>
-                  </div>
-
                   {customColors.length >
                     0 && (
                     <div className="color-palette-section">
@@ -6247,6 +6477,21 @@ export default function App() {
                     </div>
                   )}
 
+                  <div className="utility-color-section">
+                    <div className="utility-color-copy">
+                      <strong>Служебные клетки</strong>
+                      <span>Добавляют клетки к количеству карты, когда в рисунке для них уже нет подходящего места. В списке «Мои карты» они выглядят как пустой фон.</span>
+                    </div>
+                    <button
+                      className={`color-item utility-color${drawColor === UTILITY_COLOR ? " selected" : ""}`}
+                      title={`${UTILITY_COLOR} — служебные клетки`}
+                      onClick={() => selectDrawColor(UTILITY_COLOR)}
+                      style={{ "--color": UTILITY_COLOR }}
+                    >
+                      <span className="color-dot" />
+                    </button>
+                  </div>
+
                   <div className="custom-color-create">
                     <label className="color-picker-wrap" htmlFor="new-color-picker">
                       <input
@@ -6270,10 +6515,6 @@ export default function App() {
                       </span>
                     </label>
 
-                    <input className="hex-color-input" aria-label="Код цвета HEX" placeholder="#ecb40d" value={newColor} maxLength={7}
-                      onChange={(e) => { const value = e.target.value; setNewColor(value); if (normalizeHexColor(value)) { setDrawColor(value.toLowerCase()); drawColorRef.current = value.toLowerCase(); } }}
-                      onKeyDown={(e) => { if (e.key === "Enter") addCustomColor(); }} />
-                    {newColor && !normalizeHexColor(newColor) && <span className="field-error">Формат: #ecb40d</span>}
                     <button
                       disabled={!normalizeHexColor(newColor)}
                       className="add-color-btn"
@@ -6462,15 +6703,17 @@ export default function App() {
                       actualTotal,
                   },
                   (_, i) => {
-                    // Превью всегда показывает реальный прогресс режима игры,
-                    // а не рабочий эскиз из режима рисования.
-                    const active = progressSet.has(i) && (mapType === "image" || drawingSet.has(i));
+                    const active = isGameMode
+                      ? progressSet.has(i) && (mapType === "image" || drawingSet.has(i))
+                      : mapType === "free" && drawingSet.has(i);
 
                     const color =
                       colors[i] ||
                       "#e5e5e5";
                     const utilityCell = mapType === "free" && normalizeHexColor(colors[i]) === UTILITY_COLOR;
 
+                    const showGuide = (mapType === "image" && showImage && image)
+                      || (isGameMode && mapType === "free" && drawingSet.has(i));
                     return (
                       <span
                         key={i}
@@ -6480,10 +6723,10 @@ export default function App() {
                             ? "#eeeeea"
                             : active
                             ? color
-                            : ((mapType === "image" && showImage && image) || (mapType === "free" && drawingSet.has(i)))
+                            : showGuide
                               ? color
                               : "#eeeeea",
-                          opacity: utilityCell ? 1 : !active && ((mapType === "image" && showImage && image) || (mapType === "free" && drawingSet.has(i))) ? 0.2 : 1,
+                          opacity: utilityCell ? 1 : !active && showGuide ? (!isGameMode && mapType === "image" ? 0.35 : 0.2) : 1,
                         }}
                       />
                     );
