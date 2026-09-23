@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset } from '../src/lib/grid.js';
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from '../src/lib/grid.js';
 
 test('Auto grids contain exactly the requested number of playable cells up to the limit', () => {
   for (let total = 1; total <= MAX_CELLS; total++) {
@@ -137,4 +137,41 @@ test('Uploaded artwork retains its size when extending above and left, including
   assert.equal(next.top, original.top + 2);
   const restored = resizeImageOffset(200, 100, after, reloaded, -3, -2);
   assert.deepEqual(restored.frame, { left: original.left, top: original.top, width: original.width, height: original.height });
+});
+
+
+test('Marquee works in both directions and selects only the rectangle', () => {
+  const area = selectionFromCells(13, 6, 5);
+  assert.deepEqual(area, { x: 1, y: 1, width: 3, height: 2 });
+  assert.equal(selectionContains(area, 7, 5), true);
+  assert.equal(selectionContains(area, 10, 5), false);
+});
+
+test('Overlapping selection moves preserve colors, progress and unrelated cells', () => {
+  const original = { completed: [6, 7, 24], progressCompleted: [7], colors: [] };
+  original.colors[6] = 'red'; original.colors[7] = 'blue'; original.colors[24] = 'green';
+  const moved = moveSelection(original, {x:1,y:1,width:2,height:1}, {cols:5,rows:5,actualTotal:25}, 1, 0);
+  assert.deepEqual(moved.completed.sort((a,b)=>a-b), [7,8,24]);
+  assert.deepEqual(moved.progressCompleted, [8]);
+  assert.equal(moved.colors[6], undefined);
+  assert.equal(moved.colors[7], 'red'); assert.equal(moved.colors[8], 'blue');
+  assert.equal(moved.colors[24], 'green');
+  assert.deepEqual(original.completed, [6,7,24]);
+  const restored = moveSelection(original, {x:1,y:1,width:2,height:1}, {cols:5,rows:5,actualTotal:25}, 0, 0);
+  assert.deepEqual(new Set(restored.completed), new Set(original.completed));
+});
+
+test('Selection clamps edges and rejects a move into missing tail cells', () => {
+  const original = {completed:[3], progressCompleted:[], colors:[]};
+  const area = {x:3,y:0,width:2,height:1};
+  const grid = {cols:5,rows:3,actualTotal:12};
+  const moved = moveSelection(original, area, grid, -100, 0);
+  assert.equal(moved.dx, -3); assert.deepEqual(moved.completed, [0]);
+  assert.equal(moveSelection(original, area, grid, 0, 2), null);
+});
+
+test('Moving an image region leaves white source pixels and retains the edited marker', () => {
+  const moved = moveSelection({completed:[0],progressCompleted:[],colors:['red','blue','green']}, {x:0,y:0,width:1,height:1}, {cols:3,rows:1,actualTotal:3}, 1, 0, true);
+  assert.deepEqual(moved.colors, ['#ffffff','red','green']);
+  assert.equal(normalizeImageOffset(JSON.parse(JSON.stringify({x:0,y:0,cellsEdited:true}))).cellsEdited, true);
 });

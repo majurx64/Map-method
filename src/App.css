@@ -3063,8 +3063,11 @@ body .modal-inline-fields > .modal-field > .animated-select .animated-select-tri
 }
 .grid-zoom-stage { display: flex; align-items: center; justify-content: center; }
 .grid-viewport .grid-container { border: 0; border-radius: 0; outline: 1px solid #d8d1c6; }
-.grid-container.moving-artwork { outline: 2px dashed #32624f; }
+.moving-artwork .grid-selection { border-style: dashed; }
 .moving-artwork .grid-canvas { cursor: grabbing; }
+.grid-viewport .grid-container { position: relative; }
+.grid-selection { position: absolute; box-sizing: border-box; border: 1px solid #1687ee; background: rgb(22 135 238 / 18%); pointer-events: none; }
+.stroke-counter { position: fixed; z-index: 100; pointer-events: none; font: 11px/1.3 system-ui, sans-serif; padding: 2px 5px; border-radius: 4px; color: #fff; background: #25231fd9; }
 .workspace { align-self: start; min-height: 0; overflow-anchor: none; }
 .right-sidebar .mini-preview { max-height: 240px; overflow: hidden; }
 .field-error { color: #ba3030; font-size: 12px; line-height: 1.4; margin: 8px 0; }

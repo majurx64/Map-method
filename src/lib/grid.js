@@ -30,11 +30,53 @@ export function gridResizeShift(before, after, rowSide = "bottom", colSide = "ri
 
 export function normalizeImageOffset(value) {
   const offset = { x: Number.isFinite(Number(value?.x)) ? Number(value.x) : 0, y: Number.isFinite(Number(value?.y)) ? Number(value.y) : 0 };
+  if (value?.cellsEdited) offset.cellsEdited = true;
   const frame = value?.frame;
   if (frame && [frame.left, frame.top, frame.width, frame.height].every(Number.isFinite) && frame.width > 0 && frame.height > 0) {
     offset.frame = { left: frame.left, top: frame.top, width: frame.width, height: frame.height };
   }
   return offset;
+}
+
+export function selectionFromCells(start, end, cols) {
+  const x = Math.min(start % cols, end % cols), y = Math.min(Math.floor(start / cols), Math.floor(end / cols));
+  return { x, y, width: Math.abs(start % cols - end % cols) + 1, height: Math.abs(Math.floor(start / cols) - Math.floor(end / cols)) + 1 };
+}
+
+export function selectionContains(area, index, cols) {
+  return !!area && index % cols >= area.x && index % cols < area.x + area.width && Math.floor(index / cols) >= area.y && Math.floor(index / cols) < area.y + area.height;
+}
+
+// Always read from the original snapshot: overlapping moves must not smear pixels.
+export function moveSelection(snapshot, area, dimensions, dx, dy, imageMode = false) {
+  const { cols, rows, actualTotal } = dimensions;
+  dx = Math.max(-area.x, Math.min(cols - area.x - area.width, dx));
+  dy = Math.max(-area.y, Math.min(rows - area.y - area.height, dy));
+  const source = [];
+  for (let y = area.y; y < area.y + area.height; y++) {
+    for (let x = area.x; x < area.x + area.width; x++) {
+      const i = y * cols + x;
+      if (i < actualTotal) source.push(i);
+    }
+  }
+  if (source.some((i) => i + dy * cols + dx >= actualTotal)) return null;
+  const completed = new Set(snapshot.completed), progress = new Set(snapshot.progressCompleted);
+  const original = new Set(snapshot.completed), originalProgress = new Set(snapshot.progressCompleted);
+  const colors = [...snapshot.colors];
+  for (const i of source) {
+    completed.delete(i); progress.delete(i);
+    if (imageMode) colors[i] = "#ffffff";
+    else delete colors[i];
+  }
+  for (const i of source) {
+    const target = i + dy * cols + dx;
+    completed.delete(target); progress.delete(target);
+    if (original.has(i)) completed.add(target);
+    if (originalProgress.has(i)) progress.add(target);
+    if (snapshot.colors[i]) colors[target] = snapshot.colors[i];
+    else delete colors[target];
+  }
+  return { completed: [...completed], progressCompleted: [...progress], colors, dx, dy, area: { ...area, x: area.x + dx, y: area.y + dy } };
 }
 
 export function resizeImageOffset(width, height, before, offset, dx, dy) {

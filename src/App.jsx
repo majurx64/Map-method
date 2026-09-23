@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import "./App.css";
 import { supabase } from "./lib/supabase";
 import Auth from "./Auth";
-import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset } from "./lib/grid";
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -1283,6 +1283,13 @@ export default function App() {
   ] = useState(false);
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
 
+  const [selectionTool, setSelectionTool] = useState(false);
+  const [selection, setSelection] = useState(null);
+  const selectionGestureRef = useRef(null);
+  const panGestureRef = useRef(null);
+  const [strokeCounter, setStrokeCounter] = useState(null);
+  const strokeCountRef = useRef(0);
+  const strokeButtonRef = useRef(1);
   const canvasRef = useRef(null);
   const viewportRef = useRef(null);
   const accountRef = useRef(null);
@@ -1589,6 +1596,12 @@ export default function App() {
         return;
       }
 
+      if (screen === "editor" && (selection || selectionTool)) {
+        handlePointerCancel();
+        setSelection(null);
+        setSelectionTool(false);
+        return;
+      }
       if (screen === "editor") {
         setScreen("maps");
       } else if (["maps", "account", "auth"].includes(screen)) {
@@ -1598,7 +1611,7 @@ export default function App() {
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [screen, isCreateOpen, isRenameOpen, isDeleteOpen, isAccountOpen, isLanguageOpen]);
+  });
 
   useEffect(() => {
     if (!isMapInitialized) return;
@@ -1693,7 +1706,7 @@ export default function App() {
     } = supabase.auth.onAuthStateChange(
       (_e, session) => {
         if (mounted) {
-          setUser(session?.user || null);
+          setUser((previous) => previous?.id === session?.user?.id ? previous : session?.user || null);
         }
       }
     );
@@ -2196,6 +2209,7 @@ export default function App() {
   }
 
   function setSnapshot(s, target = "drawing") {
+    setSelection(null);
     if (s.progressCompleted) {
       progressCompletedRef.current = new Set(s.progressCompleted);
       setProgressCompleted(s.progressCompleted);
@@ -2238,7 +2252,7 @@ export default function App() {
   }
 
   function undo() {
-    if (isDrawingRef.current || artworkDragRef.current) {
+    if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) {
       return;
     }
 
@@ -2252,7 +2266,7 @@ export default function App() {
   }
 
   function redo() {
-    if (isDrawingRef.current || artworkDragRef.current) {
+    if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) {
       return;
     }
 
@@ -2368,7 +2382,7 @@ export default function App() {
       animateCells(changed, mode);
       progressCompletedRef.current = next;
       setProgressCompleted([...next]);
-      if (mode === "draw") recordPaintedCells(changed.length);
+      if (mode === "draw") { recordPaintedCells(changed.length); strokeCountRef.current += changed.length; }
       return;
     }
 
@@ -2380,9 +2394,11 @@ export default function App() {
         ? [...colorsRef.current]
         : null;
     const changed = [];
+    let painted = 0;
 
     for (const i of indices) {
       if (mode === "draw") {
+        if (!nextSet.has(i) || (nextColors && nextColors[i] !== drawColorRef.current)) painted++;
         if (!nextSet.has(i)) changed.push(i);
         nextSet.add(i);
 
@@ -2403,7 +2419,7 @@ export default function App() {
     animateCells(changed, mode);
     completedRef.current = nextSet;
     setCompleted([...nextSet]);
-    if (mode === "draw") recordPaintedCells(changed.length);
+    if (mode === "draw") { recordPaintedCells(changed.length); strokeCountRef.current += painted; }
 
     if (nextColors) {
       colorsRef.current = nextColors;
@@ -2420,6 +2436,7 @@ export default function App() {
       finishStroke();
     }
 
+    strokeCountRef.current = 0;
     isDrawingRef.current = true;
     drawModeRef.current = mode;
     previousCellRef.current = index;
@@ -2499,6 +2516,7 @@ export default function App() {
       return;
 
     isDrawingRef.current = false;
+    setStrokeCounter(null);
     setIsDrawing(false);
 
     const before =
@@ -2540,91 +2558,79 @@ export default function App() {
   function handlePointerDown(e) {
     e.preventDefault();
     if (e.button !== 0 && e.button !== 2) return;
-    if (e.ctrlKey && e.button === 0 && !isGameMode) {
-      finishStroke();
-      const selected = [...completedRef.current];
-      if (mapType === "free" && !selected.length) return;
-      if (mapType === "image" && (!image || sourceImageRef.current?.src !== image)) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      artworkDragRef.current = {
-        pointerId: e.pointerId, x: e.clientX, y: e.clientY, rect,
-        completed: selected, progressCompleted: [...progressCompletedRef.current],
-        colors: [...colorsRef.current], imageOffset: { ...imageOffset }, dx: 0, dy: 0,
-      };
-      canvasRef.current.setPointerCapture(e.pointerId);
-      setMovingArtwork(true);
+    if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) return;
+    const i = getCellFromPointerEvent(e);
+    if (i === null) return;
+    canvasRef.current?.focus({ preventScroll: true });
+    canvasRef.current?.setPointerCapture(e.pointerId);
+    const currentSet = isGameMode ? progressCompletedRef.current : completedRef.current;
+    if (e.button === 2 && !currentSet.has(i)) {
+      suppressContextMenuRef.current = true;
+      panGestureRef.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, left: viewportRef.current.scrollLeft, top: viewportRef.current.scrollTop };
       return;
     }
+    if (e.button === 0 && !isGameMode && (selectionTool || e.ctrlKey || selectionContains(selection, i, cols))) {
+      if (selectionContains(selection, i, cols)) {
+        artworkDragRef.current = {
+          pointerId: e.pointerId, x: e.clientX, y: e.clientY, rect: canvasRef.current.getBoundingClientRect(), area: selection,
+          completed: [...completedRef.current], progressCompleted: [...progressCompletedRef.current],
+          colors: [...colorsRef.current], imageOffset: { ...imageOffset }, dx: 0, dy: 0,
+        };
+        setMovingArtwork(true);
+      } else {
+        selectionGestureRef.current = { pointerId: e.pointerId, start: i };
+        setSelection(selectionFromCells(i, i, cols));
+      }
+      return;
+    }
+    setSelection(null);
 
     // Браузер присылает contextmenu уже после pointerup. Запоминаем
     // именно ПКМ-штрих внутри холста, чтобы меню не всплывало снаружи.
     if (e.button === 2) suppressContextMenuRef.current = true;
 
-    const i =
-      getCellFromPointerEvent(e);
-
-    if (i === null) return;
-
-    const currentSet =
-      isGameMode
-        ? progressCompletedRef.current
-        : completedRef.current;
     const sameColor = isGameMode || mapType === "image" || colorsRef.current[i]?.toLowerCase() === drawColorRef.current.toLowerCase();
     const mode = e.button === 2 || (currentSet.has(i) && sameColor) ? "erase" : "draw";
 
-    try {
-      canvasRef.current?.setPointerCapture(
-        e.pointerId
-      );
-    } catch {}
-
+    strokeButtonRef.current = e.button === 2 ? 2 : 1;
     startStroke(
       i,
       mode,
       e.pointerId
     );
+    if (mode === "draw" && e.button === 0) setStrokeCounter({ x: e.clientX, y: e.clientY, count: strokeCountRef.current });
   }
 
   function handlePointerMove(e) {
+    const pan = panGestureRef.current;
+    if (pan?.pointerId === e.pointerId) {
+      viewportRef.current.scrollLeft = pan.left + pan.x - e.clientX;
+      viewportRef.current.scrollTop = pan.top + pan.y - e.clientY;
+      return;
+    }
+    const marquee = selectionGestureRef.current;
+    if (marquee?.pointerId === e.pointerId) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = Math.max(0, Math.min(cols - 1, Math.floor((e.clientX - rect.left) / rect.width * cols)));
+      const y = Math.max(0, Math.min(rows - 1, Math.floor((e.clientY - rect.top) / rect.height * rows)));
+      setSelection(selectionFromCells(marquee.start, y * cols + x, cols));
+      return;
+    }
     const drag = artworkDragRef.current;
-    if (drag && drag.pointerId === e.pointerId) {
-      let dx = Math.round((e.clientX - drag.x) / drag.rect.width * cols);
-      let dy = Math.round((e.clientY - drag.y) / drag.rect.height * rows);
-      const selected = mapType === "free" ? drag.completed : Array.from({ length: actualTotal }, (_, i) => i);
-      // The whole selected artwork stays in the field, including irregular last rows.
-      const minX = Math.min(...selected.map((i) => i % cols));
-      const maxX = Math.max(...selected.map((i) => i % cols));
-      const minY = Math.min(...selected.map((i) => Math.floor(i / cols)));
-      const maxY = Math.max(...selected.map((i) => Math.floor(i / cols)));
-      if (mapType === "free") {
-        dx = Math.max(-minX, Math.min(cols - 1 - maxX, dx));
-        dy = Math.max(-minY, Math.min(rows - 1 - maxY, dy));
-        if (selected.some((i) => (Math.floor(i / cols) + dy) * cols + i % cols + dx >= actualTotal)) return;
-      } else {
-        const source = sourceImageRef.current;
-        const placement = imagePlacement(source.width, source.height, cols, rows, actualTotal, drag.imageOffset);
-        const fullRows = Math.max(1, Math.floor(actualTotal / cols));
-        const edgeX = cols - placement.width, edgeY = fullRows - placement.height;
-        dx = Math.max(Math.ceil(Math.min(0, edgeX) - placement.left), Math.min(Math.floor(Math.max(0, edgeX) - placement.left), dx));
-        dy = Math.max(Math.ceil(Math.min(0, edgeY) - placement.top), Math.min(Math.floor(Math.max(0, edgeY) - placement.top), dy));
-      }
-      if (dx === drag.dx && dy === drag.dy) return;
-      drag.dx = dx; drag.dy = dy;
-      const dimensions = { cols, rows, actualTotal };
-      setCompletedDirectly(remapCells(drag.completed, dimensions, dimensions, dx, dy));
-      const nextProgress = remapCells(drag.progressCompleted, dimensions, dimensions, dx, dy);
-      progressCompletedRef.current = new Set(nextProgress);
-      setProgressCompleted(nextProgress);
-      let nextColors = remapColors(drag.colors, dimensions, dimensions, dx, dy);
+    if (drag?.pointerId === e.pointerId) {
+      const result = moveSelection(drag, drag.area, { cols, rows, actualTotal }, Math.round((e.clientX - drag.x) / drag.rect.width * cols), Math.round((e.clientY - drag.y) / drag.rect.height * rows), mapType === "image");
+      if (!result || (result.dx === drag.dx && result.dy === drag.dy)) return;
+      drag.dx = result.dx; drag.dy = result.dy;
+      setCompletedDirectly(result.completed);
+      progressCompletedRef.current = new Set(result.progressCompleted);
+      setProgressCompleted(result.progressCompleted);
+      colorsRef.current = result.colors;
+      setColors(result.colors);
       if (mapType === "image") {
-        const offset = drag.imageOffset.frame
-          ? { ...drag.imageOffset, frame: { ...drag.imageOffset.frame, left: drag.imageOffset.frame.left + dx, top: drag.imageOffset.frame.top + dy } }
-          : { x: drag.imageOffset.x + dx / cols, y: drag.imageOffset.y + dy / rows };
-        nextColors = sampleImageColors(sourceImageRef.current, cols, rows, offset, actualTotal);
-        setImageOffset(offset);
+        imageProcessingRef.current += 1;
+        setImageOffset({ ...drag.imageOffset, cellsEdited: true });
       }
-      colorsRef.current = nextColors;
-      setColors(nextColors);
+      setSelection(result.area);
       return;
     }
     if (!isDrawingRef.current)
@@ -2639,6 +2645,10 @@ export default function App() {
       return;
     }
 
+    if (!(e.buttons & strokeButtonRef.current)) {
+      finishStroke();
+      return;
+    }
     const events =
       typeof e.getCoalescedEvents ===
       "function"
@@ -2666,10 +2676,19 @@ export default function App() {
     ) {
       continueStroke(i);
     }
+    if (drawModeRef.current === "draw") setStrokeCounter({ x: e.clientX, y: e.clientY, count: strokeCountRef.current });
   }
 
   function handlePointerUp(e) {
+    if (panGestureRef.current?.pointerId === e.pointerId || selectionGestureRef.current?.pointerId === e.pointerId) {
+      handlePointerMove(e);
+      panGestureRef.current = null;
+      selectionGestureRef.current = null;
+      canvasRef.current?.releasePointerCapture(e.pointerId);
+      return;
+    }
     if (artworkDragRef.current?.pointerId === e.pointerId) {
+      handlePointerMove(e);
       finishArtworkMove();
       canvasRef.current?.releasePointerCapture(e.pointerId);
       return;
@@ -2706,8 +2725,12 @@ export default function App() {
   }
 
   function handlePointerCancel() {
+    panGestureRef.current = null;
+    if (selectionGestureRef.current) setSelection(null);
+    selectionGestureRef.current = null;
     if (artworkDragRef.current) {
       setSnapshot(artworkDragRef.current);
+      setSelection(artworkDragRef.current.area);
       artworkDragRef.current = null;
       setMovingArtwork(false);
     }
@@ -2720,7 +2743,7 @@ export default function App() {
     if (drag.dx || drag.dy) {
       undoStackRef.current.push({
         before: drag,
-        after: { completed: [...completedRef.current], colors: [...colorsRef.current], progressCompleted: [...progressCompletedRef.current], imageOffset: { ...imageOffset } },
+        after: { completed: [...completedRef.current], colors: [...colorsRef.current], progressCompleted: [...progressCompletedRef.current], imageOffset: mapType === "image" ? { ...drag.imageOffset, cellsEdited: true } : { ...imageOffset } },
         target: "drawing",
       });
       if (undoStackRef.current.length > 100) undoStackRef.current.shift();
@@ -3041,7 +3064,7 @@ export default function App() {
   useEffect(() => {
     if (screen !== "editor" || !viewportRef.current) return;
     const viewport = viewportRef.current;
-    const observer = new ResizeObserver(() => setViewportSize({ width: viewport.clientWidth, height: viewport.clientHeight }));
+    const observer = new ResizeObserver(() => setViewportSize((previous) => previous.width === viewport.clientWidth && previous.height === viewport.clientHeight ? previous : { width: viewport.clientWidth, height: viewport.clientHeight }));
     observer.observe(viewport);
     return () => observer.disconnect();
   }, [screen]);
@@ -3071,6 +3094,7 @@ export default function App() {
       if (!e.ctrlKey || !viewport?.contains(e.target) || !canvas) return;
       e.preventDefault();
       e.stopPropagation();
+      if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) return;
       const rect = canvas.getBoundingClientRect();
       zoomAnchorRef.current = { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height, clientX: e.clientX, clientY: e.clientY };
       setMapZoom((z) => {
@@ -3085,6 +3109,7 @@ export default function App() {
 
   useEffect(() => {
     const f = (e) => {
+      if (screen !== "editor" || isCreateOpen || isRenameOpen || isDeleteOpen || isAccountOpen || isLanguageOpen || e.target?.isContentEditable) return;
       if (
         e.target instanceof
           HTMLInputElement ||
@@ -3096,6 +3121,15 @@ export default function App() {
         return;
       }
 
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        const directions = { KeyW: [0, -1], ArrowUp: [0, -1], KeyS: [0, 1], ArrowDown: [0, 1], KeyA: [-1, 0], ArrowLeft: [-1, 0], KeyD: [1, 0], ArrowRight: [1, 0] };
+        const direction = directions[e.code];
+        if (direction && !e.target?.closest('[role="dialog"], [role="listbox"], [role="menu"]')) {
+          e.preventDefault();
+          if (!isDrawingRef.current && !artworkDragRef.current && !selectionGestureRef.current && !panGestureRef.current) viewportRef.current?.scrollBy({ left: direction[0] * 40, top: direction[1] * 40, behavior: "instant" });
+          return;
+        }
+      }
       const isUndoKey =
         e.code === "KeyZ" ||
         e.key.toLowerCase() === "z";
@@ -3130,6 +3164,17 @@ export default function App() {
         f,
         true
       );
+  });
+
+  useEffect(() => {
+    const cancel = () => handlePointerCancel();
+    const hide = () => { if (document.hidden) cancel(); };
+    window.addEventListener("blur", cancel);
+    document.addEventListener("visibilitychange", hide);
+    return () => {
+      window.removeEventListener("blur", cancel);
+      document.removeEventListener("visibilitychange", hide);
+    };
   });
 
   function processImage(
@@ -3261,6 +3306,8 @@ export default function App() {
     type
   ) {
     finishStroke();
+    setSelection(null);
+    setSelectionTool(false);
 
     setMapType(type);
     setIsGameMode(false);
@@ -3286,6 +3333,7 @@ export default function App() {
 
   function resizeGrid(total, mode, nextRows = manualRows, nextCols = manualCols, sides = null) {
     finishStroke();
+    setSelection(null);
     const count = Number(total);
     const capacity = mode === "manual" ? Number(nextRows) * Number(nextCols) : count;
     if (count > MAX_CELLS || capacity > MAX_CELLS) {
@@ -3304,7 +3352,7 @@ export default function App() {
     const nextProgress = remapCells([...progressCompletedRef.current], before, after, dx, dy);
     progressCompletedRef.current = new Set(nextProgress);
     setProgressCompleted(nextProgress);
-    if (mapType === "free") {
+    if (mapType === "free" || imageOffset.cellsEdited) {
       const nextColors = remapColors(colorsRef.current, before, after, dx, dy);
       colorsRef.current = nextColors;
       setColors(nextColors);
@@ -3653,6 +3701,8 @@ export default function App() {
 
   function openMap(map) {
     finishStroke();
+    setSelection(null);
+    setSelectionTool(false);
 
     const m =
       normalizeMap(map);
@@ -3681,7 +3731,7 @@ export default function App() {
       source.onload = () => {
         if (requestId !== imageProcessingRef.current) return;
         sourceImageRef.current = source;
-        if (m.mapType === "image") {
+        if (m.mapType === "image" && !m.imageOffset.cellsEdited) {
           const dimensions = getGridDimensions(m.totalCells, m.imageRatio, m.gridMode, m.manualRows, m.manualCols);
           const offset = imagePlacement(source.width, source.height, dimensions.cols, dimensions.rows, dimensions.actualTotal, m.imageOffset).offset;
           const nextColors = sampleImageColors(source, dimensions.cols, dimensions.rows, offset, dimensions.actualTotal);
@@ -5611,6 +5661,7 @@ export default function App() {
               </div>
 
               <div className="tool-stack">
+                {!isGameMode && <button className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
                 <div className="map-type tool-type">
                   <button
                     className={`map-type-btn ${
@@ -5660,6 +5711,8 @@ export default function App() {
                             progressCompletedRef.current = new Set(completedRef.current);
                             setProgressCompleted([...completedRef.current]);
                           }
+                          setSelection(null);
+                          setSelectionTool(false);
                           setIsGameMode(true);
                         }}
                       >
@@ -6061,6 +6114,8 @@ export default function App() {
                         canvasRef
                       }
                     className="grid-canvas"
+                      tabIndex={0}
+                      aria-label="Поле рисования"
                       style={{
                         touchAction:
                           "none",
@@ -6074,24 +6129,25 @@ export default function App() {
                       onPointerUp={
                         handlePointerUp
                       }
-                      onPointerCancel={
-                        handlePointerCancel
-                      }
+                      onPointerCancel={handlePointerCancel}
+                      onLostPointerCapture={handlePointerCancel}
                       onContextMenu={(
                         e
                       ) =>
                         e.preventDefault()
                       }
                     />
+                    {selection && !isGameMode && <div className="grid-selection" style={{ left: `${selection.x / cols * 100}%`, top: `${selection.y / rows * 100}%`, width: `${selection.width / cols * 100}%`, height: `${selection.height / rows * 100}%` }} />}
                   </div>
                 </div>
               </div>
             </div>
 
+            {strokeCounter && <span className="stroke-counter" style={{ left: strokeCounter.x + 14, top: strokeCounter.y + 16 }}>{strokeCounter.count}</span>}
             <div className="drawing-hint">
               {t(
                 "drawHint"
-              )} · Ctrl+Z / Ctrl+Y · Ctrl + колесо — масштаб · Ctrl + ЛКМ — переместить рисунок
+              )} · Ctrl+Z / Ctrl+Y · Ctrl + колесо — масштаб · WASD / стрелки — перемещение · ПКМ по пустой клетке — перемещение · Ctrl + ЛКМ — выделить область, затем перетащить её · Esc — снять выделение
             </div>
           </section>
 
