@@ -1492,9 +1492,9 @@ export default function App() {
   const allCategories = [...categoryOrder.filter((category) => availableCategories.includes(category)), ...availableCategories.filter((category) => !categoryOrder.includes(category))];
   const categoryDragTransform = (category) => {
     if (!categoryDrag || category === "Все") return undefined;
-    if (categoryDrag.category === category) return `translate3d(${categoryDrag.dx}px,0,0)`;
-    const from = allCategories.indexOf(categoryDrag.category);
-    const to = allCategories.indexOf(categoryDrag.target);
+    if (categoryDrag.category === category) return `translate3d(${categoryDrag.dx}px,${categoryDrag.dy}px,0)`;
+    const from = categoryDrag.from;
+    const to = categoryDrag.targetIndex;
     const index = allCategories.indexOf(category);
     if (from < to && index > from && index <= to) return `translate3d(-${categoryDrag.width + 7}px,0,0)`;
     if (from > to && index >= to && index < from) return `translate3d(${categoryDrag.width + 7}px,0,0)`;
@@ -4497,7 +4497,26 @@ export default function App() {
   function beginCategoryDrag(event, category) {
     if (event.button !== 0) return;
     const element = event.currentTarget;
-    const drag = { category, pointerId: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, width: element.offsetWidth, target: category, active: false };
+    const slots = [...document.querySelectorAll(".maps-filter [data-category]")]
+      .filter((node) => node.dataset.category !== "Все")
+      .map((node, index) => ({ category: node.dataset.category, index, rect: node.getBoundingClientRect() }));
+    const from = slots.findIndex((slot) => slot.category === category);
+    const sourceRect = slots[from]?.rect || element.getBoundingClientRect();
+    const drag = {
+      category,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      dx: 0,
+      dy: 0,
+      width: element.offsetWidth,
+      target: category,
+      from,
+      targetIndex: from,
+      sourceRect,
+      slots,
+      active: false,
+    };
     categoryDragRef.current = drag;
     suppressCategoryClick.current = false;
     const move = (e) => {
@@ -4510,17 +4529,21 @@ export default function App() {
       }
       e.preventDefault();
       drag.dx = e.clientX - drag.x;
-      const targets = [...document.querySelectorAll(".maps-filter [data-category]")]
-        .filter((node) => node.dataset.category !== category && node.dataset.category !== "Все");
-      const target = targets.reduce((nearest, node) => {
-        const rect = node.getBoundingClientRect();
+      drag.dy = e.clientY - drag.y;
+      const centerX = drag.sourceRect.left + drag.sourceRect.width / 2 + drag.dx;
+      const centerY = drag.sourceRect.top + drag.sourceRect.height / 2 + drag.dy;
+      const target = drag.slots.reduce((nearest, slot) => {
+        const rect = slot.rect;
         const distance = Math.hypot(
-          e.clientX - Math.max(rect.left, Math.min(e.clientX, rect.right)),
-          e.clientY - Math.max(rect.top, Math.min(e.clientY, rect.bottom))
+          centerX - (rect.left + rect.width / 2),
+          centerY - (rect.top + rect.height / 2)
         );
-        return !nearest || distance < nearest.distance ? { node, distance } : nearest;
-      }, null)?.node;
-      if (target) drag.target = target.dataset.category;
+        return !nearest || distance < nearest.distance ? { slot, distance } : nearest;
+      }, null)?.slot;
+      if (target) {
+        drag.target = target.category;
+        drag.targetIndex = target.index;
+      }
       setCategoryDrag({ ...drag });
     };
     const finish = (e) => {
@@ -4941,6 +4964,7 @@ export default function App() {
 
                   <button
                     type="button"
+                    className="account-popover-action"
                     onClick={() => {
                       setIsAccountOpen(
                         false
@@ -4988,6 +5012,7 @@ export default function App() {
 
                   <button
                     type="button"
+                    className="account-popover-action"
                     onClick={() => {
                       setIsAccountOpen(
                         false
@@ -5038,6 +5063,7 @@ export default function App() {
 
                   <button
                     type="button"
+                    className="account-popover-action account-popover-logout"
                     onClick={
                       handleSignOut
                     }
