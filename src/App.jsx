@@ -4551,10 +4551,31 @@ export default function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
+      const releaseRect = drag.active ? element.getBoundingClientRect() : null;
+      if (drag.active) element.style.transition = "none";
       if (drag.active && e.type !== "pointercancel") reorderCategories(category, drag.target);
       if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
       categoryDragRef.current = null;
       setCategoryDrag(null);
+      if (releaseRect) {
+        window.requestAnimationFrame(() => {
+          const settled = [...document.querySelectorAll(".maps-filter [data-category]")]
+            .find((node) => node.dataset.category === category);
+          if (!settled) return;
+          const finalRect = settled.getBoundingClientRect();
+          const offsetX = releaseRect.left - finalRect.left;
+          const offsetY = releaseRect.top - finalRect.top;
+          const animation = settled.animate?.(
+            [
+              { transform: `translate3d(${offsetX}px,${offsetY}px,0)` },
+              { transform: "translate3d(0,0,0)" },
+            ],
+            { duration: 240, easing: "cubic-bezier(.2,.8,.2,1)" }
+          );
+          if (animation) animation.onfinish = () => settled.style.removeProperty("transition");
+          else settled.style.removeProperty("transition");
+        });
+      }
       window.setTimeout(() => { suppressCategoryClick.current = false; }, 0);
     };
     window.addEventListener("pointermove", move, { passive: false });
