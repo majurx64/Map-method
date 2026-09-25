@@ -988,6 +988,7 @@ function normalizeMap(map = {}) {
     deadline: /^\d{4}-\d{2}-\d{2}$/.test(map.deadline || "") ? map.deadline : "",
     activityLog: normalizeActivityLog(map.activityLog),
     dailyPlanDoneOn: /^\d{4}-\d{2}-\d{2}$/.test(map.dailyPlanDoneOn || "") ? map.dailyPlanDoneOn : "",
+    privateLibraryItem: Boolean(map.privateLibraryItem),
     modeDrafts: {
       ...(freeDraft ? { free: freeDraft } : {}),
       ...(imageDraft ? { image: imageDraft } : {}),
@@ -1745,7 +1746,7 @@ export default function App() {
     }
   }, [privateLibrary]);
 
-  function saveMapToLibrary(map) {
+  async function saveMapToLibrary(map) {
     const dimensions = getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols);
     const item = normalizeMap({
       ...map,
@@ -1759,7 +1760,15 @@ export default function App() {
       progressCompleted: [],
       progressExtra: 0,
       modeDrafts: {},
+      privateLibraryItem: true,
     });
+    if (user) {
+      const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(item, user.id), { onConflict: "id" });
+      if (error) {
+        setLibraryStatus("Не удалось сохранить эскиз в аккаунте.");
+        return;
+      }
+    }
     setPrivateLibrary((current) => ({
       ...current,
       [libraryUserKey]: [...(current[libraryUserKey] || []), item],
@@ -1847,7 +1856,14 @@ export default function App() {
     }, 180);
   }
 
-  function removeLibraryItem(id) {
+  async function removeLibraryItem(id) {
+    if (user) {
+      const { error } = await supabase.from("maps").delete().eq("id", id).eq("user_id", user.id);
+      if (error) {
+        setLibraryStatus("Не удалось удалить эскиз из аккаунта.");
+        return;
+      }
+    }
     setPrivateLibrary((current) => ({
       ...current,
       [libraryUserKey]: (current[libraryUserKey] || []).filter((item) => item.id !== id),
@@ -2258,13 +2274,16 @@ export default function App() {
 
       let loadedMaps = [];
       let loadedActiveId = null;
+      let loadedLibrary = [];
 
       if (error) {
         console.error(error);
         loadedMaps = [];
         loadedActiveId = null;
       } else if (data?.length) {
-        loadedMaps = data.map(mapFromSupabaseRow);
+        const remoteItems = data.map(mapFromSupabaseRow);
+        loadedMaps = remoteItems.filter((map) => !map.privateLibraryItem);
+        loadedLibrary = remoteItems.filter((map) => map.privateLibraryItem);
 
         const saved =
           localStorage.getItem(ACTIVE_MAP_KEY);
@@ -2312,10 +2331,26 @@ export default function App() {
       }
 
       if (!error) {
+        const localLibrary = Array.isArray(privateLibrary[user.id]) ? privateLibrary[user.id] : [];
+        if (!loadedLibrary.length && localLibrary.length) {
+          for (const oldItem of localLibrary) {
+            const item = normalizeMap({
+              ...oldItem,
+              id: loadedMaps.some((map) => map.id === oldItem.id) ? createMapId() : oldItem.id,
+              privateLibraryItem: true,
+            });
+            const { error: libraryMigrationError } = await supabase.from("maps").upsert(mapToSupabaseRow(item, user.id), { onConflict: "id" });
+            if (!libraryMigrationError) loadedLibrary.push(item);
+          }
+        }
+        setPrivateLibrary((current) => ({ ...current, [user.id]: loadedLibrary }));
         localStorage.setItem(LEGACY_MAP_MIGRATION_KEY, user.id);
         localStorage.setItem(LOCAL_MAP_OWNER_KEY, user.id);
         saveMapsLocally(loadedMaps);
       }
+
+      const remoteCategories = [...new Set(loadedMaps.map((map) => map.category).filter((category) => category && !MAP_CATEGORIES.includes(category)))];
+      setCustomCategories(remoteCategories);
 
       const recoveryOwner = String(
         user.user_metadata?.username
