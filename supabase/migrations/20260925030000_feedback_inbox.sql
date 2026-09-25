@@ -37,6 +37,16 @@ with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'majurx64@yandex.ru');
 create index if not exists feedback_messages_created_at_idx
 on public.feedback_messages (created_at desc);
 
+drop policy if exists "Users can upload feedback attachments" on storage.objects;
+create policy "Users can upload feedback attachments"
+on storage.objects
+for insert
+to authenticated
+with check (
+  bucket_id = 'feedback-attachments'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
 drop policy if exists "Owner can read feedback attachments" on storage.objects;
 create policy "Owner can read feedback attachments"
 on storage.objects

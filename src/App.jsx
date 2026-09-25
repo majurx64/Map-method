@@ -1073,6 +1073,12 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   }
   const visibleRows = endRow - startRow + 1;
   const visibleCols = endCol - startCol + 1;
+  const previewCellSize = cropToDrawing
+    ? Math.max(3, Math.min(15, Math.floor(Math.min(
+        (310 - Math.max(0, visibleCols - 1) * 2) / visibleCols,
+        (184 - Math.max(0, visibleRows - 1) * 2) / visibleRows
+      ))))
+    : null;
   const visibleIndices = Array.from({ length: visibleRows * visibleCols }, (_, index) => (
     (startRow + Math.floor(index / visibleCols)) * dimensions.cols + startCol + (index % visibleCols)
   )).filter((index) => index < dimensions.actualTotal);
@@ -1081,8 +1087,11 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     <div
       className="map-card-grid"
       style={{
-        gridTemplateColumns: `repeat(${visibleCols},minmax(0,1fr))`,
-        aspectRatio: `${visibleCols}/${visibleRows}`,
+        gridTemplateColumns: cropToDrawing
+          ? `repeat(${visibleCols},${previewCellSize}px)`
+          : `repeat(${visibleCols},minmax(0,1fr))`,
+        gridAutoRows: cropToDrawing ? `${previewCellSize}px` : undefined,
+        aspectRatio: cropToDrawing ? "auto" : `${visibleCols}/${visibleRows}`,
       }}
     >
       {visibleIndices.map((index) => {
@@ -2260,7 +2269,7 @@ export default function App() {
 
     supabase.auth.getSession().then(({ data }) => {
       if (mounted) {
-        setUser(data.session?.user || null);
+        setUser((previous) => previous?.id === data.session?.user?.id ? previous : data.session?.user || null);
         rememberSession(data.session);
         setAuthLoading(false);
       }
@@ -2271,7 +2280,7 @@ export default function App() {
     } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (mounted) {
-          setUser(session?.user || null);
+          setUser((previous) => previous?.id === session?.user?.id ? previous : session?.user || null);
           rememberSession(session);
           if (session?.user && ["SIGNED_IN", "TOKEN_REFRESHED", "USER_UPDATED"].includes(event)) {
             const url = new URL(window.location.href);
@@ -2293,14 +2302,16 @@ export default function App() {
   useLayoutEffect(() => {
     if (!savedAccountDragId) return;
     document.querySelectorAll("[data-saved-account-id]").forEach((element) => {
+      if (element.dataset.savedAccountId === savedAccountDragId) return;
       const previousTop = savedAccountPositionsRef.current.get(element.dataset.savedAccountId);
       if (previousTop == null) return;
       const currentTop = element.getBoundingClientRect().top;
       const delta = previousTop - currentTop;
       if (Math.abs(delta) > 1) {
+        element.getAnimations().forEach((animation) => animation.cancel());
         element.animate(
           [{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }],
-          { duration: 240, easing: "cubic-bezier(.16,1,.3,1)" }
+          { duration: 200, easing: "cubic-bezier(.16,1,.3,1)" }
         );
       }
     });
@@ -2501,7 +2512,7 @@ export default function App() {
 
       clearTimeout(saveTimerRef.current);
     };
-  }, [user, authLoading]);
+  }, [user?.id, authLoading]);
 
   useEffect(() => {
     if (
@@ -2842,7 +2853,9 @@ export default function App() {
 
   async function switchToSavedAccount(account) {
     const currentMap = buildCurrentMap();
-    if (currentMap) await remoteSave(currentMap);
+    if (currentMap) remoteSave(currentMap);
+    setIsAccountOpen(false);
+    setIsAccountSwitcherOpen(false);
     const { error } = await supabase.auth.setSession({
       access_token: account.accessToken,
       refresh_token: account.refreshToken,
@@ -2856,13 +2869,17 @@ export default function App() {
       console.error("Не удалось переключить аккаунт:", error);
       return;
     }
-    setIsAccountOpen(false);
-    setIsAccountSwitcherOpen(false);
     setScreen("account");
   }
 
-  function reorderSavedAccounts(targetId) {
+  function reorderSavedAccounts(targetId, pointerY, targetElement) {
     if (!savedAccountDragId || savedAccountDragId === targetId) return;
+    const from = savedAccounts.findIndex((account) => account.id === savedAccountDragId);
+    const to = savedAccounts.findIndex((account) => account.id === targetId);
+    if (from < 0 || to < 0 || !targetElement) return;
+    const bounds = targetElement.getBoundingClientRect();
+    if (from < to && pointerY < bounds.top + bounds.height * 0.68) return;
+    if (from > to && pointerY > bounds.top + bounds.height * 0.32) return;
     savedAccountPositionsRef.current = new Map(
       [...document.querySelectorAll("[data-saved-account-id]")].map((element) => [
         element.dataset.savedAccountId,
@@ -2870,12 +2887,12 @@ export default function App() {
       ])
     );
     setSavedAccounts((previous) => {
-      const from = previous.findIndex((account) => account.id === savedAccountDragId);
-      const to = previous.findIndex((account) => account.id === targetId);
-      if (from < 0 || to < 0) return previous;
+      const currentFrom = previous.findIndex((account) => account.id === savedAccountDragId);
+      const currentTo = previous.findIndex((account) => account.id === targetId);
+      if (currentFrom < 0 || currentTo < 0) return previous;
       const next = [...previous];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
+      const [moved] = next.splice(currentFrom, 1);
+      next.splice(currentTo, 0, moved);
       localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
       return next;
     });
@@ -5138,15 +5155,15 @@ export default function App() {
       const attachments = [];
       for (const file of feedbackFiles) {
         if (!user) throw new Error("auth");
-        const safeName = file.name.replace(/[^a-zA-Zа-яА-ЯёЁ0-9._-]+/g, "-");
-        const path = `${user.id}/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+        const extension = file.name.includes(".") ? `.${file.name.split(".").pop().replace(/[^a-zA-Z0-9]/g, "")}` : "";
+        const path = `${user.id}/${Date.now()}-${crypto.randomUUID()}${extension}`;
         const { error: uploadError } = await supabase.storage.from(FEEDBACK_BUCKET).upload(path, file, { contentType: file.type, upsert: false });
         if (uploadError) throw uploadError;
-        const { data: signedFile, error: signedUrlError } = await supabase.storage.from(FEEDBACK_BUCKET).createSignedUrl(path, 60 * 60 * 24 * 30);
-        if (signedUrlError) throw signedUrlError;
-        attachments.push({ name: file.name, path, url: signedFile.signedUrl });
+        const { data: signedFile } = await supabase.storage.from(FEEDBACK_BUCKET).createSignedUrl(path, 60 * 60 * 24 * 30);
+        attachments.push({ name: file.name, path, url: signedFile?.signedUrl || "" });
       }
-      if (attachments.length) formData.append("Вложения", attachments.map((attachment) => attachment.url).join("\n"));
+      const attachmentLinks = attachments.map((attachment) => attachment.url).filter(Boolean);
+      if (attachmentLinks.length) formData.append("Вложения", attachmentLinks.join("\n"));
       const { error: inboxError } = await supabase.from(FEEDBACK_TABLE).insert({
         sender_id: user.id,
         sender_email: user.email || "",
@@ -5172,7 +5189,8 @@ export default function App() {
         setShowFeedbackThanks(true);
         window.setTimeout(() => setShowFeedbackThanks(false), 2200);
       }, 260);
-    } catch {
+    } catch (error) {
+      console.error("Не удалось отправить обращение:", error);
       setFeedbackStatus("error");
     }
   }
@@ -5557,21 +5575,10 @@ export default function App() {
                           type="button"
                           className={`saved-account-item${savedAccountDragId === account.id ? " is-dragging" : ""}`}
                           data-saved-account-id={account.id}
-                          draggable
                           key={account.id}
-                          onDragStart={(event) => {
-                            suppressSavedAccountClickRef.current = true;
-                            setSavedAccountDragId(account.id);
-                            event.dataTransfer.effectAllowed = "move";
-                          }}
-                          onDragEnter={(event) => {
+                          onDragOver={(event) => {
                             event.preventDefault();
-                            reorderSavedAccounts(account.id);
-                          }}
-                          onDragOver={(event) => event.preventDefault()}
-                          onDragEnd={() => {
-                            setSavedAccountDragId(null);
-                            window.setTimeout(() => { suppressSavedAccountClickRef.current = false; }, 0);
+                            reorderSavedAccounts(account.id, event.clientY, event.currentTarget);
                           }}
                           onClick={() => {
                             if (!suppressSavedAccountClickRef.current) switchToSavedAccount(account);
@@ -5579,7 +5586,22 @@ export default function App() {
                         >
                           <span className="saved-account-avatar">{account.name?.charAt(0).toUpperCase() || "M"}</span>
                           <i><strong>{account.name}</strong><small>{account.email}</small></i>
-                          <span className="saved-account-handle" aria-label="Перетащить аккаунт">≡</span>
+                          <span
+                            className="saved-account-handle"
+                            aria-label="Перетащить аккаунт"
+                            draggable
+                            onClick={(event) => event.stopPropagation()}
+                            onDragStart={(event) => {
+                              suppressSavedAccountClickRef.current = true;
+                              setSavedAccountDragId(account.id);
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", account.id);
+                            }}
+                            onDragEnd={() => {
+                              setSavedAccountDragId(null);
+                              window.setTimeout(() => { suppressSavedAccountClickRef.current = false; }, 180);
+                            }}
+                          >≡</span>
                         </button>
                       ))}
                       <button type="button" className="add-account-action" onClick={handleSwitchAccount}>＋ Добавить аккаунт</button>
@@ -6385,7 +6407,7 @@ export default function App() {
       )}
 
       {screen === "maps" && (
-        <section className="maps-page">
+        <section className={`maps-page${authLoading || mapsLoading || !isMapInitialized ? " is-loading" : " is-ready"}`}>
           <div className="maps-page-header">
             <div>
               <h1>
@@ -7901,7 +7923,24 @@ export default function App() {
                 />
                 <span>{feedbackFiles.length ? `Добавить ещё файлы · выбрано ${feedbackFiles.length}` : "+ Прикрепить несколько файлов"}</span>
               </label>
-              {!!feedbackFiles.length && <small className="feedback-file-names">{feedbackFiles.map((file) => file.name).join(", ")}</small>}
+              {!!feedbackFiles.length && (
+                <div className="feedback-file-list">
+                  {feedbackFiles.map((file, index) => (
+                    <div className="feedback-file-item" key={`${file.name}-${file.size}-${file.lastModified}`}>
+                      <span title={file.name}>{file.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`Удалить файл ${file.name}`}
+                        onClick={() => {
+                          const next = feedbackFiles.filter((_, fileIndex) => fileIndex !== index);
+                          setFeedbackFiles(next);
+                          setFeedbackStatus(next.reduce((total, saved) => total + saved.size, 0) > FEEDBACK_MAX_BYTES ? "files-too-large" : "");
+                        }}
+                      >×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             {feedbackStatus === "error" && <p className="feedback-result error">Не удалось отправить. Попробуйте ещё раз чуть позже.</p>}
             {feedbackStatus === "files-too-large" && <p className="feedback-result error">Общий размер вложений не должен превышать 50 МБ.</p>}
