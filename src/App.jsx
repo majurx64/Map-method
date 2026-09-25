@@ -1263,6 +1263,7 @@ export default function App() {
   const [publicLibrary, setPublicLibrary] = useState(BUILTIN_PUBLIC_LIBRARY);
   const [libraryStatus, setLibraryStatus] = useState("");
   const [isEditingAccountName, setIsEditingAccountName] = useState(false);
+  const [isClosingAccountName, setIsClosingAccountName] = useState(false);
   const [accountNameDraft, setAccountNameDraft] = useState("");
   const [accountNameStatus, setAccountNameStatus] = useState("");
   const [todayKey, setTodayKey] = useState(() => getActivityDate());
@@ -1535,6 +1536,9 @@ export default function App() {
   const viewportRef = useRef(null);
   const accountRef = useRef(null);
   const languageRef = useRef(null);
+  const accountNameEditorRef = useRef(null);
+  const accountNameInputRef = useRef(null);
+  const accountNameCloseTimerRef = useRef(null);
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
   const heroNotePointerRef = useRef(null);
@@ -1816,8 +1820,26 @@ export default function App() {
       return;
     }
     setUser(data.user);
-    setIsEditingAccountName(false);
     setAccountNameStatus("Ник изменён.");
+    closeAccountNameEditor();
+  }
+
+  function openAccountNameEditor() {
+    window.clearTimeout(accountNameCloseTimerRef.current);
+    setAccountNameDraft(accountName);
+    setAccountNameStatus("");
+    setIsClosingAccountName(false);
+    setIsEditingAccountName(true);
+  }
+
+  function closeAccountNameEditor() {
+    if (!isEditingAccountName || isClosingAccountName) return;
+    setIsClosingAccountName(true);
+    window.clearTimeout(accountNameCloseTimerRef.current);
+    accountNameCloseTimerRef.current = window.setTimeout(() => {
+      setIsEditingAccountName(false);
+      setIsClosingAccountName(false);
+    }, 180);
   }
 
   function removeLibraryItem(id) {
@@ -2600,6 +2622,25 @@ export default function App() {
       );
     };
   }, []);
+
+  useEffect(() => {
+    if (!isEditingAccountName) return undefined;
+    accountNameInputRef.current?.focus({ preventScroll: true });
+    const closeNameOnOutsidePointer = (event) => {
+      if (!accountNameEditorRef.current?.contains(event.target)) {
+        setIsClosingAccountName(true);
+        window.clearTimeout(accountNameCloseTimerRef.current);
+        accountNameCloseTimerRef.current = window.setTimeout(() => {
+          setIsEditingAccountName(false);
+          setIsClosingAccountName(false);
+        }, 180);
+      }
+    };
+    document.addEventListener("pointerdown", closeNameOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeNameOnOutsidePointer);
+  }, [isEditingAccountName]);
+
+  useEffect(() => () => window.clearTimeout(accountNameCloseTimerRef.current), []);
 
   async function handleSignOut() {
     setIsAccountOpen(false);
@@ -4996,6 +5037,7 @@ export default function App() {
             >
               <button
                 type="button"
+                className="account-trigger"
                 onClick={() => {
                   setIsLanguageOpen(false);
                   setIsAccountOpen((v) => !v);
@@ -5025,6 +5067,8 @@ export default function App() {
                 }}
               >
                 <span
+                  key={accountInitial}
+                  className="header-account-initial"
                   style={{
                     width: "30px",
                     height: "30px",
@@ -5048,6 +5092,8 @@ export default function App() {
                 </span>
 
                 <span
+                  key={accountName}
+                  className="header-account-name"
                   style={{
                     maxWidth:
                       "110px",
@@ -5770,30 +5816,32 @@ export default function App() {
 
           <div className="account-dashboard">
             <section className="account-profile-card">
-              <div className="account-avatar">{accountInitial}</div>
-              <div>
+              <div className="account-avatar" key={accountInitial}>{accountInitial}</div>
+              <div className="account-profile-copy">
                 <span className="account-eyebrow">ТВОЙ ПРОФИЛЬ</span>
-                {isEditingAccountName ? (
-                  <div className="account-name-editor">
+                <div className="account-name-slot">
+                  {isEditingAccountName ? (
+                  <div ref={accountNameEditorRef} className={`account-name-editor${isClosingAccountName ? " is-closing" : ""}`}>
                     <input
-                      autoFocus
+                      ref={accountNameInputRef}
                       value={accountNameDraft}
                       maxLength={32}
                       onChange={(event) => setAccountNameDraft(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") saveAccountName();
-                        if (event.key === "Escape") setIsEditingAccountName(false);
+                        if (event.key === "Escape") closeAccountNameEditor();
                       }}
                     />
                     <button type="button" onClick={saveAccountName}>Сохранить</button>
-                    <button type="button" className="account-name-cancel" aria-label="Отменить" onClick={() => setIsEditingAccountName(false)}>×</button>
+                    <button type="button" className="account-name-cancel" aria-label="Отменить" onClick={closeAccountNameEditor}>×</button>
                   </div>
                 ) : (
                   <div className="account-name-row">
-                    <h2>{accountName}</h2>
-                    {user && <button type="button" aria-label="Изменить ник" title="Изменить ник" onClick={() => { setAccountNameDraft(accountName); setAccountNameStatus(""); setIsEditingAccountName(true); }}>✎</button>}
+                    <h2 key={accountName}>{accountName}</h2>
+                    {user && <button type="button" aria-label="Изменить ник" title="Изменить ник" onClick={openAccountNameEditor}>✎</button>}
                   </div>
                 )}
+                </div>
                 <p>{accountEmail}</p>
                 {!!accountNameStatus && <small className="account-name-status">{accountNameStatus}</small>}
               </div>
