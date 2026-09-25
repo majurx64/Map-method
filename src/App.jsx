@@ -43,10 +43,13 @@ const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count,
 const DEMO_PYRAMID_INITIAL = (() => {
   const filled = [];
   let offset = 0;
-  DEMO_PYRAMID_ROWS.forEach((count) => {
-    const innerWidth = Math.max(1, Math.round(count * 0.36) | 1);
-    const start = Math.floor((count - innerWidth) / 2);
-    for (let column = start; column < start + innerWidth; column++) filled.push(offset + column);
+  DEMO_PYRAMID_ROWS.forEach((count, row) => {
+    if (row >= DEMO_PYRAMID_ROWS.length - 2) {
+      for (let column = 0; column < count; column++) filled.push(offset + column);
+    } else if (row === DEMO_PYRAMID_ROWS.length - 3) {
+      const center = Math.floor(count / 2);
+      filled.push(offset + center - 1, offset + center, offset + center + 1);
+    }
     offset += count;
   });
   return filled;
@@ -1280,6 +1283,7 @@ export default function App() {
   const [gameFillCount, setGameFillCount] = useState("1");
   const [gameFillRandom, setGameFillRandom] = useState(false);
   const [showVictory, setShowVictory] = useState(false);
+  const [victoryDismissing, setVictoryDismissing] = useState(false);
 
   const activeMap =
     maps.find((m) => m.id === activeMapId) || null;
@@ -1567,6 +1571,7 @@ export default function App() {
   const hydrationReleaseTimerRef = useRef(null);
   const historyReadyRef = useRef(false);
   const historyNavigationRef = useRef(false);
+  const preservedScrollRef = useRef(null);
   const mapCellsHoldRef = useRef({ delay: null, interval: null });
   const gameFillTimersRef = useRef([]);
 
@@ -1607,6 +1612,20 @@ export default function App() {
     translations.ru[key] ??
     key;
 
+  function rememberScrollPosition(screenName) {
+    const position = Math.max(window.scrollY, document.documentElement.scrollTop, document.body.scrollTop);
+    const positions = JSON.parse(localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}");
+    positions[screenName] = position;
+    localStorage.setItem(SCROLL_POSITIONS_KEY, JSON.stringify(positions));
+    preservedScrollRef.current = { screen: screenName, position };
+  }
+
+  function openMapFromList(map) {
+    rememberScrollPosition("maps");
+    openMap(map);
+    setScreen("editor");
+  }
+
   function toggleDemoCell(setCells, index, erase = false) {
     setCells((previous) => {
       const next = new Set(previous);
@@ -1628,10 +1647,15 @@ export default function App() {
   const accountInitial =
     accountName.trim().charAt(0).toUpperCase() || "M";
 
-  const accountMapStats = maps.map((map) => ({ ...map, ...getMapStats(map) }));
+  const accountMapStats = maps.map((map) => {
+    const statsSource = map.id === activeMapId
+      ? { ...map, mapType, totalCells, imageRatio, gridMode, manualRows, manualCols, completed, progressCompleted }
+      : map;
+    return { ...map, ...getMapStats(statsSource) };
+  });
 
   const accountPaintedCells = accountMapStats.reduce(
-    (sum, map) => sum + map.filled,
+    (sum, map) => sum + Math.min(map.filled, map.total),
     0
   );
   const accountTotalCells = accountMapStats.reduce(
@@ -1643,7 +1667,7 @@ export default function App() {
   ).length;
   const accountRemainingCells = Math.max(0, accountTotalCells - accountPaintedCells);
   const accountProgressPercent = accountTotalCells
-    ? Math.round((accountPaintedCells / accountTotalCells) * 1000) / 10
+    ? Math.min(100, Math.round((accountPaintedCells / accountTotalCells) * 1000) / 10)
     : 0;
   const accountDailyGoal = accountRemainingCells
     ? Math.ceil(accountRemainingCells / 30)
@@ -1871,6 +1895,7 @@ export default function App() {
     const restore = () => {
       window.scrollTo(0, target);
       restored = true;
+      if (preservedScrollRef.current?.screen === screen) preservedScrollRef.current = null;
     };
     // Восстанавливаем позицию только один раз. Повторные таймеры перехватывали
     // ручную прокрутку и иногда возвращали страницу наверх.
@@ -1880,11 +1905,9 @@ export default function App() {
       const next = JSON.parse(
         localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}"
       );
-      next[screen] = Math.max(
-        window.scrollY,
-        document.documentElement.scrollTop,
-        document.body.scrollTop
-      );
+      next[screen] = preservedScrollRef.current?.screen === screen
+        ? preservedScrollRef.current.position
+        : Math.max(window.scrollY, document.documentElement.scrollTop, document.body.scrollTop);
       localStorage.setItem(SCROLL_POSITIONS_KEY, JSON.stringify(next));
     };
     window.addEventListener("scroll", savePosition, { passive: true });
@@ -2015,6 +2038,7 @@ export default function App() {
       return;
     }
     if (complete && !wasGameCompleteRef.current) {
+      setVictoryDismissing(false);
       setShowVictory(true);
       window.setTimeout(() => setShowVictory(false), 3200);
     }
@@ -4551,29 +4575,37 @@ export default function App() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
-      const releaseRect = drag.active ? element.getBoundingClientRect() : null;
-      if (drag.active) element.style.transition = "none";
+      const categoryElements = drag.active
+        ? [...document.querySelectorAll(".maps-filter [data-category]")]
+        : [];
+      const releaseRects = new Map(categoryElements.map((node) => [node.dataset.category, node.getBoundingClientRect()]));
+      categoryElements.forEach((node) => { node.style.transition = "none"; });
       if (drag.active && e.type !== "pointercancel") reorderCategories(category, drag.target);
       if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
       categoryDragRef.current = null;
       setCategoryDrag(null);
-      if (releaseRect) {
+      if (releaseRects.size) {
         window.requestAnimationFrame(() => {
-          const settled = [...document.querySelectorAll(".maps-filter [data-category]")]
-            .find((node) => node.dataset.category === category);
-          if (!settled) return;
-          const finalRect = settled.getBoundingClientRect();
-          const offsetX = releaseRect.left - finalRect.left;
-          const offsetY = releaseRect.top - finalRect.top;
-          const animation = settled.animate?.(
-            [
-              { transform: `translate3d(${offsetX}px,${offsetY}px,0)` },
-              { transform: "translate3d(0,0,0)" },
-            ],
-            { duration: 240, easing: "cubic-bezier(.2,.8,.2,1)" }
-          );
-          if (animation) animation.onfinish = () => settled.style.removeProperty("transition");
-          else settled.style.removeProperty("transition");
+          [...document.querySelectorAll(".maps-filter [data-category]")].forEach((settled) => {
+            const releaseRect = releaseRects.get(settled.dataset.category);
+            if (!releaseRect) return;
+            const finalRect = settled.getBoundingClientRect();
+            const offsetX = releaseRect.left - finalRect.left;
+            const offsetY = releaseRect.top - finalRect.top;
+            if (Math.abs(offsetX) < 0.5 && Math.abs(offsetY) < 0.5) {
+              settled.style.removeProperty("transition");
+              return;
+            }
+            const animation = settled.animate?.(
+              [
+                { transform: `translate3d(${offsetX}px,${offsetY}px,0)` },
+                { transform: "translate3d(0,0,0)" },
+              ],
+              { duration: 240, easing: "cubic-bezier(.2,.8,.2,1)" }
+            );
+            if (animation) animation.onfinish = () => settled.style.removeProperty("transition");
+            else settled.style.removeProperty("transition");
+          });
         });
       }
       window.setTimeout(() => { suppressCategoryClick.current = false; }, 0);
@@ -4726,10 +4758,19 @@ export default function App() {
     }
   }
 
+  function dismissVictory() {
+    if (!showVictory || victoryDismissing) return;
+    setVictoryDismissing(true);
+    window.setTimeout(() => {
+      setShowVictory(false);
+      setVictoryDismissing(false);
+    }, 180);
+  }
+
   return (
     <div className="app">
       {showVictory && (
-        <div className="victory-overlay" role="status">
+        <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status" onPointerDown={dismissVictory}>
           <div className="victory-confetti" aria-hidden="true">
             {Array.from({ length: 28 }, (_, index) => (
               <i
@@ -5674,16 +5715,24 @@ export default function App() {
             <section className="account-plan-card">
               <div>
                 <span className="account-eyebrow">ПЛАН НА СЕГОДНЯ</span>
-                <h2>{accountDailyGoal ? "Двигайся в своём ритме" : "Начни с первой карты"}</h2>
+                <h2>{!accountTotalCells ? "Начни с первой карты" : accountDailyGoal ? "Двигайся в своём ритме" : "Все карты завершены"}</h2>
                 <p>
-                  {accountDailyGoal
+                  {!accountTotalCells
+                    ? "Создай карту, выбери рисунок — и здесь появится твой личный темп."
+                    : accountDailyGoal
                     ? `Чтобы завершить текущие карты примерно за 30 дней, достаточно закрашивать ${accountDailyGoal} клеток в день.`
-                    : "Создай карту, выбери рисунок — и здесь появится твой личный темп."}
+                    : "Отличная работа — на текущих картах не осталось незакрашенных клеток."}
                 </p>
               </div>
-              <div className="account-goal-ring" style={{ "--progress": `${Math.min(100, accountProgressPercent)}%` }}>
-                <strong>{accountProgressPercent}%</strong>
-                <span>всего</span>
+              <div className="account-goal-progress">
+                <div>
+                  <strong>{accountProgressPercent}%</strong>
+                  <span>общий прогресс</span>
+                </div>
+                <div className="account-goal-track" aria-label={`Общий прогресс: ${accountProgressPercent}%`}>
+                  <i style={{ width: `${accountProgressPercent}%` }} />
+                </div>
+                <small>{accountPaintedCells} из {accountTotalCells} клеток</small>
               </div>
             </section>
 
@@ -5916,12 +5965,7 @@ export default function App() {
                       }
                       onClick={() => {
                         if (suppressCardClick.current || deletingIdsRef.current.has(map.id)) return;
-                        openMap(
-                          map
-                        );
-                        setScreen(
-                          "editor"
-                        );
+                        openMapFromList(map);
                       }}
                       >
                       {deletingIds.includes(map.id) && <div className="card-debris" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ "--x": (i % 6) * 20 + "%", "--y": Math.floor(i / 6) * 30 + "%", "--dx": ((i * 37) % 180 - 90) + "px", "--dy": (40 + i * 7) + "px", "--turn": (i * 47) + "deg" }} />)}</div>}
@@ -5993,13 +6037,7 @@ export default function App() {
                               ) => {
                                 e.stopPropagation();
 
-                                openMap(
-                                  map
-                                );
-
-                                setScreen(
-                                  "editor"
-                                );
+                                openMapFromList(map);
                               }}
                             >
                               {t(
