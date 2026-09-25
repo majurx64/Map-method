@@ -1074,9 +1074,9 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   const visibleRows = endRow - startRow + 1;
   const visibleCols = endCol - startCol + 1;
   const previewCellSize = cropToDrawing
-    ? Math.max(3, Math.min(15, Math.floor(Math.min(
-        (310 - Math.max(0, visibleCols - 1) * 2) / visibleCols,
-        (184 - Math.max(0, visibleRows - 1) * 2) / visibleRows
+    ? Math.max(3, Math.min(16, Math.floor(Math.min(
+        (330 - Math.max(0, visibleCols - 1)) / visibleCols,
+        (204 - Math.max(0, visibleRows - 1)) / visibleRows
       ))))
     : null;
   const visibleIndices = Array.from({ length: visibleRows * visibleCols }, (_, index) => (
@@ -1558,12 +1558,15 @@ export default function App() {
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [feedbackEmail, setFeedbackEmail] = useState("");
   const [feedbackFiles, setFeedbackFiles] = useState([]);
+  const [feedbackRemovingFile, setFeedbackRemovingFile] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [showFeedbackThanks, setShowFeedbackThanks] = useState(false);
   const [feedbackMessages, setFeedbackMessages] = useState([]);
   const [feedbackInboxLoading, setFeedbackInboxLoading] = useState(false);
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
   const [savedAccountDragId, setSavedAccountDragId] = useState(null);
+  const [savedAccountDropId, setSavedAccountDropId] = useState(null);
+  const [switchingAccountId, setSwitchingAccountId] = useState(null);
   const [savedAccounts, setSavedAccounts] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(SAVED_ACCOUNTS_KEY) || "[]");
@@ -2856,6 +2859,7 @@ export default function App() {
     if (currentMap) remoteSave(currentMap);
     setIsAccountOpen(false);
     setIsAccountSwitcherOpen(false);
+    setSwitchingAccountId(account.id);
     const { error } = await supabase.auth.setSession({
       access_token: account.accessToken,
       refresh_token: account.refreshToken,
@@ -2867,19 +2871,15 @@ export default function App() {
         return next;
       });
       console.error("Не удалось переключить аккаунт:", error);
+      setSwitchingAccountId(null);
       return;
     }
     setScreen("account");
+    setSwitchingAccountId(null);
   }
 
-  function reorderSavedAccounts(targetId, pointerY, targetElement) {
+  function reorderSavedAccounts(targetId) {
     if (!savedAccountDragId || savedAccountDragId === targetId) return;
-    const from = savedAccounts.findIndex((account) => account.id === savedAccountDragId);
-    const to = savedAccounts.findIndex((account) => account.id === targetId);
-    if (from < 0 || to < 0 || !targetElement) return;
-    const bounds = targetElement.getBoundingClientRect();
-    if (from < to && pointerY < bounds.top + bounds.height * 0.68) return;
-    if (from > to && pointerY > bounds.top + bounds.height * 0.32) return;
     savedAccountPositionsRef.current = new Map(
       [...document.querySelectorAll("[data-saved-account-id]")].map((element) => [
         element.dataset.savedAccountId,
@@ -5228,6 +5228,12 @@ export default function App() {
           <span>Отличная работа — рисунок собран.</span>
         </div>
       )}
+      {switchingAccountId && (
+        <div className="account-switching-overlay" role="status">
+          <span />
+          <strong>Переключаем аккаунт…</strong>
+        </div>
+      )}
       <header className="header">
         <button
           className="back-link"
@@ -5573,12 +5579,17 @@ export default function App() {
                       {otherSavedAccounts.map((account) => (
                         <button
                           type="button"
-                          className={`saved-account-item${savedAccountDragId === account.id ? " is-dragging" : ""}`}
+                          className={`saved-account-item${savedAccountDragId === account.id ? " is-dragging" : ""}${savedAccountDropId === account.id ? " is-drop-target" : ""}`}
                           data-saved-account-id={account.id}
                           key={account.id}
                           onDragOver={(event) => {
                             event.preventDefault();
-                            reorderSavedAccounts(account.id, event.clientY, event.currentTarget);
+                            if (savedAccountDragId && savedAccountDragId !== account.id) setSavedAccountDropId(account.id);
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            reorderSavedAccounts(account.id);
+                            setSavedAccountDropId(null);
                           }}
                           onClick={() => {
                             if (!suppressSavedAccountClickRef.current) switchToSavedAccount(account);
@@ -5599,6 +5610,7 @@ export default function App() {
                             }}
                             onDragEnd={() => {
                               setSavedAccountDragId(null);
+                              setSavedAccountDropId(null);
                               window.setTimeout(() => { suppressSavedAccountClickRef.current = false; }, 180);
                             }}
                           >≡</span>
@@ -5620,7 +5632,7 @@ export default function App() {
                     className="account-popover-action feedback-menu-action"
                     onClick={() => {
                       setIsAccountOpen(false);
-                      setFeedbackEmail("");
+                      setFeedbackEmail(user?.email || "");
                       setFeedbackFiles([]);
                       setFeedbackStatus("");
                       setClosingModal("");
@@ -7925,20 +7937,30 @@ export default function App() {
               </label>
               {!!feedbackFiles.length && (
                 <div className="feedback-file-list">
-                  {feedbackFiles.map((file, index) => (
-                    <div className="feedback-file-item" key={`${file.name}-${file.size}-${file.lastModified}`}>
-                      <span title={file.name}>{file.name}</span>
-                      <button
-                        type="button"
-                        aria-label={`Удалить файл ${file.name}`}
-                        onClick={() => {
-                          const next = feedbackFiles.filter((_, fileIndex) => fileIndex !== index);
-                          setFeedbackFiles(next);
-                          setFeedbackStatus(next.reduce((total, saved) => total + saved.size, 0) > FEEDBACK_MAX_BYTES ? "files-too-large" : "");
-                        }}
-                      >×</button>
-                    </div>
-                  ))}
+                  {feedbackFiles.map((file, index) => {
+                    const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
+                    return (
+                      <div className={`feedback-file-item${feedbackRemovingFile === fileKey ? " is-removing" : ""}`} key={fileKey}>
+                        <span title={file.name}>{file.name}</span>
+                        <button
+                          type="button"
+                          aria-label={`Удалить файл ${file.name}`}
+                          onClick={() => {
+                            if (feedbackRemovingFile) return;
+                            setFeedbackRemovingFile(fileKey);
+                            window.setTimeout(() => {
+                              setFeedbackFiles((current) => {
+                                const next = current.filter((_, fileIndex) => fileIndex !== index);
+                                setFeedbackStatus(next.reduce((total, saved) => total + saved.size, 0) > FEEDBACK_MAX_BYTES ? "files-too-large" : "");
+                                return next;
+                              });
+                              setFeedbackRemovingFile("");
+                            }, 460);
+                          }}
+                        >×</button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
