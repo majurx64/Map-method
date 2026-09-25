@@ -23,6 +23,8 @@ const FEEDBACK_MAX_BYTES = 50 * 1024 * 1024;
 const UTILITY_COLOR = "#eeeeee";
 const PUBLIC_LIBRARY_OWNER_EMAIL = "majurx64@yandex.ru";
 const PUBLIC_LIBRARY_TABLE = "library_items";
+const SAVED_ACCOUNTS_KEY = "mm-saved-accounts";
+const FEEDBACK_TABLE = "feedback_messages";
 
 const BASIC_COLORS = [
   "#111111",
@@ -1073,13 +1075,13 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions }) {
             className={`map-card-cell${filled ? " filled" : ""}`}
             style={{
               backgroundColor: utilityCell
-                ? "#deded8"
+                ? "#d3d3cc"
                 : filled
                   ? map.colors?.[index] || "#32624f"
                   : isDrawingCell
-                    ? map.colors?.[index] || "#dcdcdc"
+                    ? map.colors?.[index] || "#aeb5ad"
                     : "#deded8",
-              opacity: utilityCell ? 1 : !filled && isDrawingCell ? 0.18 : 1,
+              opacity: utilityCell ? 1 : !filled && isDrawingCell ? 0.58 : 1,
             }}
           />
         );
@@ -1251,6 +1253,7 @@ export default function App() {
       "editor",
       "account",
       "library",
+      "feedback-inbox",
       "auth",
     ].includes(saved)
       ? saved
@@ -1526,6 +1529,17 @@ export default function App() {
   const [feedbackEmail, setFeedbackEmail] = useState("");
   const [feedbackFiles, setFeedbackFiles] = useState([]);
   const [feedbackStatus, setFeedbackStatus] = useState("");
+  const [showFeedbackThanks, setShowFeedbackThanks] = useState(false);
+  const [feedbackMessages, setFeedbackMessages] = useState([]);
+  const [feedbackInboxLoading, setFeedbackInboxLoading] = useState(false);
+  const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
+  const [savedAccounts, setSavedAccounts] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(SAVED_ACCOUNTS_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [downloadChoice, setDownloadChoice] = useState(null);
 
   const [selectionTool, setSelectionTool] = useState(false);
@@ -1662,7 +1676,10 @@ export default function App() {
 
   const accountInitial =
     accountName.trim().charAt(0).toUpperCase() || "M";
-  const accountTriggerCharacters = Math.max(6, Math.min(accountName.length, 10));
+  const headerAccountName = accountName.length > 10 ? `${accountName.slice(0, 10)}…` : accountName;
+  const accountTriggerCharacters = Math.max(6, headerAccountName.length);
+  const otherSavedAccounts = savedAccounts.filter((account) => account.id !== user?.id);
+  const unreadFeedbackCount = feedbackMessages.filter((message) => !message.is_read).length;
 
   const accountMapStats = maps.map((map) => {
     const statsSource = map.id === activeMapId
@@ -1954,7 +1971,7 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = (event) => {
-      const availableScreens = ["home", "maps", "editor", "account", "library", "auth"];
+      const availableScreens = ["home", "maps", "editor", "account", "library", "feedback-inbox", "auth"];
       const previousScreen = event.state?.mapMethod && availableScreens.includes(event.state.screen)
         ? event.state.screen
         : "home";
@@ -2198,9 +2215,28 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
 
+    const rememberSession = (session) => {
+      if (!session?.user || !session.refresh_token || !session.access_token) return;
+      setSavedAccounts((previous) => {
+        const next = [
+          {
+            id: session.user.id,
+            email: session.user.email || "",
+            name: session.user.user_metadata?.username || session.user.email?.split("@")[0] || "Аккаунт",
+            accessToken: session.access_token,
+            refreshToken: session.refresh_token,
+          },
+          ...previous.filter((account) => account.id !== session.user.id),
+        ];
+        localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
+        return next;
+      });
+    };
+
     supabase.auth.getSession().then(({ data }) => {
       if (mounted) {
         setUser(data.session?.user || null);
+        rememberSession(data.session);
         setAuthLoading(false);
       }
     });
@@ -2208,9 +2244,17 @@ export default function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(
-      (_e, session) => {
+      (event, session) => {
         if (mounted) {
-          setUser((previous) => previous?.id === session?.user?.id ? previous : session?.user || null);
+          setUser(session?.user || null);
+          rememberSession(session);
+          if (session?.user && ["SIGNED_IN", "TOKEN_REFRESHED", "USER_UPDATED"].includes(event)) {
+            const url = new URL(window.location.href);
+            if (url.searchParams.has("code") || url.hash.includes("access_token")) {
+              window.history.replaceState(window.history.state, "", `${url.origin}${url.pathname}`);
+            }
+            setScreen((current) => current === "auth" ? "account" : current);
+          }
         }
       }
     );
@@ -2682,14 +2726,37 @@ export default function App() {
 
   useEffect(() => () => window.clearTimeout(accountNameCloseTimerRef.current), []);
 
+  useEffect(() => {
+    if (!user || !isLibraryOwner) return undefined;
+    let cancelled = false;
+    async function loadFeedbackMessages() {
+      if (!cancelled) setFeedbackInboxLoading(true);
+      const { data, error } = await supabase
+        .from(FEEDBACK_TABLE)
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (!cancelled && !error) setFeedbackMessages(data || []);
+      if (!cancelled) setFeedbackInboxLoading(false);
+    }
+    loadFeedbackMessages();
+    const refreshOnFocus = () => loadFeedbackMessages();
+    window.addEventListener("focus", refreshOnFocus);
+    const timer = window.setInterval(loadFeedbackMessages, 30000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refreshOnFocus);
+      window.clearInterval(timer);
+    };
+  }, [user?.id, isLibraryOwner]);
+
   async function handleSignOut() {
     setIsAccountOpen(false);
 
     const currentMap = buildCurrentMap();
     if (currentMap) await remoteSave(currentMap);
 
-    const { error } =
-      await supabase.auth.signOut();
+    const signingOutUserId = user?.id;
+    const { error } = await supabase.auth.signOut({ scope: "local" });
 
     if (error) {
       console.error(
@@ -2711,6 +2778,11 @@ export default function App() {
     localStorage.removeItem(CUSTOM_COLORS_KEY);
     localStorage.removeItem(CUSTOM_CATEGORIES_KEY);
     localStorage.removeItem(CATEGORY_ORDER_KEY);
+    setSavedAccounts((previous) => {
+      const next = previous.filter((account) => account.id !== signingOutUserId);
+      localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
+      return next;
+    });
 
     setScreen("home");
     localStorage.setItem(
@@ -2723,24 +2795,47 @@ export default function App() {
     setIsAccountOpen(false);
     const currentMap = buildCurrentMap();
     if (currentMap) await remoteSave(currentMap);
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      console.error("Ошибка смены аккаунта:", error);
-      return;
-    }
-    setMaps([]);
-    setActiveMapId(null);
-    setCustomColors([]);
-    setCustomCategories([]);
-    setCategoryOrder([]);
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(ACTIVE_MAP_KEY);
-    localStorage.removeItem(LOCAL_MAP_OWNER_KEY);
-    localStorage.removeItem(CUSTOM_COLORS_KEY);
-    localStorage.removeItem(CUSTOM_CATEGORIES_KEY);
-    localStorage.removeItem(CATEGORY_ORDER_KEY);
     setScreen("auth");
     localStorage.setItem(CURRENT_SCREEN_KEY, "auth");
+  }
+
+  async function switchToSavedAccount(account) {
+    const currentMap = buildCurrentMap();
+    if (currentMap) await remoteSave(currentMap);
+    const { error } = await supabase.auth.setSession({
+      access_token: account.accessToken,
+      refresh_token: account.refreshToken,
+    });
+    if (error) {
+      setSavedAccounts((previous) => {
+        const next = previous.filter((saved) => saved.id !== account.id);
+        localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
+        return next;
+      });
+      console.error("Не удалось переключить аккаунт:", error);
+      return;
+    }
+    setIsAccountOpen(false);
+    setIsAccountSwitcherOpen(false);
+    setScreen("account");
+  }
+
+  async function openFeedbackInbox() {
+    setIsAccountOpen(false);
+    setScreen("feedback-inbox");
+    const unreadIds = feedbackMessages.filter((message) => !message.is_read).map((message) => message.id);
+    if (!unreadIds.length) return;
+    const { error } = await supabase.from(FEEDBACK_TABLE).update({ is_read: true }).in("id", unreadIds);
+    if (!error) setFeedbackMessages((previous) => previous.map((message) => ({ ...message, is_read: true })));
+  }
+
+  async function openFeedbackAttachment(attachment) {
+    if (!attachment?.path) {
+      if (attachment?.url) window.open(attachment.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    const { data, error } = await supabase.storage.from(FEEDBACK_BUCKET).createSignedUrl(attachment.path, 60 * 60);
+    if (!error && data?.signedUrl) window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   }
 
   function selectDrawColor(c) {
@@ -4964,7 +5059,7 @@ export default function App() {
 
   async function submitFeedback(event) {
     event.preventDefault();
-    if (!feedbackMessage.trim()) return;
+    if (!feedbackMessage.trim() || !user) return;
     const attachmentsSize = feedbackFiles.reduce((total, file) => total + file.size, 0);
     if (attachmentsSize > FEEDBACK_MAX_BYTES) {
       setFeedbackStatus("files-too-large");
@@ -4979,7 +5074,7 @@ export default function App() {
       formData.append("Email для ответа", feedbackEmail.trim() || "Не указан");
       if (feedbackEmail.trim()) formData.append("email", feedbackEmail.trim());
       formData.append("_captcha", "false");
-      const attachmentLinks = [];
+      const attachments = [];
       for (const file of feedbackFiles) {
         if (!user) throw new Error("auth");
         const safeName = file.name.replace(/[^a-zA-Zа-яА-ЯёЁ0-9._-]+/g, "-");
@@ -4988,10 +5083,19 @@ export default function App() {
         if (uploadError) throw uploadError;
         const { data: signedFile, error: signedUrlError } = await supabase.storage.from(FEEDBACK_BUCKET).createSignedUrl(path, 60 * 60 * 24 * 30);
         if (signedUrlError) throw signedUrlError;
-        attachmentLinks.push(signedFile.signedUrl);
+        attachments.push({ name: file.name, path, url: signedFile.signedUrl });
       }
-      if (attachmentLinks.length) formData.append("Вложения", attachmentLinks.join("\n"));
-      const response = await fetch("https://formsubmit.co/ajax/majurx64@yande.ru", {
+      if (attachments.length) formData.append("Вложения", attachments.map((attachment) => attachment.url).join("\n"));
+      const { error: inboxError } = await supabase.from(FEEDBACK_TABLE).insert({
+        sender_id: user.id,
+        sender_email: user.email || "",
+        reply_email: feedbackEmail.trim() || null,
+        kind: feedbackKind,
+        message: feedbackMessage.trim(),
+        attachments,
+      });
+      if (inboxError) throw inboxError;
+      const response = await fetch("https://formsubmit.co/ajax/majurx64@yandex.ru", {
         method: "POST",
         headers: { Accept: "application/json" },
         body: formData,
@@ -5000,7 +5104,14 @@ export default function App() {
       setFeedbackMessage("");
       setFeedbackFiles([]);
       if (feedbackFileInputRef.current) feedbackFileInputRef.current.value = "";
-      setFeedbackStatus("sent");
+      setFeedbackStatus("");
+      setClosingModal("feedback");
+      window.setTimeout(() => {
+        setIsFeedbackOpen(false);
+        setClosingModal("");
+        setShowFeedbackThanks(true);
+        window.setTimeout(() => setShowFeedbackThanks(false), 2200);
+      }, 260);
     } catch {
       setFeedbackStatus("error");
     }
@@ -5070,6 +5181,8 @@ export default function App() {
                 )}`
               : screen === "library"
               ? "MM / Библиотека"
+              : screen === "feedback-inbox"
+              ? "MM / Обращения"
               : screen ===
                 "account"
               ? `MM / ${t(
@@ -5163,7 +5276,7 @@ export default function App() {
                     "13px",
                   fontWeight:
                     600,
-                  width: `calc(70px + ${accountTriggerCharacters * 1.08}ch)`,
+                  width: `calc(70px + ${accountTriggerCharacters * 1.12}ch)`,
                 }}
               >
                 <span
@@ -5205,8 +5318,14 @@ export default function App() {
                       "nowrap",
                   }}
                 >
-                  {accountName}
+                  {headerAccountName}
                 </span>
+
+                {isLibraryOwner && unreadFeedbackCount > 0 && (
+                  <span className="header-message-badge" aria-label={`Новых обращений: ${unreadFeedbackCount}`}>
+                    {unreadFeedbackCount > 9 ? "9+" : unreadFeedbackCount}
+                  </span>
+                )}
 
                 <span className="menu-chevron" aria-hidden="true" />
               </button>
@@ -5366,10 +5485,29 @@ export default function App() {
                   <button
                     type="button"
                     className="account-popover-action account-switch-action"
-                    onClick={handleSwitchAccount}
+                    onClick={() => setIsAccountSwitcherOpen((open) => !open)}
                   >
                     ⇄ Сменить аккаунт
                   </button>
+
+                  {isAccountSwitcherOpen && (
+                    <div className="saved-account-list">
+                      {otherSavedAccounts.map((account) => (
+                        <button type="button" key={account.id} onClick={() => switchToSavedAccount(account)}>
+                          <span>{account.name?.charAt(0).toUpperCase() || "M"}</span>
+                          <i><strong>{account.name}</strong><small>{account.email}</small></i>
+                        </button>
+                      ))}
+                      <button type="button" className="add-account-action" onClick={handleSwitchAccount}>＋ Добавить аккаунт</button>
+                    </div>
+                  )}
+
+                  {isLibraryOwner && (
+                    <button type="button" className="account-popover-action inbox-menu-action" onClick={openFeedbackInbox}>
+                      ✉ Обращения
+                      {unreadFeedbackCount > 0 && <span>{unreadFeedbackCount > 99 ? "99+" : unreadFeedbackCount}</span>}
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -6047,6 +6185,49 @@ export default function App() {
               </div>
             </section>
           </div>
+        </section>
+      )}
+
+      {screen === "feedback-inbox" && isLibraryOwner && (
+        <section className="feedback-inbox-page">
+          <div className="feedback-inbox-heading">
+            <div>
+              <span className="account-eyebrow">ОБРАЩЕНИЯ</span>
+              <h1>Сообщения пользователей</h1>
+              <p>Отзывы, вопросы и сообщения об ошибках из формы обратной связи.</p>
+            </div>
+            <span>{feedbackMessages.length}</span>
+          </div>
+          {feedbackInboxLoading ? (
+            <p className="feedback-inbox-empty">Загружаем сообщения…</p>
+          ) : feedbackMessages.length ? (
+            <div className="feedback-inbox-list">
+              {feedbackMessages.map((message) => (
+                <article className="feedback-inbox-card" key={message.id}>
+                  <div className="feedback-inbox-meta">
+                    <strong>{message.kind}</strong>
+                    <time>{new Date(message.created_at).toLocaleString("ru-RU")}</time>
+                  </div>
+                  <p>{message.message}</p>
+                  <div className="feedback-inbox-contact">
+                    <span>Отправитель: {message.sender_email || "не указан"}</span>
+                    <span>Для ответа: {message.reply_email || "не указан"}</span>
+                  </div>
+                  {!!message.attachments?.length && (
+                    <div className="feedback-inbox-attachments">
+                      {message.attachments.map((attachment, index) => (
+                        <button type="button" key={`${message.id}-${attachment.path || index}`} onClick={() => openFeedbackAttachment(attachment)}>
+                          📎 {attachment.name || `Вложение ${index + 1}`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="feedback-inbox-empty">Новых обращений пока нет.</p>
+          )}
         </section>
       )}
 
@@ -7603,6 +7784,7 @@ export default function App() {
             <div className="modal-field">
               <label>Email для ответа <span className="optional-label">необязательно</span></label>
               <input type="email" value={feedbackEmail} placeholder="name@example.com" onChange={(event) => setFeedbackEmail(event.target.value)} />
+              <small className="feedback-email-hint">Укажите email, если хотите получить ответ на обращение.</small>
             </div>
             <div className="modal-field feedback-attachment-field">
               <label>Фото или видео <span className="optional-label">необязательно, до 50 МБ</span></label>
@@ -7622,13 +7804,22 @@ export default function App() {
               </label>
               {!!feedbackFiles.length && <small className="feedback-file-names">{feedbackFiles.map((file) => file.name).join(", ")}</small>}
             </div>
-            {feedbackStatus === "sent" && <p className="feedback-result success">Спасибо! Сообщение отправлено.</p>}
             {feedbackStatus === "error" && <p className="feedback-result error">Не удалось отправить. Попробуйте ещё раз чуть позже.</p>}
             {feedbackStatus === "files-too-large" && <p className="feedback-result error">Общий размер вложений не должен превышать 50 МБ.</p>}
             <button className="modal-create-btn" type="submit" disabled={!feedbackMessage.trim() || feedbackStatus === "sending" || feedbackStatus === "files-too-large"}>
               {feedbackStatus === "sending" ? "Отправляем…" : "Отправить"}
             </button>
           </form>
+        </div>
+      )}
+
+      {showFeedbackThanks && (
+        <div className="feedback-thanks-overlay" onMouseDown={() => setShowFeedbackThanks(false)}>
+          <div className="feedback-thanks-card" role="status" onMouseDown={(event) => event.stopPropagation()}>
+            <span aria-hidden="true">✓</span>
+            <strong>Спасибо за сообщение!</strong>
+            <p>Обращение отправлено.</p>
+          </div>
         </div>
       )}
 

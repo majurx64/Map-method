@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { supabase } from "./lib/supabase";
 
+const AUTH_REDIRECT_URL = import.meta.env.PROD
+  ? "https://www.mapmethod.ru/"
+  : window.location.origin;
+
 export default function Auth({ onAuth, language = "ru" }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -32,7 +36,7 @@ export default function Auth({ onAuth, language = "ru" }) {
         email,
         password,
         options: {
-          emailRedirectTo: window.location.origin,
+          emailRedirectTo: AUTH_REDIRECT_URL,
           data: { locale: language || navigator.language || "ru" },
         },
       });
@@ -60,7 +64,7 @@ export default function Auth({ onAuth, language = "ru" }) {
     const { error } = await supabase.auth.resend({
       type: "signup",
       email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: AUTH_REDIRECT_URL },
     });
     setMessage(error ? error.message : "Письмо с подтверждением отправлено повторно. Проверьте входящие и папку «Спам».");
     setResending(false);
