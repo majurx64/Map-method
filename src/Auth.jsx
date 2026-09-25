@@ -46,7 +46,7 @@ export default function Auth({ onAuth, language = "ru" }) {
       } else if (data.user) {
         if (data.session) onAuth?.(data.user);
         setMessage(
-          "Аккаунт создан. Подтвердите email по ссылке из письма, затем войдите в аккаунт."
+          "Подтвердите email по ссылке из письма, затем войдите в аккаунт."
         );
       }
     }

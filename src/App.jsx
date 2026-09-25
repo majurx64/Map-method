@@ -1053,19 +1053,39 @@ function mapFromSupabaseRow(row) {
   });
 }
 
-const MapCardGrid = memo(function MapCardGrid({ map, dimensions }) {
+const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false }) {
   const completedCells = new Set(map.progressCompleted || []);
   const drawingCells = new Set(map.completed || []);
+  const meaningfulCells = [...drawingCells].filter((index) => (
+    map.mapType !== "free" || normalizeHexColor(map.colors?.[index]) !== UTILITY_COLOR
+  ));
+  let startRow = 0;
+  let endRow = dimensions.rows - 1;
+  let startCol = 0;
+  let endCol = dimensions.cols - 1;
+  if (cropToDrawing && meaningfulCells.length) {
+    const drawingRows = meaningfulCells.map((index) => Math.floor(index / dimensions.cols));
+    const drawingCols = meaningfulCells.map((index) => index % dimensions.cols);
+    startRow = Math.max(0, Math.min(...drawingRows) - 1);
+    endRow = Math.min(dimensions.rows - 1, Math.max(...drawingRows) + 1);
+    startCol = Math.max(0, Math.min(...drawingCols) - 1);
+    endCol = Math.min(dimensions.cols - 1, Math.max(...drawingCols) + 1);
+  }
+  const visibleRows = endRow - startRow + 1;
+  const visibleCols = endCol - startCol + 1;
+  const visibleIndices = Array.from({ length: visibleRows * visibleCols }, (_, index) => (
+    (startRow + Math.floor(index / visibleCols)) * dimensions.cols + startCol + (index % visibleCols)
+  )).filter((index) => index < dimensions.actualTotal);
 
   return (
     <div
       className="map-card-grid"
       style={{
-        gridTemplateColumns: `repeat(${dimensions.cols},minmax(0,1fr))`,
-        aspectRatio: `${dimensions.cols}/${dimensions.rows}`,
+        gridTemplateColumns: `repeat(${visibleCols},minmax(0,1fr))`,
+        aspectRatio: `${visibleCols}/${visibleRows}`,
       }}
     >
-      {Array.from({ length: dimensions.actualTotal }, (_, index) => {
+      {visibleIndices.map((index) => {
         const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
         const filled = completedCells.has(index);
         const isDrawingCell = map.mapType === "image" || drawingCells.has(index);
@@ -1091,7 +1111,8 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions }) {
 }, (previous, next) => previous.map === next.map
   && previous.dimensions.cols === next.dimensions.cols
   && previous.dimensions.rows === next.dimensions.rows
-  && previous.dimensions.actualTotal === next.dimensions.actualTotal);
+  && previous.dimensions.actualTotal === next.dimensions.actualTotal
+  && previous.cropToDrawing === next.cropToDrawing);
 
 
 
@@ -1533,6 +1554,7 @@ export default function App() {
   const [feedbackMessages, setFeedbackMessages] = useState([]);
   const [feedbackInboxLoading, setFeedbackInboxLoading] = useState(false);
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
+  const [savedAccountDragId, setSavedAccountDragId] = useState(null);
   const [savedAccounts, setSavedAccounts] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(SAVED_ACCOUNTS_KEY) || "[]");
@@ -1558,6 +1580,8 @@ export default function App() {
   const accountNameInputRef = useRef(null);
   const accountNameCloseTimerRef = useRef(null);
   const feedbackFileInputRef = useRef(null);
+  const savedAccountPositionsRef = useRef(new Map());
+  const suppressSavedAccountClickRef = useRef(false);
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
   const heroNotePointerRef = useRef(null);
@@ -2218,16 +2242,17 @@ export default function App() {
     const rememberSession = (session) => {
       if (!session?.user || !session.refresh_token || !session.access_token) return;
       setSavedAccounts((previous) => {
-        const next = [
-          {
+        const account = {
             id: session.user.id,
             email: session.user.email || "",
             name: session.user.user_metadata?.username || session.user.email?.split("@")[0] || "Аккаунт",
             accessToken: session.access_token,
             refreshToken: session.refresh_token,
-          },
-          ...previous.filter((account) => account.id !== session.user.id),
-        ];
+          };
+        const existingIndex = previous.findIndex((saved) => saved.id === account.id);
+        const next = existingIndex < 0
+          ? [...previous, account]
+          : previous.map((saved, index) => index === existingIndex ? account : saved);
         localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
         return next;
       });
@@ -2264,6 +2289,22 @@ export default function App() {
       subscription.unsubscribe();
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (!savedAccountDragId) return;
+    document.querySelectorAll("[data-saved-account-id]").forEach((element) => {
+      const previousTop = savedAccountPositionsRef.current.get(element.dataset.savedAccountId);
+      if (previousTop == null) return;
+      const currentTop = element.getBoundingClientRect().top;
+      const delta = previousTop - currentTop;
+      if (Math.abs(delta) > 1) {
+        element.animate(
+          [{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }],
+          { duration: 240, easing: "cubic-bezier(.16,1,.3,1)" }
+        );
+      }
+    });
+  }, [savedAccounts, savedAccountDragId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2818,6 +2859,26 @@ export default function App() {
     setIsAccountOpen(false);
     setIsAccountSwitcherOpen(false);
     setScreen("account");
+  }
+
+  function reorderSavedAccounts(targetId) {
+    if (!savedAccountDragId || savedAccountDragId === targetId) return;
+    savedAccountPositionsRef.current = new Map(
+      [...document.querySelectorAll("[data-saved-account-id]")].map((element) => [
+        element.dataset.savedAccountId,
+        element.getBoundingClientRect().top,
+      ])
+    );
+    setSavedAccounts((previous) => {
+      const from = previous.findIndex((account) => account.id === savedAccountDragId);
+      const to = previous.findIndex((account) => account.id === targetId);
+      if (from < 0 || to < 0) return previous;
+      const next = [...previous];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
+      return next;
+    });
   }
 
   async function openFeedbackInbox() {
@@ -5095,12 +5156,11 @@ export default function App() {
         attachments,
       });
       if (inboxError) throw inboxError;
-      const response = await fetch("https://formsubmit.co/ajax/majurx64@yandex.ru", {
+      await fetch("https://formsubmit.co/ajax/majurx64@yandex.ru", {
         method: "POST",
         headers: { Accept: "application/json" },
         body: formData,
-      });
-      if (!response.ok) throw new Error("feedback");
+      }).catch(() => null);
       setFeedbackMessage("");
       setFeedbackFiles([]);
       if (feedbackFileInputRef.current) feedbackFileInputRef.current.value = "";
@@ -5493,9 +5553,33 @@ export default function App() {
                   {isAccountSwitcherOpen && (
                     <div className="saved-account-list">
                       {otherSavedAccounts.map((account) => (
-                        <button type="button" key={account.id} onClick={() => switchToSavedAccount(account)}>
-                          <span>{account.name?.charAt(0).toUpperCase() || "M"}</span>
+                        <button
+                          type="button"
+                          className={`saved-account-item${savedAccountDragId === account.id ? " is-dragging" : ""}`}
+                          data-saved-account-id={account.id}
+                          draggable
+                          key={account.id}
+                          onDragStart={(event) => {
+                            suppressSavedAccountClickRef.current = true;
+                            setSavedAccountDragId(account.id);
+                            event.dataTransfer.effectAllowed = "move";
+                          }}
+                          onDragEnter={(event) => {
+                            event.preventDefault();
+                            reorderSavedAccounts(account.id);
+                          }}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDragEnd={() => {
+                            setSavedAccountDragId(null);
+                            window.setTimeout(() => { suppressSavedAccountClickRef.current = false; }, 0);
+                          }}
+                          onClick={() => {
+                            if (!suppressSavedAccountClickRef.current) switchToSavedAccount(account);
+                          }}
+                        >
+                          <span className="saved-account-avatar">{account.name?.charAt(0).toUpperCase() || "M"}</span>
                           <i><strong>{account.name}</strong><small>{account.email}</small></i>
+                          <span className="saved-account-handle" aria-label="Перетащить аккаунт">≡</span>
                         </button>
                       ))}
                       <button type="button" className="add-account-action" onClick={handleSwitchAccount}>＋ Добавить аккаунт</button>
@@ -6257,7 +6341,7 @@ export default function App() {
                 const dimensions = getGridDimensions(item.totalCells, 1, item.gridMode, item.manualRows, item.manualCols);
                 return (
                   <article className="library-card" key={item.id}>
-                    <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} /></div>
+                    <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
                     <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
                     <div className={`library-card-actions${isLibraryOwner && item.publicLibraryOwnerId ? "" : " single"}`}>
                       <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
@@ -6285,7 +6369,7 @@ export default function App() {
                   const dimensions = getGridDimensions(item.totalCells, item.imageRatio, item.gridMode, item.manualRows, item.manualCols);
                   return (
                     <article className="library-card" key={item.id}>
-                      <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} /></div>
+                      <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
                       <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
                       <div className="library-card-actions">
                         <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
@@ -6319,7 +6403,16 @@ export default function App() {
             </button>
           </div>
 
-          {!maps.length ? (
+          {authLoading || mapsLoading || !isMapInitialized ? (
+            <div className="maps-loading-placeholder" aria-label="Загружаем карты">
+              {Array.from({ length: 3 }, (_, index) => (
+                <div className="maps-loading-card" key={index}>
+                  <i />
+                  <span><b /><b /></span>
+                </div>
+              ))}
+            </div>
+          ) : !maps.length ? (
             <div className="empty-maps">
               <div className="empty-maps-grid">
                 {Array.from(
@@ -7796,11 +7889,17 @@ export default function App() {
                   multiple
                   onChange={(event) => {
                     const files = Array.from(event.target.files || []);
-                    setFeedbackFiles(files);
-                    setFeedbackStatus(files.reduce((total, file) => total + file.size, 0) > FEEDBACK_MAX_BYTES ? "files-too-large" : "");
+                    const next = [...feedbackFiles];
+                    files.forEach((file) => {
+                      const duplicate = next.some((saved) => saved.name === file.name && saved.size === file.size && saved.lastModified === file.lastModified);
+                      if (!duplicate) next.push(file);
+                    });
+                    setFeedbackFiles(next);
+                    setFeedbackStatus(next.reduce((total, file) => total + file.size, 0) > FEEDBACK_MAX_BYTES ? "files-too-large" : "");
+                    event.target.value = "";
                   }}
                 />
-                <span>{feedbackFiles.length ? `Выбрано файлов: ${feedbackFiles.length}` : "+ Прикрепить файлы"}</span>
+                <span>{feedbackFiles.length ? `Добавить ещё файлы · выбрано ${feedbackFiles.length}` : "+ Прикрепить несколько файлов"}</span>
               </label>
               {!!feedbackFiles.length && <small className="feedback-file-names">{feedbackFiles.map((file) => file.name).join(", ")}</small>}
             </div>
