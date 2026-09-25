@@ -1593,6 +1593,7 @@ export default function App() {
   const accountNameCloseTimerRef = useRef(null);
   const feedbackFileInputRef = useRef(null);
   const savedAccountPositionsRef = useRef(new Map());
+  const savedAccountPointerRef = useRef(null);
   const suppressSavedAccountClickRef = useRef(false);
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
@@ -2305,7 +2306,6 @@ export default function App() {
   useLayoutEffect(() => {
     if (!savedAccountDragId) return;
     document.querySelectorAll("[data-saved-account-id]").forEach((element) => {
-      if (element.dataset.savedAccountId === savedAccountDragId) return;
       const previousTop = savedAccountPositionsRef.current.get(element.dataset.savedAccountId);
       if (previousTop == null) return;
       const currentTop = element.getBoundingClientRect().top;
@@ -2878,8 +2878,8 @@ export default function App() {
     setSwitchingAccountId(null);
   }
 
-  function reorderSavedAccounts(targetId) {
-    if (!savedAccountDragId || savedAccountDragId === targetId) return;
+  function reorderSavedAccounts(draggedId, targetId) {
+    if (!draggedId || draggedId === targetId) return;
     savedAccountPositionsRef.current = new Map(
       [...document.querySelectorAll("[data-saved-account-id]")].map((element) => [
         element.dataset.savedAccountId,
@@ -2887,7 +2887,7 @@ export default function App() {
       ])
     );
     setSavedAccounts((previous) => {
-      const currentFrom = previous.findIndex((account) => account.id === savedAccountDragId);
+      const currentFrom = previous.findIndex((account) => account.id === draggedId);
       const currentTo = previous.findIndex((account) => account.id === targetId);
       if (currentFrom < 0 || currentTo < 0) return previous;
       const next = [...previous];
@@ -2896,6 +2896,55 @@ export default function App() {
       localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
       return next;
     });
+  }
+
+  function startSavedAccountDrag(event, accountId) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    suppressSavedAccountClickRef.current = true;
+    savedAccountPointerRef.current = {
+      id: accountId,
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      dragging: false,
+      targetId: null,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveSavedAccountDrag(event) {
+    const drag = savedAccountPointerRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    if (!drag.dragging && Math.abs(event.clientY - drag.startY) < 10) return;
+    if (!drag.dragging) {
+      drag.dragging = true;
+      setSavedAccountDragId(drag.id);
+    }
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-saved-account-id]");
+    const targetId = target?.dataset.savedAccountId;
+    drag.targetId = targetId && targetId !== drag.id ? targetId : null;
+    setSavedAccountDropId(drag.targetId);
+  }
+
+  function finishSavedAccountDrag(event, cancelled = false) {
+    const drag = savedAccountPointerRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    savedAccountPointerRef.current = null;
+    if (!cancelled && drag.dragging && drag.targetId) {
+      reorderSavedAccounts(drag.id, drag.targetId);
+      window.setTimeout(() => {
+        setSavedAccountDragId(null);
+        setSavedAccountDropId(null);
+      }, 220);
+    } else {
+      setSavedAccountDragId(null);
+      setSavedAccountDropId(null);
+    }
+    window.setTimeout(() => { suppressSavedAccountClickRef.current = false; }, 300);
   }
 
   async function openFeedbackInbox() {
@@ -5582,15 +5631,6 @@ export default function App() {
                           className={`saved-account-item${savedAccountDragId === account.id ? " is-dragging" : ""}${savedAccountDropId === account.id ? " is-drop-target" : ""}`}
                           data-saved-account-id={account.id}
                           key={account.id}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            if (savedAccountDragId && savedAccountDragId !== account.id) setSavedAccountDropId(account.id);
-                          }}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            reorderSavedAccounts(account.id);
-                            setSavedAccountDropId(null);
-                          }}
                           onClick={() => {
                             if (!suppressSavedAccountClickRef.current) switchToSavedAccount(account);
                           }}
@@ -5600,19 +5640,11 @@ export default function App() {
                           <span
                             className="saved-account-handle"
                             aria-label="Перетащить аккаунт"
-                            draggable
-                            onClick={(event) => event.stopPropagation()}
-                            onDragStart={(event) => {
-                              suppressSavedAccountClickRef.current = true;
-                              setSavedAccountDragId(account.id);
-                              event.dataTransfer.effectAllowed = "move";
-                              event.dataTransfer.setData("text/plain", account.id);
-                            }}
-                            onDragEnd={() => {
-                              setSavedAccountDragId(null);
-                              setSavedAccountDropId(null);
-                              window.setTimeout(() => { suppressSavedAccountClickRef.current = false; }, 180);
-                            }}
+                            onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+                            onPointerDown={(event) => startSavedAccountDrag(event, account.id)}
+                            onPointerMove={moveSavedAccountDrag}
+                            onPointerUp={(event) => finishSavedAccountDrag(event)}
+                            onPointerCancel={(event) => finishSavedAccountDrag(event, true)}
                           >≡</span>
                         </button>
                       ))}
@@ -7941,7 +7973,20 @@ export default function App() {
                     const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
                     return (
                       <div className={`feedback-file-item${feedbackRemovingFile === fileKey ? " is-removing" : ""}`} key={fileKey}>
-                        <span title={file.name}>{file.name}</span>
+                        <span className="feedback-file-name" title={file.name} aria-label={file.name}>
+                          {[...file.name].map((letter, letterIndex) => (
+                            <i
+                              aria-hidden="true"
+                              key={letterIndex}
+                              style={{
+                                "--letter-index": letterIndex,
+                                "--letter-x": `${((letterIndex * 37) % 19) - 9}px`,
+                                "--letter-y": `${14 + (letterIndex % 5) * 4}px`,
+                                "--letter-turn": `${((letterIndex * 29) % 70) - 35}deg`,
+                              }}
+                            >{letter === " " ? "\u00a0" : letter}</i>
+                          ))}
+                        </span>
                         <button
                           type="button"
                           aria-label={`Удалить файл ${file.name}`}

@@ -3204,14 +3204,17 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .feedback-file-picker span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .feedback-file-list { display:grid; gap:6px; margin-top:8px; }
 .feedback-file-item { display:flex; min-width:0; align-items:center; gap:8px; padding:7px 8px 7px 10px; border:1px solid #e1ddd4; border-radius:9px; background:#faf9f5; color:#666d65; font-size:12px; }
-.feedback-file-item span { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feedback-file-item .feedback-file-name { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feedback-file-name i { display:inline-block; font-style:normal; }
 .feedback-file-item button { display:grid; width:26px; height:26px; flex:0 0 26px; place-items:center; padding:0; border:0; border-radius:7px; background:#eeeae3; color:#6e736c; font-size:18px; line-height:1; cursor:pointer; transition:background 160ms ease,color 160ms ease,transform 160ms ease; }
 .feedback-file-item button:hover { background:#f4dfdb; color:#a64037; transform:scale(1.05); }
 .feedback-file-item { position:relative; overflow:visible; }
-.feedback-file-item.is-removing { pointer-events:none; animation:feedback-file-dissolve 460ms cubic-bezier(.55,0,1,.45) forwards; }
-.feedback-file-item.is-removing::after { position:absolute; inset:0; content:""; background:radial-gradient(circle,#9aa198 0 1.5px,transparent 2px) 0 0/13px 13px; animation:feedback-file-debris 460ms ease-out forwards; }
-@keyframes feedback-file-dissolve { 55% { opacity:.72; filter:blur(.5px); transform:scale(.985); } to { opacity:0; filter:blur(3px); transform:translateY(8px) scale(.94); } }
-@keyframes feedback-file-debris { from { opacity:0; transform:translateY(0) scale(.9); } 35% { opacity:.7; } to { opacity:0; transform:translateY(20px) scale(1.08); } }
+.feedback-file-item.is-removing { pointer-events:none; animation:feedback-file-shell-out 460ms ease forwards; }
+.feedback-file-item.is-removing .feedback-file-name i { animation:feedback-letter-scatter 420ms cubic-bezier(.55,0,1,.45) forwards; animation-delay:calc(var(--letter-index) * 7ms); }
+.feedback-file-item.is-removing button { animation:feedback-remove-button-out 240ms ease forwards; }
+@keyframes feedback-letter-scatter { 35% { opacity:1; } to { opacity:0; filter:blur(1.5px); transform:translate(var(--letter-x),var(--letter-y)) rotate(var(--letter-turn)) scale(.65); } }
+@keyframes feedback-file-shell-out { 70% { border-color:transparent; background:transparent; } to { opacity:0; border-color:transparent; background:transparent; transform:translateY(5px); } }
+@keyframes feedback-remove-button-out { to { opacity:0; transform:scale(.55) rotate(35deg); } }
 .feedback-result { margin:-4px 0 14px; font-size:13px; }
 .feedback-result.success { color:#32624f; }
 .feedback-result.error { color:#b34239; }
@@ -3286,9 +3289,9 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .saved-account-list strong { font-size:14px; }.saved-account-list small { color:#747a72; font-size:12px; }
 .saved-account-list .add-account-action { justify-content:center; color:#32624f; font-size:13px; font-weight:700; }
 .saved-account-item { user-select:none; transition:background 180ms ease,opacity 180ms ease,box-shadow 180ms ease; }
-.saved-account-item.is-dragging { opacity:.58; box-shadow:0 8px 20px rgba(45,58,47,.12); }
+.saved-account-item.is-dragging { position:relative; z-index:2; opacity:.68; box-shadow:0 8px 20px rgba(45,58,47,.12); }
 .saved-account-item.is-drop-target { background:#e5eee3; box-shadow:inset 0 0 0 1px #93ad96; }
-.saved-account-handle { display:grid; width:22px; height:28px; flex:0 0 22px; place-items:center; margin-left:auto; border-radius:7px; color:#8b9088 !important; font-size:18px !important; font-weight:700; line-height:1; cursor:grab; transform:rotate(90deg); }
+.saved-account-handle { display:grid; width:22px; height:28px; flex:0 0 22px; place-items:center; margin-left:auto; border-radius:7px; color:#8b9088 !important; font-size:18px !important; font-weight:700; line-height:1; cursor:grab; touch-action:none; transform:rotate(90deg); }
 .saved-account-handle:active { cursor:grabbing; }
 .inbox-menu-action { display:flex; align-items:center; justify-content:space-between; }
 .inbox-menu-action > span { display:grid; min-width:20px; height:20px; place-items:center; padding:0 5px; border-radius:999px; background:#cf493f; color:#fff; font-size:10px; font-weight:800; }

@@ -12,6 +12,8 @@ create table if not exists public.feedback_messages (
 
 alter table public.feedback_messages enable row level security;
 
+grant insert, select, update on table public.feedback_messages to authenticated;
+
 drop policy if exists "Users can send feedback" on public.feedback_messages;
 create policy "Users can send feedback"
 on public.feedback_messages
