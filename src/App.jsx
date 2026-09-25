@@ -17,6 +17,8 @@ const ACHIEVEMENT_SESSION_KEY = "mm-celebrated-achievements";
 const PRIVATE_LIBRARY_KEY = "mm-private-library";
 const METRO_2035_RECOVERY_KEY = "mm-recovered-metro-2035";
 const UTILITY_COLOR = "#eeeeee";
+const PUBLIC_LIBRARY_OWNER_EMAIL = "majurx64@yandex.ru";
+const PUBLIC_LIBRARY_TABLE = "library_items";
 
 const BASIC_COLORS = [
   "#111111",
@@ -43,12 +45,11 @@ const DEMO_PYRAMID_TOTAL = DEMO_PYRAMID_ROWS.reduce((sum, count) => sum + count,
 const DEMO_PYRAMID_INITIAL = (() => {
   const filled = [];
   let offset = 0;
-  DEMO_PYRAMID_ROWS.forEach((count, row) => {
-    if (row >= DEMO_PYRAMID_ROWS.length - 2) {
-      for (let column = 0; column < count; column++) filled.push(offset + column);
-    } else if (row === DEMO_PYRAMID_ROWS.length - 3) {
-      const center = Math.floor(count / 2);
-      filled.push(offset + center - 1, offset + center, offset + center + 1);
+  const widestRow = DEMO_PYRAMID_ROWS.at(-1);
+  DEMO_PYRAMID_ROWS.forEach((count) => {
+    const startColumn = (widestRow - count) / 2;
+    for (let column = 0; column < count; column += 1) {
+      if ((startColumn + column) % 2 === 0) filled.push(offset + column);
     }
     offset += count;
   });
@@ -81,10 +82,10 @@ function createLibraryTemplate(name, lines) {
   };
 }
 
-const PUBLIC_LIBRARY = [
+const BUILTIN_PUBLIC_LIBRARY = [
   createLibraryTemplate("Сердце", [" ##   ## ", "#### ####", "#########", " ####### ", "  #####  ", "   ###   ", "    #    "]),
-  createLibraryTemplate("Гора", ["      #      ", "     ###     ", "    #####    ", "   ### ###   ", "  ###   ###  ", " ###     ### ", "#############"]),
-  createLibraryTemplate("Галочка", ["          ##", "         ###", "##      ### ", "###    ###  ", " ###  ###   ", "  ######    ", "   ####     "]),
+  createLibraryTemplate("Гора", ["        #        ", "       ###       ", "      #####      ", "     ### ###     ", "    ###   ###    ", "   ###     ###   ", "  ###       ###  ", "#################"]),
+  createLibraryTemplate("Галочка", ["           ## ", "          ### ", "         ###  ", "##      ###   ", "###    ###    ", " ###  ###     ", "  ######      ", "   ####       ", "    ##        ", "              "]),
 ];
 
 const METRO_2035_PATTERN = [
@@ -1259,6 +1260,11 @@ export default function App() {
       return {};
     }
   });
+  const [publicLibrary, setPublicLibrary] = useState(BUILTIN_PUBLIC_LIBRARY);
+  const [libraryStatus, setLibraryStatus] = useState("");
+  const [isEditingAccountName, setIsEditingAccountName] = useState(false);
+  const [accountNameDraft, setAccountNameDraft] = useState("");
+  const [accountNameStatus, setAccountNameStatus] = useState("");
   const [todayKey, setTodayKey] = useState(() => getActivityDate());
   const [activeMapId, setActiveMapId] = useState(
     initial.activeMap
@@ -1643,6 +1649,7 @@ export default function App() {
     "majurx64";
 
   const accountEmail = user?.email || "";
+  const isLibraryOwner = accountEmail.toLowerCase() === PUBLIC_LIBRARY_OWNER_EMAIL;
 
   const accountInitial =
     accountName.trim().charAt(0).toUpperCase() || "M";
@@ -1704,6 +1711,24 @@ export default function App() {
   const personalLibrary = Array.isArray(privateLibrary[libraryUserKey]) ? privateLibrary[libraryUserKey] : [];
 
   useEffect(() => {
+    let cancelled = false;
+    const loadPublicLibrary = async () => {
+      const { data, error } = await supabase
+        .from(PUBLIC_LIBRARY_TABLE)
+        .select("id,owner_id,name,data")
+        .order("created_at", { ascending: true });
+      if (cancelled || error) return;
+      const savedItems = (data || []).map((row) => ({
+        ...normalizeMap({ ...row.data, id: row.id, name: row.name }),
+        publicLibraryOwnerId: row.owner_id,
+      }));
+      setPublicLibrary([...BUILTIN_PUBLIC_LIBRARY, ...savedItems]);
+    };
+    loadPublicLibrary();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     try {
       localStorage.setItem(PRIVATE_LIBRARY_KEY, JSON.stringify(privateLibrary));
     } catch (error) {
@@ -1730,6 +1755,69 @@ export default function App() {
       ...current,
       [libraryUserKey]: [...(current[libraryUserKey] || []), item],
     }));
+  }
+
+  async function saveMapToPublicLibrary(map) {
+    if (!user || !isLibraryOwner) return;
+    setLibraryStatus("Сохраняем рисунок…");
+    const dimensions = getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols);
+    const item = normalizeMap({
+      ...map,
+      id: `public-${createMapId()}`,
+      mapType: "free",
+      image: null,
+      showImage: false,
+      completed: map.mapType === "image"
+        ? Array.from({ length: dimensions.actualTotal }, (_, index) => index)
+        : map.completed,
+      progressCompleted: [],
+      progressExtra: 0,
+      modeDrafts: {},
+    });
+    const { error } = await supabase.from(PUBLIC_LIBRARY_TABLE).insert({
+      id: item.id,
+      owner_id: user.id,
+      name: item.name,
+      data: item,
+    });
+    if (error) {
+      setLibraryStatus("Не удалось добавить рисунок в публичную коллекцию.");
+      return;
+    }
+    setPublicLibrary((current) => [...current, { ...item, publicLibraryOwnerId: user.id }]);
+    setLibraryStatus("Рисунок добавлен в публичную коллекцию.");
+  }
+
+  async function removePublicLibraryItem(item) {
+    if (!user || !isLibraryOwner || !item.publicLibraryOwnerId) return;
+    const { error } = await supabase
+      .from(PUBLIC_LIBRARY_TABLE)
+      .delete()
+      .eq("id", item.id)
+      .eq("owner_id", user.id);
+    if (error) {
+      setLibraryStatus("Не удалось удалить рисунок из публичной коллекции.");
+      return;
+    }
+    setPublicLibrary((current) => current.filter((entry) => entry.id !== item.id));
+    setLibraryStatus("Рисунок удалён из публичной коллекции.");
+  }
+
+  async function saveAccountName() {
+    const nextName = accountNameDraft.trim().slice(0, 32);
+    if (!user || nextName.length < 2) {
+      setAccountNameStatus("Введите ник длиной от 2 до 32 символов.");
+      return;
+    }
+    setAccountNameStatus("Сохраняем…");
+    const { data, error } = await supabase.auth.updateUser({ data: { username: nextName } });
+    if (error || !data.user) {
+      setAccountNameStatus("Не удалось изменить ник.");
+      return;
+    }
+    setUser(data.user);
+    setIsEditingAccountName(false);
+    setAccountNameStatus("Ник изменён.");
   }
 
   function removeLibraryItem(id) {
@@ -1810,7 +1898,7 @@ export default function App() {
 
   useEffect(() => {
     if (!historyReadyRef.current) {
-      window.history.replaceState({ mapMethod: true, screen }, "", window.location.href);
+      window.history.replaceState({ mapMethod: true, screen, activeMapId }, "", window.location.href);
       historyReadyRef.current = true;
       return;
     }
@@ -1818,16 +1906,20 @@ export default function App() {
       historyNavigationRef.current = false;
       return;
     }
-    window.history.pushState({ mapMethod: true, screen }, "", window.location.href);
+    window.history.pushState({ mapMethod: true, screen, activeMapId }, "", window.location.href);
   }, [screen]);
 
   useEffect(() => {
-    const handlePopState = () => {
-      // Стрелка «назад» внутри приложения всегда возвращает к списку карт,
-      // а не выбрасывает пользователя на предыдущий сайт.
+    const handlePopState = (event) => {
+      const availableScreens = ["home", "maps", "editor", "account", "library", "auth"];
+      const previousScreen = event.state?.mapMethod && availableScreens.includes(event.state.screen)
+        ? event.state.screen
+        : "home";
       historyNavigationRef.current = true;
-      setScreen("maps");
-      window.history.pushState({ mapMethod: true, screen: "maps" }, "", window.location.href);
+      setScreen((current) => {
+        if (current === previousScreen) historyNavigationRef.current = false;
+        return previousScreen;
+      });
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -4461,6 +4553,22 @@ export default function App() {
       localStorage.removeItem(ACTIVE_MAP_KEY);
     }
     setScreen("maps");
+    const deletedCard = document.querySelector(`[data-map-id="${CSS.escape(id)}"]`);
+    const grid = deletedCard?.parentElement;
+    const gridCards = grid ? [...grid.querySelectorAll("[data-map-id]")] : [];
+    const sameRowCards = deletedCard
+      ? gridCards.filter((card) => card !== deletedCard && card.offsetTop === deletedCard.offsetTop && !deletingIdsRef.current.has(card.dataset.mapId))
+      : [];
+    const isLastRow = deletedCard
+      ? !gridCards.some((card) => card.offsetTop > deletedCard.offsetTop)
+      : false;
+    if (deletedCard && grid && isLastRow && sameRowCards.length === 0) {
+      const rowGap = Number.parseFloat(getComputedStyle(grid).rowGap) || 0;
+      window.scrollTo({
+        top: Math.max(0, window.scrollY - deletedCard.offsetHeight - rowGap),
+        behavior: "smooth",
+      });
+    }
     const animation = new Promise((resolve) => window.setTimeout(resolve, 700));
     try {
       const remove = async () => {
@@ -5369,10 +5477,6 @@ export default function App() {
         >
           <div className="maps-page-header">
             <div>
-              <span className="workspace-type">
-                MM
-              </span>
-
               <h1>
                 {t(
                   "account"
@@ -5669,8 +5773,29 @@ export default function App() {
               <div className="account-avatar">{accountInitial}</div>
               <div>
                 <span className="account-eyebrow">ТВОЙ ПРОФИЛЬ</span>
-                <h2>{accountName}</h2>
+                {isEditingAccountName ? (
+                  <div className="account-name-editor">
+                    <input
+                      autoFocus
+                      value={accountNameDraft}
+                      maxLength={32}
+                      onChange={(event) => setAccountNameDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") saveAccountName();
+                        if (event.key === "Escape") setIsEditingAccountName(false);
+                      }}
+                    />
+                    <button type="button" onClick={saveAccountName}>Сохранить</button>
+                    <button type="button" className="account-name-cancel" aria-label="Отменить" onClick={() => setIsEditingAccountName(false)}>×</button>
+                  </div>
+                ) : (
+                  <div className="account-name-row">
+                    <h2>{accountName}</h2>
+                    {user && <button type="button" aria-label="Изменить ник" title="Изменить ник" onClick={() => { setAccountNameDraft(accountName); setAccountNameStatus(""); setIsEditingAccountName(true); }}>✎</button>}
+                  </div>
+                )}
                 <p>{accountEmail}</p>
+                {!!accountNameStatus && <small className="account-name-status">{accountNameStatus}</small>}
               </div>
               <button className="account-maps-link" onClick={() => setScreen("maps")}>
                 Мои карты →
@@ -5783,14 +5908,23 @@ export default function App() {
               <div><span className="account-eyebrow">ДЛЯ ВСЕХ</span><h2>Публичная коллекция</h2></div>
               <span>Добавлять и изменять этот набор может только владелец Map Method</span>
             </div>
+            {isLibraryOwner && !!maps.length && (
+              <div className="library-save-list library-public-save-list">
+                {maps.map((map) => <button type="button" key={map.id} onClick={() => saveMapToPublicLibrary(map)}>+ Добавить «{map.name}» для всех</button>)}
+              </div>
+            )}
+            {!!libraryStatus && <p className="library-status" role="status">{libraryStatus}</p>}
             <div className="library-grid">
-              {PUBLIC_LIBRARY.map((item) => {
+              {publicLibrary.map((item) => {
                 const dimensions = getGridDimensions(item.totalCells, 1, item.gridMode, item.manualRows, item.manualCols);
                 return (
                   <article className="library-card" key={item.id}>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} /></div>
                     <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
-                    <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
+                    <div className={`library-card-actions${isLibraryOwner && item.publicLibraryOwnerId ? "" : " single"}`}>
+                      <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
+                      {isLibraryOwner && item.publicLibraryOwnerId && <button type="button" className="danger-action" onClick={() => removePublicLibraryItem(item)}>Удалить</button>}
+                    </div>
                   </article>
                 );
               })}
