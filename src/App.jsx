@@ -1521,6 +1521,7 @@ export default function App() {
   const [feedbackKind, setFeedbackKind] = useState("Предложение");
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [feedbackEmail, setFeedbackEmail] = useState("");
+  const [feedbackFiles, setFeedbackFiles] = useState([]);
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [downloadChoice, setDownloadChoice] = useState(null);
 
@@ -1539,6 +1540,7 @@ export default function App() {
   const accountNameEditorRef = useRef(null);
   const accountNameInputRef = useRef(null);
   const accountNameCloseTimerRef = useRef(null);
+  const feedbackFileInputRef = useRef(null);
   const demoPointerRef = useRef(null);
   const demoModeRef = useRef("draw");
   const heroNotePointerRef = useRef(null);
@@ -1657,6 +1659,7 @@ export default function App() {
 
   const accountInitial =
     accountName.trim().charAt(0).toUpperCase() || "M";
+  const accountTriggerWidth = Math.max(112, 70 + Math.min(accountName.length, 10) * 7);
 
   const accountMapStats = maps.map((map) => {
     const statsSource = map.id === activeMapId
@@ -1808,9 +1811,9 @@ export default function App() {
   }
 
   async function saveAccountName() {
-    const nextName = accountNameDraft.trim().slice(0, 32);
+    const nextName = accountNameDraft.trim().slice(0, 20);
     if (!user || nextName.length < 2) {
-      setAccountNameStatus("Введите ник длиной от 2 до 32 символов.");
+      setAccountNameStatus("Введите ник длиной от 2 до 20 символов.");
       return;
     }
     setAccountNameStatus("Сохраняем…");
@@ -1820,7 +1823,7 @@ export default function App() {
       return;
     }
     setUser(data.user);
-    setAccountNameStatus("Ник изменён.");
+    setAccountNameStatus("");
     closeAccountNameEditor();
   }
 
@@ -2662,6 +2665,17 @@ export default function App() {
       CURRENT_SCREEN_KEY,
       "home"
     );
+  }
+
+  async function handleSwitchAccount() {
+    setIsAccountOpen(false);
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("Ошибка смены аккаунта:", error);
+      return;
+    }
+    setScreen("auth");
+    localStorage.setItem(CURRENT_SCREEN_KEY, "auth");
   }
 
   function selectDrawColor(c) {
@@ -4886,21 +4900,32 @@ export default function App() {
   async function submitFeedback(event) {
     event.preventDefault();
     if (!feedbackMessage.trim()) return;
+    const attachmentsSize = feedbackFiles.reduce((total, file) => total + file.size, 0);
+    if (attachmentsSize > 10 * 1024 * 1024) {
+      setFeedbackStatus("files-too-large");
+      return;
+    }
     setFeedbackStatus("sending");
     try {
+      const formData = new FormData();
+      formData.append("_subject", `Map Method — ${feedbackKind}`);
+      formData.append("Тип", feedbackKind);
+      formData.append("Сообщение", feedbackMessage.trim());
+      formData.append("Email для ответа", feedbackEmail.trim() || "Не указан");
+      if (feedbackEmail.trim()) formData.append("email", feedbackEmail.trim());
+      formData.append("_captcha", "false");
+      feedbackFiles.forEach((file, index) => {
+        formData.append(index === 0 ? "attachment" : `attachment_${index + 1}`, file, file.name);
+      });
       const response = await fetch("https://formsubmit.co/ajax/majurx64@yande.ru", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          _subject: `Map Method — ${feedbackKind}`,
-          Тип: feedbackKind,
-          Сообщение: feedbackMessage.trim(),
-          "Email для ответа": feedbackEmail.trim() || "Не указан",
-          _captcha: "false",
-        }),
+        headers: { Accept: "application/json" },
+        body: formData,
       });
       if (!response.ok) throw new Error("feedback");
       setFeedbackMessage("");
+      setFeedbackFiles([]);
+      if (feedbackFileInputRef.current) feedbackFileInputRef.current.value = "";
       setFeedbackStatus("sent");
     } catch {
       setFeedbackStatus("error");
@@ -4962,7 +4987,7 @@ export default function App() {
         >
           <img className="brand-mark" src="/mm-logo.png" alt="" />
 
-          <span>
+          <span className="brand-context" key={`${screen}-${language}`}>
             {screen === "home"
               ? `MM / ${t("home")}`
               : screen === "maps"
@@ -5064,6 +5089,7 @@ export default function App() {
                     "13px",
                   fontWeight:
                     600,
+                  width: `${accountTriggerWidth}px`,
                 }}
               >
                 <span
@@ -5265,10 +5291,19 @@ export default function App() {
 
                   <button
                     type="button"
+                    className="account-popover-action account-switch-action"
+                    onClick={handleSwitchAccount}
+                  >
+                    ⇄ Сменить аккаунт
+                  </button>
+
+                  <button
+                    type="button"
                     className="account-popover-action feedback-menu-action"
                     onClick={() => {
                       setIsAccountOpen(false);
                       setFeedbackEmail("");
+                      setFeedbackFiles([]);
                       setFeedbackStatus("");
                       setClosingModal("");
                       setIsFeedbackOpen(true);
@@ -5825,7 +5860,7 @@ export default function App() {
                     <input
                       ref={accountNameInputRef}
                       value={accountNameDraft}
-                      maxLength={32}
+                      maxLength={20}
                       onChange={(event) => setAccountNameDraft(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") saveAccountName();
@@ -5947,14 +5982,14 @@ export default function App() {
             <div>
               <span className="account-eyebrow">БИБЛИОТЕКА РИСУНКОВ</span>
               <h1>Готовые идеи и личные эскизы</h1>
-              <p>Публичные рисунки видят все. Личные эскизы сохраняются только в вашей библиотеке.</p>
+              <p>Выберите готовый рисунок из общей коллекции или сохраните собственный эскиз для будущих карт.</p>
             </div>
           </div>
 
           <section className="library-section">
             <div className="account-section-title">
               <div><span className="account-eyebrow">ДЛЯ ВСЕХ</span><h2>Публичная коллекция</h2></div>
-              <span>Добавлять и изменять этот набор может только владелец Map Method</span>
+              <span>Предложить свой эскиз для общей коллекции можно через раздел «Обратная связь».</span>
             </div>
             {isLibraryOwner && !!maps.length && (
               <div className="library-save-list library-public-save-list">
@@ -7495,9 +7530,28 @@ export default function App() {
               <label>Email для ответа <span className="optional-label">необязательно</span></label>
               <input type="email" value={feedbackEmail} placeholder="name@example.com" onChange={(event) => setFeedbackEmail(event.target.value)} />
             </div>
+            <div className="modal-field feedback-attachment-field">
+              <label>Фото или видео <span className="optional-label">необязательно, до 10 МБ</span></label>
+              <label className="feedback-file-picker">
+                <input
+                  ref={feedbackFileInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files || []);
+                    setFeedbackFiles(files);
+                    setFeedbackStatus(files.reduce((total, file) => total + file.size, 0) > 10 * 1024 * 1024 ? "files-too-large" : "");
+                  }}
+                />
+                <span>{feedbackFiles.length ? `Выбрано файлов: ${feedbackFiles.length}` : "+ Прикрепить файлы"}</span>
+              </label>
+              {!!feedbackFiles.length && <small className="feedback-file-names">{feedbackFiles.map((file) => file.name).join(", ")}</small>}
+            </div>
             {feedbackStatus === "sent" && <p className="feedback-result success">Спасибо! Сообщение отправлено.</p>}
             {feedbackStatus === "error" && <p className="feedback-result error">Не удалось отправить. Попробуйте ещё раз чуть позже.</p>}
-            <button className="modal-create-btn" type="submit" disabled={!feedbackMessage.trim() || feedbackStatus === "sending"}>
+            {feedbackStatus === "files-too-large" && <p className="feedback-result error">Общий размер вложений не должен превышать 10 МБ.</p>}
+            <button className="modal-create-btn" type="submit" disabled={!feedbackMessage.trim() || feedbackStatus === "sending" || feedbackStatus === "files-too-large"}>
               {feedbackStatus === "sending" ? "Отправляем…" : "Отправить"}
             </button>
           </form>

@@ -105,6 +105,16 @@ button:disabled {
   color: var(--green-dark);
 }
 
+.brand-context {
+  display: inline-block;
+  animation: brand-context-in 280ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes brand-context-in {
+  from { opacity: 0; transform: translateX(-7px); filter: blur(2px); }
+  to { opacity: 1; transform: translateX(0); filter: blur(0); }
+}
+
 .brand-mark {
   display: block;
   width: 28px;
@@ -3188,6 +3198,11 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .feedback-modal .modal-field input[type="email"]:focus { outline:0; border-color:#5d8d66; box-shadow:0 0 0 3px rgba(92,141,102,.15); }
 .feedback-modal .animated-select-menu { z-index:5; }
 .optional-label { color:#949990; font-weight:500; }
+.feedback-file-picker { display:flex !important; min-height:44px; box-sizing:border-box; align-items:center; justify-content:center; padding:0 14px; border:1px dashed #aebdab; border-radius:11px; background:#f5f8f3; color:#32624f; cursor:pointer; transition:border-color 180ms ease,background 180ms ease,transform 180ms ease; }
+.feedback-file-picker:hover { border-color:#5d8d66; background:#edf4eb; transform:translateY(-1px); }
+.feedback-file-picker input { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none; }
+.feedback-file-picker span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.feedback-file-names { display:block; margin-top:6px; overflow:hidden; color:#737970; font-size:11px; line-height:1.4; text-overflow:ellipsis; white-space:nowrap; }
 .feedback-result { margin:-4px 0 14px; font-size:13px; }
 .feedback-result.success { color:#32624f; }
 .feedback-result.error { color:#b34239; }
@@ -3229,7 +3244,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .library-empty { margin:0; padding:18px; border:1px dashed #cfc8bc; border-radius:12px; color:#777b73; }
 .library-public-save-list { padding:14px; border:1px solid #d9e3d7; border-radius:12px; background:#f3f7f1; }
 .library-status { margin:0 0 16px; color:#32624f; font-size:13px; font-weight:700; }
-.account-menu > .account-trigger { width:132px; box-sizing:border-box; }
+.account-menu > .account-trigger { box-sizing:border-box; transition:width 300ms cubic-bezier(.16,1,.3,1),transform 220ms cubic-bezier(.16,1,.3,1),box-shadow 220ms ease !important; }
 .header-account-name { min-width:0; flex:1 1 auto; text-align:left; }
 .header-account-name,.header-account-initial,.account-avatar,.account-name-row h2 { animation:identity-swap-in 260ms cubic-bezier(.16,1,.3,1) both; }
 .account-profile-copy { position:relative; display:grid; min-height:82px; grid-template-rows:14px 42px 22px; align-content:center; }
