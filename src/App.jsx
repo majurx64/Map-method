@@ -16,6 +16,10 @@ const SCROLL_POSITIONS_KEY = "mm-scroll-positions";
 const ACHIEVEMENT_SESSION_KEY = "mm-celebrated-achievements";
 const PRIVATE_LIBRARY_KEY = "mm-private-library";
 const METRO_2035_RECOVERY_KEY = "mm-recovered-metro-2035";
+const LEGACY_MAP_MIGRATION_KEY = "mm-legacy-map-migration";
+const LOCAL_MAP_OWNER_KEY = "mm-local-map-owner";
+const FEEDBACK_BUCKET = "feedback-attachments";
+const FEEDBACK_MAX_BYTES = 50 * 1024 * 1024;
 const UTILITY_COLOR = "#eeeeee";
 const PUBLIC_LIBRARY_OWNER_EMAIL = "majurx64@yandex.ru";
 const PUBLIC_LIBRARY_TABLE = "library_items";
@@ -1252,7 +1256,7 @@ export default function App() {
       : "home";
   });
 
-  const [maps, setMaps] = useState(initial.maps);
+  const [maps, setMaps] = useState([]);
   const [privateLibrary, setPrivateLibrary] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(PRIVATE_LIBRARY_KEY) || "{}");
@@ -1267,9 +1271,7 @@ export default function App() {
   const [accountNameDraft, setAccountNameDraft] = useState("");
   const [accountNameStatus, setAccountNameStatus] = useState("");
   const [todayKey, setTodayKey] = useState(() => getActivityDate());
-  const [activeMapId, setActiveMapId] = useState(
-    initial.activeMap
-  );
+  const [activeMapId, setActiveMapId] = useState(null);
   const [todayYear, todayMonth, todayDay] = todayKey.split("-").map(Number);
   const todayDate = new Date(todayYear, todayMonth - 1, todayDay);
   const [saveStatus, setSaveStatus] = useState("");
@@ -1659,7 +1661,7 @@ export default function App() {
 
   const accountInitial =
     accountName.trim().charAt(0).toUpperCase() || "M";
-  const accountTriggerWidth = Math.max(112, 70 + Math.min(accountName.length, 10) * 7);
+  const accountTriggerCharacters = Math.max(6, Math.min(accountName.length, 10));
 
   const accountMapStats = maps.map((map) => {
     const statsSource = map.id === activeMapId
@@ -2206,6 +2208,8 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
+    if (authLoading) return undefined;
+
     async function load() {
       setMapsLoading(true);
       setIsMapInitialized(false);
@@ -2213,17 +2217,11 @@ export default function App() {
 
       if (!user) {
         if (!cancelled) {
-          setMaps(initial.maps);
-          setActiveMapId(initial.activeMap);
-
-          const localActive =
-            initial.maps.find(
-              (m) => m.id === initial.activeMap
-            ) || initial.maps[0];
-
-          if (localActive) {
-            openMap(localActive);
-          }
+          setMaps([]);
+          setActiveMapId(null);
+          localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem(ACTIVE_MAP_KEY);
+          localStorage.removeItem(LOCAL_MAP_OWNER_KEY);
 
           setMapsLoading(false);
           setIsMapInitialized(true);
@@ -2263,9 +2261,8 @@ export default function App() {
 
       if (error) {
         console.error(error);
-
-        loadedMaps = initial.maps;
-        loadedActiveId = initial.activeMap;
+        loadedMaps = [];
+        loadedActiveId = null;
       } else if (data?.length) {
         loadedMaps = data.map(mapFromSupabaseRow);
 
@@ -2278,7 +2275,7 @@ export default function App() {
           )?.id ||
           loadedMaps[0]?.id ||
           null;
-      } else if (initial.maps.length) {
+      } else if (initial.maps.length && !localStorage.getItem(LEGACY_MAP_MIGRATION_KEY)) {
         const migrated = [];
 
         for (const old of initial.maps) {
@@ -2307,12 +2304,17 @@ export default function App() {
 
         loadedMaps = migrated.length
           ? migrated
-          : initial.maps;
+          : [];
 
         loadedActiveId =
           migrated[0]?.id ||
-          initial.activeMap ||
           null;
+      }
+
+      if (!error) {
+        localStorage.setItem(LEGACY_MAP_MIGRATION_KEY, user.id);
+        localStorage.setItem(LOCAL_MAP_OWNER_KEY, user.id);
+        saveMapsLocally(loadedMaps);
       }
 
       const recoveryOwner = String(
@@ -2379,7 +2381,7 @@ export default function App() {
 
       clearTimeout(saveTimerRef.current);
     };
-  }, [user]);
+  }, [user, authLoading]);
 
   useEffect(() => {
     if (
@@ -2648,6 +2650,9 @@ export default function App() {
   async function handleSignOut() {
     setIsAccountOpen(false);
 
+    const currentMap = buildCurrentMap();
+    if (currentMap) await remoteSave(currentMap);
+
     const { error } =
       await supabase.auth.signOut();
 
@@ -2660,6 +2665,18 @@ export default function App() {
       return;
     }
 
+    setMaps([]);
+    setActiveMapId(null);
+    setCustomColors([]);
+    setCustomCategories([]);
+    setCategoryOrder([]);
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_MAP_KEY);
+    localStorage.removeItem(LOCAL_MAP_OWNER_KEY);
+    localStorage.removeItem(CUSTOM_COLORS_KEY);
+    localStorage.removeItem(CUSTOM_CATEGORIES_KEY);
+    localStorage.removeItem(CATEGORY_ORDER_KEY);
+
     setScreen("home");
     localStorage.setItem(
       CURRENT_SCREEN_KEY,
@@ -2669,11 +2686,24 @@ export default function App() {
 
   async function handleSwitchAccount() {
     setIsAccountOpen(false);
+    const currentMap = buildCurrentMap();
+    if (currentMap) await remoteSave(currentMap);
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error("Ошибка смены аккаунта:", error);
       return;
     }
+    setMaps([]);
+    setActiveMapId(null);
+    setCustomColors([]);
+    setCustomCategories([]);
+    setCategoryOrder([]);
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_MAP_KEY);
+    localStorage.removeItem(LOCAL_MAP_OWNER_KEY);
+    localStorage.removeItem(CUSTOM_COLORS_KEY);
+    localStorage.removeItem(CUSTOM_CATEGORIES_KEY);
+    localStorage.removeItem(CATEGORY_ORDER_KEY);
     setScreen("auth");
     localStorage.setItem(CURRENT_SCREEN_KEY, "auth");
   }
@@ -4901,7 +4931,7 @@ export default function App() {
     event.preventDefault();
     if (!feedbackMessage.trim()) return;
     const attachmentsSize = feedbackFiles.reduce((total, file) => total + file.size, 0);
-    if (attachmentsSize > 10 * 1024 * 1024) {
+    if (attachmentsSize > FEEDBACK_MAX_BYTES) {
       setFeedbackStatus("files-too-large");
       return;
     }
@@ -4914,9 +4944,18 @@ export default function App() {
       formData.append("Email для ответа", feedbackEmail.trim() || "Не указан");
       if (feedbackEmail.trim()) formData.append("email", feedbackEmail.trim());
       formData.append("_captcha", "false");
-      feedbackFiles.forEach((file, index) => {
-        formData.append(index === 0 ? "attachment" : `attachment_${index + 1}`, file, file.name);
-      });
+      const attachmentLinks = [];
+      for (const file of feedbackFiles) {
+        if (!user) throw new Error("auth");
+        const safeName = file.name.replace(/[^a-zA-Zа-яА-ЯёЁ0-9._-]+/g, "-");
+        const path = `${user.id}/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage.from(FEEDBACK_BUCKET).upload(path, file, { contentType: file.type, upsert: false });
+        if (uploadError) throw uploadError;
+        const { data: signedFile, error: signedUrlError } = await supabase.storage.from(FEEDBACK_BUCKET).createSignedUrl(path, 60 * 60 * 24 * 30);
+        if (signedUrlError) throw signedUrlError;
+        attachmentLinks.push(signedFile.signedUrl);
+      }
+      if (attachmentLinks.length) formData.append("Вложения", attachmentLinks.join("\n"));
       const response = await fetch("https://formsubmit.co/ajax/majurx64@yande.ru", {
         method: "POST",
         headers: { Accept: "application/json" },
@@ -5089,7 +5128,7 @@ export default function App() {
                     "13px",
                   fontWeight:
                     600,
-                  width: `${accountTriggerWidth}px`,
+                  width: `calc(70px + ${accountTriggerCharacters * 1.08}ch)`,
                 }}
               >
                 <span
@@ -7531,7 +7570,7 @@ export default function App() {
               <input type="email" value={feedbackEmail} placeholder="name@example.com" onChange={(event) => setFeedbackEmail(event.target.value)} />
             </div>
             <div className="modal-field feedback-attachment-field">
-              <label>Фото или видео <span className="optional-label">необязательно, до 10 МБ</span></label>
+              <label>Фото или видео <span className="optional-label">необязательно, до 50 МБ</span></label>
               <label className="feedback-file-picker">
                 <input
                   ref={feedbackFileInputRef}
@@ -7541,7 +7580,7 @@ export default function App() {
                   onChange={(event) => {
                     const files = Array.from(event.target.files || []);
                     setFeedbackFiles(files);
-                    setFeedbackStatus(files.reduce((total, file) => total + file.size, 0) > 10 * 1024 * 1024 ? "files-too-large" : "");
+                    setFeedbackStatus(files.reduce((total, file) => total + file.size, 0) > FEEDBACK_MAX_BYTES ? "files-too-large" : "");
                   }}
                 />
                 <span>{feedbackFiles.length ? `Выбрано файлов: ${feedbackFiles.length}` : "+ Прикрепить файлы"}</span>
@@ -7550,7 +7589,7 @@ export default function App() {
             </div>
             {feedbackStatus === "sent" && <p className="feedback-result success">Спасибо! Сообщение отправлено.</p>}
             {feedbackStatus === "error" && <p className="feedback-result error">Не удалось отправить. Попробуйте ещё раз чуть позже.</p>}
-            {feedbackStatus === "files-too-large" && <p className="feedback-result error">Общий размер вложений не должен превышать 10 МБ.</p>}
+            {feedbackStatus === "files-too-large" && <p className="feedback-result error">Общий размер вложений не должен превышать 50 МБ.</p>}
             <button className="modal-create-btn" type="submit" disabled={!feedbackMessage.trim() || feedbackStatus === "sending" || feedbackStatus === "files-too-large"}>
               {feedbackStatus === "sending" ? "Отправляем…" : "Отправить"}
             </button>

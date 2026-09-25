@@ -7,6 +7,7 @@ export default function Auth({ onAuth, language = "ru" }) {
   const [password, setPassword] = useState("");
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const [message, setMessage] = useState("");
 
   async function handleSubmit(event) {
@@ -41,12 +42,28 @@ export default function Auth({ onAuth, language = "ru" }) {
       } else if (data.user) {
         if (data.session) onAuth?.(data.user);
         setMessage(
-          "Аккаунт создан. Подтверди email по ссылке из письма, затем войди в аккаунт."
+          "Аккаунт создан. Подтвердите email по ссылке из письма, затем войдите в аккаунт."
         );
       }
     }
 
     setLoading(false);
+  }
+
+  async function resendConfirmation() {
+    if (!email.trim()) {
+      setMessage("Введите email, на который нужно повторно отправить письмо.");
+      return;
+    }
+    setResending(true);
+    setMessage("");
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: email.trim(),
+      options: { emailRedirectTo: window.location.origin },
+    });
+    setMessage(error ? error.message : "Письмо с подтверждением отправлено повторно. Проверьте входящие и папку «Спам».");
+    setResending(false);
   }
 
   return (
@@ -58,8 +75,8 @@ export default function Auth({ onAuth, language = "ru" }) {
 
         <p>
           {mode === "login"
-            ? "Войди, чтобы продолжить работу с картами."
-            : "Создай аккаунт, чтобы сохранять свои карты."}
+            ? "Войдите, чтобы продолжить работу с картами."
+            : "Создайте аккаунт, чтобы сохранять свои карты."}
         </p>
 
         <form onSubmit={handleSubmit}>
@@ -95,6 +112,12 @@ export default function Auth({ onAuth, language = "ru" }) {
         </form>
 
         {message && <div className="auth-message">{message}</div>}
+
+        {mode === "register" && (
+          <button type="button" className="auth-resend" onClick={resendConfirmation} disabled={loading || resending}>
+            {resending ? "Отправляем письмо…" : "Отправить письмо подтверждения ещё раз"}
+          </button>
+        )}
 
         <button
           type="button"

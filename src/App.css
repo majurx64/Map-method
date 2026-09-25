@@ -107,12 +107,12 @@ button:disabled {
 
 .brand-context {
   display: inline-block;
-  animation: brand-context-in 280ms cubic-bezier(.16, 1, .3, 1) both;
+  animation: brand-context-in 520ms cubic-bezier(.22, 1, .36, 1) both;
 }
 
 @keyframes brand-context-in {
-  from { opacity: 0; transform: translateX(-7px); filter: blur(2px); }
-  to { opacity: 1; transform: translateX(0); filter: blur(0); }
+  from { opacity: .12; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .brand-mark {
@@ -3011,7 +3011,7 @@ body {
 .auth-page { display:grid; min-height:calc(100vh - 58px); place-items:center; padding:26px; background:#e9dfd1; }
 .auth-card { width:min(400px,100%); padding:30px; border:1px solid #cfc3b3; border-radius:15px; background:#fffdf9; box-shadow:0 14px 32px rgba(70,55,32,.1); }
 .auth-logo { display:block; width:52px; height:52px; margin:0 auto; border-radius:14px; object-fit:cover; }
-.auth-card h1 { margin:20px 0 8px; font-size:27px; }.auth-card p { margin:0 0 21px; color:#6f756d; line-height:1.5; }.auth-card form { display:grid; gap:10px; }.auth-card input { min-height:42px; border:1px solid #b9ab99; border-radius:8px; padding:0 11px; background:#fff; }.password-field { position:relative; }.password-field input { width:100%; padding-right:84px; }.auth-card form button { min-height:42px; border:0; border-radius:8px; background:#3f7d4a; color:#fff; font-weight:700; cursor:pointer; }.password-field .password-visibility { position:absolute; right:5px; top:5px; min-height:32px; padding:0 8px; border-radius:6px; background:#edf4ec; color:#32624f; font-size:11px; }.auth-switch { width:100%; margin-top:14px; border:0; background:transparent; color:#31683b; cursor:pointer; }.auth-message { margin-top:12px; color:#ad4a3e; font-size:13px; }
+.auth-card h1 { margin:20px 0 8px; font-size:27px; }.auth-card p { margin:0 0 21px; color:#6f756d; line-height:1.5; }.auth-card form { display:grid; gap:10px; }.auth-card input { min-height:42px; border:1px solid #b9ab99; border-radius:8px; padding:0 11px; background:#fff; }.password-field { position:relative; }.password-field input { width:100%; padding-right:84px; }.auth-card form button { min-height:42px; border:0; border-radius:8px; background:#3f7d4a; color:#fff; font-weight:700; cursor:pointer; }.password-field .password-visibility { position:absolute; right:5px; top:5px; min-height:32px; padding:0 8px; border-radius:6px; background:#edf4ec; color:#32624f; font-size:11px; }.auth-switch { width:100%; margin-top:14px; border:0; background:transparent; color:#31683b; cursor:pointer; }.auth-message { margin-top:12px; color:#ad4a3e; font-size:13px; }.auth-resend { width:100%; margin-top:10px; padding:10px 12px; border:1px solid #aebfab; border-radius:8px; background:#f1f6ef; color:#31683b; cursor:pointer; font-weight:700; }.auth-resend:hover { background:#e7f0e4; }.auth-resend:disabled { cursor:default; opacity:.6; }
 
 /* Следующий слой Map Method: личный маршрут и мягкая динамика. */
 .maps-filter { display:flex; flex-wrap:wrap; gap:7px; }
@@ -3245,7 +3245,9 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .library-public-save-list { padding:14px; border:1px solid #d9e3d7; border-radius:12px; background:#f3f7f1; }
 .library-status { margin:0 0 16px; color:#32624f; font-size:13px; font-weight:700; }
 .account-menu > .account-trigger { box-sizing:border-box; transition:width 300ms cubic-bezier(.16,1,.3,1),transform 220ms cubic-bezier(.16,1,.3,1),box-shadow 220ms ease !important; }
-.header-account-name { min-width:0; flex:1 1 auto; text-align:left; }
+.header-account-name { min-width:0; max-width:10ch !important; flex:1 1 auto; overflow:hidden; text-align:left; text-overflow:ellipsis; white-space:nowrap; }
+.header-account-initial { flex:0 0 30px; }
+.account-trigger .menu-chevron { flex:0 0 auto; }
 .header-account-name,.header-account-initial,.account-avatar,.account-name-row h2 { animation:identity-swap-in 260ms cubic-bezier(.16,1,.3,1) both; }
 .account-profile-copy { position:relative; display:grid; min-height:82px; grid-template-rows:14px 42px 22px; align-content:center; }
 .account-name-slot { display:grid; height:42px; align-items:center; overflow:visible; }
