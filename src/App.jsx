@@ -26,6 +26,14 @@ const PUBLIC_LIBRARY_TABLE = "library_items";
 const SAVED_ACCOUNTS_KEY = "mm-saved-accounts";
 const FEEDBACK_TABLE = "feedback_messages";
 
+function getYandexReplyUrl(message) {
+  const email = message.reply_email || "";
+  const subject = `Ответ на обращение в Map Method: ${message.kind}`;
+  const body = `Здравствуйте!\n\nСпасибо за обращение в Map Method.\n\n[Напишите ответ здесь]\n\nЕсли у вас появятся дополнительные вопросы, можете ответить на это письмо.\n\nС уважением,\nMap Method`;
+  const mailto = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return `https://mail.yandex.ru/compose?mailto=${encodeURIComponent(mailto)}`;
+}
+
 const BASIC_COLORS = [
   "#111111",
   "#ffffff",
@@ -1561,6 +1569,7 @@ export default function App() {
   const [feedbackRemovingFile, setFeedbackRemovingFile] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [showFeedbackThanks, setShowFeedbackThanks] = useState(false);
+  const [isFeedbackThanksClosing, setIsFeedbackThanksClosing] = useState(false);
   const [feedbackMessages, setFeedbackMessages] = useState([]);
   const [feedbackInboxLoading, setFeedbackInboxLoading] = useState(false);
   const [feedbackNoteDrafts, setFeedbackNoteDrafts] = useState({});
@@ -1601,6 +1610,8 @@ export default function App() {
   const feedbackModalRef = useRef(null);
   const feedbackModalHeightRef = useRef(null);
   const feedbackModalAnimationRef = useRef(null);
+  const feedbackThanksAutoTimerRef = useRef(null);
+  const feedbackThanksCloseTimerRef = useRef(null);
   const savedAccountPositionsRef = useRef(new Map());
   const savedAccountPointerRef = useRef(null);
   const suppressSavedAccountClickRef = useRef(false);
@@ -1726,6 +1737,15 @@ export default function App() {
   const accountTriggerCharacters = Math.max(6, headerAccountName.length);
   const otherSavedAccounts = savedAccounts.filter((account) => account.id !== user?.id);
   const unreadFeedbackCount = feedbackMessages.filter((message) => !message.is_read).length;
+  const feedbackGroups = [
+    ["new", "Не обработано"],
+    ["in_progress", "В работе"],
+    ["done", "Готово"],
+  ].map(([key, title]) => ({
+    key,
+    title,
+    messages: feedbackMessages.filter((message) => (message.work_status || "new") === key),
+  }));
 
   const accountMapStats = maps.map((map) => {
     const statsSource = map.id === activeMapId
@@ -2817,6 +2837,10 @@ export default function App() {
   }, [isEditingAccountName]);
 
   useEffect(() => () => window.clearTimeout(accountNameCloseTimerRef.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(feedbackThanksAutoTimerRef.current);
+    window.clearTimeout(feedbackThanksCloseTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!user || !isLibraryOwner) return undefined;
@@ -3073,6 +3097,17 @@ export default function App() {
     window.setTimeout(() => {
       setFeedbackAdminState((state) => state[messageId] === "saved" ? { ...state, [messageId]: "" } : state);
     }, 1400);
+  }
+
+  function closeFeedbackThanks() {
+    if (isFeedbackThanksClosing) return;
+    window.clearTimeout(feedbackThanksAutoTimerRef.current);
+    window.clearTimeout(feedbackThanksCloseTimerRef.current);
+    setIsFeedbackThanksClosing(true);
+    feedbackThanksCloseTimerRef.current = window.setTimeout(() => {
+      setShowFeedbackThanks(false);
+      setIsFeedbackThanksClosing(false);
+    }, 300);
   }
 
   async function openFeedbackInbox() {
@@ -5363,8 +5398,10 @@ export default function App() {
       window.setTimeout(() => {
         setIsFeedbackOpen(false);
         setClosingModal("");
+        setIsFeedbackThanksClosing(false);
         setShowFeedbackThanks(true);
-        window.setTimeout(() => setShowFeedbackThanks(false), 2200);
+        window.clearTimeout(feedbackThanksAutoTimerRef.current);
+        feedbackThanksAutoTimerRef.current = window.setTimeout(closeFeedbackThanks, 2200);
       }, 260);
     } catch (error) {
       console.error("Не удалось отправить обращение:", error);
@@ -6516,8 +6553,16 @@ export default function App() {
           {feedbackInboxLoading ? (
             <p className="feedback-inbox-empty">Загружаем сообщения…</p>
           ) : feedbackMessages.length ? (
-            <div className="feedback-inbox-list">
-              {feedbackMessages.map((message) => {
+            <div className="feedback-inbox-groups">
+              {feedbackGroups.map((group) => (
+                <section className={`feedback-inbox-group group-${group.key}`} key={group.key}>
+                  <div className="feedback-inbox-group-heading">
+                    <h2>{group.title}</h2>
+                    <span>{group.messages.length}</span>
+                  </div>
+                  {group.messages.length ? (
+                    <div className="feedback-inbox-list">
+              {group.messages.map((message) => {
                 const workStatus = message.work_status || "new";
                 const replyEmail = message.reply_email || "";
                 return (
@@ -6531,7 +6576,7 @@ export default function App() {
                     <span>Отправитель: {message.sender_email || "не указан"}</span>
                     <span>
                       Для ответа: {replyEmail ? (
-                        <a href={`https://mail.yandex.ru/compose?mailto=${encodeURIComponent(`mailto:${replyEmail}`)}`} target="_blank" rel="noreferrer">
+                        <a href={getYandexReplyUrl(message)} target="_blank" rel="noreferrer">
                           {replyEmail}
                         </a>
                       ) : "не указан"}
@@ -6577,6 +6622,12 @@ export default function App() {
                   </article>
                 );
               })}
+                    </div>
+                  ) : (
+                    <p className="feedback-inbox-group-empty">Здесь пока нет обращений.</p>
+                  )}
+                </section>
+              ))}
             </div>
           ) : (
             <p className="feedback-inbox-empty">Новых обращений пока нет.</p>
@@ -8239,7 +8290,7 @@ export default function App() {
       )}
 
       {showFeedbackThanks && (
-        <div className="feedback-thanks-overlay" onMouseDown={() => setShowFeedbackThanks(false)}>
+        <div className={`feedback-thanks-overlay${isFeedbackThanksClosing ? " is-closing" : ""}`} onMouseDown={closeFeedbackThanks}>
           <div className="feedback-thanks-card" role="status" onMouseDown={(event) => event.stopPropagation()}>
             <span aria-hidden="true">✓</span>
             <strong>Спасибо за сообщение!</strong>
