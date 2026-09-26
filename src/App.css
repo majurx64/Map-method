@@ -3100,7 +3100,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .maps-list { position: relative; }
 .maps-list .map-card { position: relative; cursor: grab; user-select: none; touch-action: pan-y; }
 .maps-list .map-card.is-dragging { z-index: 10; cursor: grabbing; transition: none; opacity: .88; box-shadow: 0 20px 55px #253d4938; }
-.maps-list .map-card.is-settling { z-index: 9; pointer-events: none; }
+.maps-list .map-card.is-settling { z-index: 9; pointer-events: none; transition:none !important; will-change:transform; }
 .map-drop-indicator { position: absolute; z-index: 8; box-sizing: border-box; border: 3px dashed #659176; border-radius: 18px; background: rgba(101,145,118,.08); pointer-events: none; }
 @keyframes daily-plan-success { 50% { border-color:#5f956b; box-shadow:0 5px 16px rgba(73,132,86,.18); transform:translateY(-1px); } }
 @keyframes daily-plan-sheen { 0%,55% { transform:translateX(-130%); } 85%,100% { transform:translateX(130%); } }
@@ -3327,7 +3327,8 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .inbox-menu-action > span { display:grid; min-width:20px; height:20px; place-items:center; padding:0 5px; border-radius:999px; background:#cf493f; color:#fff; font-size:10px; font-weight:800; }
 .library-preview .map-card-cell { box-shadow:inset 0 0 0 1px rgba(63,68,62,.08); }
 .library-preview .map-card-grid { width:max-content; height:auto; max-width:100%; max-height:none; }
-.map-card-grid.is-dense { gap:.25px; }
+.map-card-grid.is-dense { gap:0; }
+.map-card-grid.is-dense .map-card-cell { box-shadow:none; }
 .account-switching-overlay { position:fixed; inset:0; z-index:1000; display:grid; place-content:center; justify-items:center; gap:13px; background:rgba(247,244,237,.82); color:#2d4f40; backdrop-filter:blur(7px); animation:account-switch-overlay-in 180ms ease both; }
 .account-switching-overlay span { width:28px; height:28px; border:3px solid rgba(50,98,79,.18); border-top-color:#32624f; border-radius:50%; animation:account-switch-spin 650ms linear infinite; }
 .account-switching-overlay strong { font-size:15px; }

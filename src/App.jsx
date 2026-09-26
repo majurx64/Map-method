@@ -886,6 +886,22 @@ function dailyPlanCompleted(map, total, filled, today = new Date()) {
   return Boolean(map?.deadline) && map.dailyPlanDoneOn === getActivityDate(today);
 }
 
+function getDailyPlanProgress(map, total, filled, today = new Date()) {
+  if (!map?.deadline || !total) return null;
+  const [year, month, day] = map.deadline.split("-").map(Number);
+  const end = Date.UTC(year, month - 1, day);
+  const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const days = Math.round((end - start) / 86400000) + 1;
+  if (!Number.isFinite(end) || days <= 0) return null;
+  const todayKey = getActivityDate(today);
+  const paintedToday = (map.activityLog || [])
+    .filter((entry) => entry.date === todayKey)
+    .reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
+  const filledBeforeToday = Math.max(0, filled - paintedToday);
+  const target = Math.ceil(Math.max(0, total - filledBeforeToday) / days);
+  return target > 0 ? { target, paintedToday, days } : null;
+}
+
 function dailyQuotaMet(map, total, filled, today = new Date()) {
   if (!map?.deadline || !total) return false;
   const [year, month, day] = map.deadline.split("-").map(Number);
@@ -1637,6 +1653,7 @@ export default function App() {
   const cellAnimationsRef = useRef(new Map());
   const cellAnimationTimerRef = useRef(null);
   const canvasAnimationFrameRef = useRef(null);
+  const drawCanvasRef = useRef(null);
 
   const isDrawingRef = useRef(false);
   const drawModeRef = useRef("draw");
@@ -4059,17 +4076,23 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
+  drawCanvasRef.current = drawCanvas;
+
+  useLayoutEffect(() => {
     if (screen !== "editor")
       return;
 
-    const id =
-      requestAnimationFrame(
-        drawCanvas
-      );
+    drawCanvas();
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      drawCanvas();
+      secondFrame = requestAnimationFrame(drawCanvas);
+    });
 
-    return () =>
-      cancelAnimationFrame(id);
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+    };
   }, [
     screen,
     rows,
@@ -4120,10 +4143,20 @@ export default function App() {
   useEffect(() => {
     if (screen !== "editor" || !viewportRef.current) return;
     const viewport = viewportRef.current;
-    const observer = new ResizeObserver(() => setViewportSize((previous) => previous.width === viewport.clientWidth && previous.height === viewport.clientHeight ? previous : { width: viewport.clientWidth, height: viewport.clientHeight }));
+    const canvas = canvasRef.current;
+    let redrawFrame = 0;
+    const observer = new ResizeObserver(() => {
+      setViewportSize((previous) => previous.width === viewport.clientWidth && previous.height === viewport.clientHeight ? previous : { width: viewport.clientWidth, height: viewport.clientHeight });
+      cancelAnimationFrame(redrawFrame);
+      redrawFrame = requestAnimationFrame(() => drawCanvasRef.current?.());
+    });
     observer.observe(viewport);
-    return () => observer.disconnect();
-  }, [screen]);
+    if (canvas) observer.observe(canvas);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(redrawFrame);
+    };
+  }, [screen, activeMapId, rows, cols, mapZoom]);
 
   useLayoutEffect(() => {
     const anchor = zoomAnchorRef.current;
@@ -6843,6 +6876,7 @@ export default function App() {
 
                   const { filled: done, total: playableTotal, percent: p } = getMapStats(map);
                   const plan = dailyTarget(map.deadline, playableTotal, done, todayDate);
+                  const dailyProgress = getDailyPlanProgress(map, playableTotal, done, todayDate);
                   const planDoneToday = dailyPlanCompleted(map, playableTotal, done, todayDate);
 
                   return (
@@ -6900,7 +6934,11 @@ export default function App() {
                             )}
                             {plan && <span className={`daily-plan${planDoneToday ? " completed" : ""}`}>
                               {planDoneToday && <><b>✓ План на сегодня выполнен</b><small>Отличный темп — можно продолжить или отдохнуть</small></>}
-                              <span className="daily-plan-target">Норма: {plan}</span>
+                              <span className="daily-plan-target">
+                                {dailyProgress
+                                  ? `Норма: ${dailyProgress.target} клеток в день · сегодня ${dailyProgress.paintedToday} из ${dailyProgress.target} · осталось ${dailyProgress.days} дн.`
+                                  : `Норма: ${plan}`}
+                              </span>
                             </span>}
                             <span className="map-card-meta">
                               <span>{map.category || "Личное"}</span>
