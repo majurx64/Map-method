@@ -1566,6 +1566,7 @@ export default function App() {
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
   const [savedAccountDragId, setSavedAccountDragId] = useState(null);
   const [savedAccountDropId, setSavedAccountDropId] = useState(null);
+  const [savedAccountDragVisual, setSavedAccountDragVisual] = useState(null);
   const [switchingAccountId, setSwitchingAccountId] = useState(null);
   const [savedAccounts, setSavedAccounts] = useState(() => {
     try {
@@ -2898,15 +2899,21 @@ export default function App() {
     });
   }
 
-  function startSavedAccountDrag(event, accountId) {
+  function startSavedAccountDrag(event, account) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    const row = event.currentTarget.closest("[data-saved-account-id]");
+    if (!row) return;
+    const bounds = row.getBoundingClientRect();
     suppressSavedAccountClickRef.current = true;
     savedAccountPointerRef.current = {
-      id: accountId,
+      id: account.id,
+      account,
       pointerId: event.pointerId,
       startY: event.clientY,
+      grabOffset: event.clientY - bounds.top,
+      bounds,
       dragging: false,
       targetId: null,
     };
@@ -2921,8 +2928,26 @@ export default function App() {
     if (!drag.dragging) {
       drag.dragging = true;
       setSavedAccountDragId(drag.id);
+      setSavedAccountDragVisual({
+        account: drag.account,
+        left: drag.bounds.left,
+        top: drag.bounds.top,
+        width: drag.bounds.width,
+        height: drag.bounds.height,
+        settling: false,
+      });
     }
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-saved-account-id]");
+    setSavedAccountDragVisual((current) => current ? {
+      ...current,
+      top: event.clientY - drag.grabOffset,
+      settling: false,
+    } : current);
+    const target = [...document.querySelectorAll("[data-saved-account-id]")]
+      .filter((element) => element.dataset.savedAccountId !== drag.id)
+      .find((element) => {
+        const bounds = element.getBoundingClientRect();
+        return event.clientY >= bounds.top && event.clientY <= bounds.bottom;
+      });
     const targetId = target?.dataset.savedAccountId;
     drag.targetId = targetId && targetId !== drag.id ? targetId : null;
     setSavedAccountDropId(drag.targetId);
@@ -2935,14 +2960,25 @@ export default function App() {
     event.stopPropagation();
     savedAccountPointerRef.current = null;
     if (!cancelled && drag.dragging && drag.targetId) {
+      const target = document.querySelector(`[data-saved-account-id="${CSS.escape(drag.targetId)}"]`);
+      const targetBounds = target?.getBoundingClientRect();
+      if (targetBounds) {
+        setSavedAccountDragVisual((current) => current ? {
+          ...current,
+          top: targetBounds.top,
+          settling: true,
+        } : current);
+      }
       reorderSavedAccounts(drag.id, drag.targetId);
       window.setTimeout(() => {
         setSavedAccountDragId(null);
         setSavedAccountDropId(null);
-      }, 220);
+        setSavedAccountDragVisual(null);
+      }, 240);
     } else {
       setSavedAccountDragId(null);
       setSavedAccountDropId(null);
+      setSavedAccountDragVisual(null);
     }
     window.setTimeout(() => { suppressSavedAccountClickRef.current = false; }, 300);
   }
@@ -5283,6 +5319,22 @@ export default function App() {
           <strong>Переключаем аккаунт…</strong>
         </div>
       )}
+      {savedAccountDragVisual && (
+        <div
+          className={`saved-account-drag-ghost${savedAccountDragVisual.settling ? " is-settling" : ""}`}
+          style={{
+            left: savedAccountDragVisual.left,
+            top: savedAccountDragVisual.top,
+            width: savedAccountDragVisual.width,
+            height: savedAccountDragVisual.height,
+          }}
+          aria-hidden="true"
+        >
+          <span className="saved-account-avatar">{savedAccountDragVisual.account.name?.charAt(0).toUpperCase() || "M"}</span>
+          <i><strong>{savedAccountDragVisual.account.name}</strong><small>{savedAccountDragVisual.account.email}</small></i>
+          <span className="saved-account-handle">≡</span>
+        </div>
+      )}
       <header className="header">
         <button
           className="back-link"
@@ -5641,7 +5693,7 @@ export default function App() {
                             className="saved-account-handle"
                             aria-label="Перетащить аккаунт"
                             onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
-                            onPointerDown={(event) => startSavedAccountDrag(event, account.id)}
+                            onPointerDown={(event) => startSavedAccountDrag(event, account)}
                             onPointerMove={moveSavedAccountDrag}
                             onPointerUp={(event) => finishSavedAccountDrag(event)}
                             onPointerCancel={(event) => finishSavedAccountDrag(event, true)}
@@ -7967,8 +8019,7 @@ export default function App() {
                 />
                 <span>{feedbackFiles.length ? `Добавить ещё файлы · выбрано ${feedbackFiles.length}` : "+ Прикрепить несколько файлов"}</span>
               </label>
-              {!!feedbackFiles.length && (
-                <div className="feedback-file-list">
+              <div className={`feedback-file-list${feedbackFiles.length ? "" : " is-empty"}`}>
                   {feedbackFiles.map((file, index) => {
                     const fileKey = `${file.name}-${file.size}-${file.lastModified}`;
                     return (
@@ -8000,14 +8051,13 @@ export default function App() {
                                 return next;
                               });
                               setFeedbackRemovingFile("");
-                            }, 460);
+                            }, 520);
                           }}
                         >×</button>
                       </div>
                     );
                   })}
-                </div>
-              )}
+              </div>
             </div>
             {feedbackStatus === "error" && <p className="feedback-result error">Не удалось отправить. Попробуйте ещё раз чуть позже.</p>}
             {feedbackStatus === "files-too-large" && <p className="feedback-result error">Общий размер вложений не должен превышать 50 МБ.</p>}
