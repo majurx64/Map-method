@@ -1392,6 +1392,7 @@ export default function App() {
   const [cardDrag, setCardDrag] = useState(null);
   const cardDragRef = useRef(null);
   const [cardSettling, setCardSettling] = useState(null);
+  const cardPositionsRef = useRef(null);
   const suppressCardClick = useRef(false);
   const [categoryDrag, setCategoryDrag] = useState(null);
   const categoryDragRef = useRef(null);
@@ -1714,8 +1715,10 @@ export default function App() {
   const newMapInvalid = !Number.isInteger(newMapCount) || newMapCount < 1 || newMapCount > MAX_CELLS
     || (newMapGridMode === "manual" && (!Number.isInteger(Number(newMapRows)) || !Number.isInteger(Number(newMapCols)) || Number(newMapRows) < 1 || Number(newMapCols) < 1));
   const fitScale = Math.min((viewportSize.width - 24) / cols, (viewportSize.height - 24) / rows);
-  const canvasWidth = Math.max(1, cols * fitScale * mapZoom);
-  const canvasHeight = Math.max(1, rows * fitScale * mapZoom);
+  const displayDpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  const renderedCellScale = Math.max(1 / displayDpr, Math.floor(fitScale * mapZoom * displayDpr) / displayDpr);
+  const canvasWidth = Math.max(1, cols * renderedCellScale);
+  const canvasHeight = Math.max(1, rows * renderedCellScale);
 
   const t = (key) =>
     additionalTranslations[language]?.[key] ??
@@ -2096,17 +2099,28 @@ export default function App() {
   }, [categoryOrder, customCategories]);
 
   useLayoutEffect(() => {
-    if (!cardSettling) return;
-    const element = document.querySelector(`[data-map-id="${CSS.escape(cardSettling.id)}"]`);
-    if (!element) { setCardSettling(null); return; }
-    const destination = element.getBoundingClientRect();
-    const animation = element.animate([
-      { transform: `translate(${cardSettling.left - destination.left}px, ${cardSettling.top - destination.top}px) rotate(1deg)` },
-      { transform: "translate(0, 0) rotate(0deg)" },
-    ], { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" });
-    animation.onfinish = () => setCardSettling(null);
-    return () => animation.cancel();
-  }, [cardSettling]);
+    if (!cardSettling || !cardPositionsRef.current) return;
+    const previousPositions = cardPositionsRef.current;
+    cardPositionsRef.current = null;
+    const animations = [...document.querySelectorAll("[data-map-id]")].flatMap((element) => {
+      const previous = previousPositions.get(element.dataset.mapId);
+      if (!previous) return [];
+      const destination = element.getBoundingClientRect();
+      const deltaX = previous.left - destination.left;
+      const deltaY = previous.top - destination.top;
+      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return [];
+      return [element.animate([
+        { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` },
+        { transform: "translate3d(0, 0, 0)" },
+      ], { duration: 420, easing: "cubic-bezier(.16,1,.3,1)" })];
+    });
+    if (!animations.length) {
+      setCardSettling(null);
+      return;
+    }
+    Promise.allSettled(animations.map((animation) => animation.finished)).then(() => setCardSettling(null));
+    return () => animations.forEach((animation) => animation.cancel());
+  }, [maps, cardSettling]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -3392,9 +3406,13 @@ export default function App() {
 
     const now = new Date();
     const date = getActivityDate(now);
+    const previousToday = activityLogRef.current
+      .filter((entry) => entry.date === date)
+      .reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
+    const todayCells = Math.max(0, previousToday + count);
     const next = normalizeActivityLog([
-      ...activityLogRef.current,
-      { date, cells: count },
+      ...activityLogRef.current.filter((entry) => entry.date !== date),
+      ...(todayCells ? [{ date, cells: todayCells }] : []),
     ]);
     activityLogRef.current = next;
     setActivityLog(next);
@@ -3415,12 +3433,12 @@ export default function App() {
       };
       const stats = getMapStats(mapWithCurrentProgress);
 
-      if (dailyQuotaMet(mapWithCurrentProgress, stats.total, stats.filled, now)) {
-        activeMapRef.current = { ...currentMap, activityLog: next, dailyPlanDoneOn: date };
-        setMaps((mapsNow) => mapsNow.map((map) =>
-          map.id === activeMapId ? { ...map, dailyPlanDoneOn: date } : map
-        ));
-      }
+      const quotaMet = dailyQuotaMet(mapWithCurrentProgress, stats.total, stats.filled, now);
+      const dailyPlanDoneOn = quotaMet ? date : currentMap.dailyPlanDoneOn === date ? "" : currentMap.dailyPlanDoneOn;
+      activeMapRef.current = { ...currentMap, activityLog: next, dailyPlanDoneOn };
+      setMaps((mapsNow) => mapsNow.map((map) =>
+        map.id === activeMapId ? { ...map, dailyPlanDoneOn } : map
+      ));
     }
   }
 
@@ -3448,7 +3466,8 @@ export default function App() {
       animateCells(changed, mode);
       progressCompletedRef.current = next;
       setProgressCompleted([...next]);
-      if (mode === "draw") { recordPaintedCells(changed.length); strokeCountRef.current += changed.length; }
+      recordPaintedCells(mode === "draw" ? changed.length : -changed.length);
+      strokeCountRef.current += changed.length;
       return;
     }
 
@@ -3485,7 +3504,8 @@ export default function App() {
     animateCells(changed, mode);
     completedRef.current = nextSet;
     setCompleted([...nextSet]);
-    if (mode === "draw") { recordPaintedCells(changed.length); strokeCountRef.current += painted; }
+    recordPaintedCells(mode === "draw" ? changed.length : -changed.length);
+    strokeCountRef.current += mode === "draw" ? painted : changed.length;
 
     if (nextColors) {
       colorsRef.current = nextColors;
@@ -3743,7 +3763,7 @@ export default function App() {
     ) {
       continueStroke(i);
     }
-    if (drawModeRef.current === "draw" && strokeCountRef.current >= 2) setStrokeCounter({ x: e.clientX, y: e.clientY, count: strokeCountRef.current });
+    if (strokeCountRef.current >= 2) setStrokeCounter({ x: e.clientX, y: e.clientY, count: strokeCountRef.current });
   }
 
   function handlePointerUp(e) {
@@ -3881,6 +3901,7 @@ export default function App() {
 
     const dpr =
       Math.min(window.devicePixelRatio || 1, 4096 / Math.max(rect.width, rect.height));
+    const physicalPixel = 1 / dpr;
 
     c.width = Math.max(
       1,
@@ -3975,8 +3996,8 @@ export default function App() {
       ctx.fillRect(
         x,
         y,
-        cw + 0.5,
-        ch + 0.5
+        cw + physicalPixel,
+        ch + physicalPixel
       );
 
       // Поверх основы остаётся мягкий «пульс», поэтому анимация не исчезает.
@@ -3986,8 +4007,8 @@ export default function App() {
         ctx.fillRect(
           x + (cw * (1 - scale)) / 2,
           y + (ch * (1 - scale)) / 2,
-          cw * scale + 0.5,
-          ch * scale + 0.5
+          cw * scale + physicalPixel,
+          ch * scale + physicalPixel
         );
         ctx.globalAlpha = 1;
       }
@@ -4006,8 +4027,8 @@ export default function App() {
         ctx.fillRect(
           x,
           y,
-          cw + 0.5,
-          ch + 0.5
+          cw + physicalPixel,
+          ch + physicalPixel
         );
 
         ctx.globalAlpha = 1;
@@ -4022,8 +4043,8 @@ export default function App() {
         ctx.fillRect(
           x + (cw * (1 - eraseScale)) / 2,
           y + (ch * (1 - eraseScale)) / 2,
-          cw * eraseScale + 0.5,
-          ch * eraseScale + 0.5
+          cw * eraseScale + physicalPixel,
+          ch * eraseScale + physicalPixel
         );
         ctx.globalAlpha = 1;
       }
@@ -4032,16 +4053,14 @@ export default function App() {
     ctx.strokeStyle =
       "#d8d4cc";
 
-    ctx.lineWidth = 1;
+    ctx.lineWidth = physicalPixel;
 
     for (
       let r = 0;
       r <= rows;
       r++
     ) {
-      const y =
-        Math.round(r * ch) +
-        0.5;
+      const y = (Math.round(r * ch * dpr) + 0.5) / dpr;
 
       ctx.beginPath();
       ctx.moveTo(0, y);
@@ -4062,9 +4081,7 @@ export default function App() {
       col <= cols;
       col++
     ) {
-      const x =
-        Math.round(col * cw) +
-        0.5;
+      const x = (Math.round(col * cw * dpr) + 0.5) / dpr;
 
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -4140,16 +4157,18 @@ export default function App() {
     drawColor,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (screen !== "editor" || !viewportRef.current) return;
     const viewport = viewportRef.current;
     const canvas = canvasRef.current;
     let redrawFrame = 0;
-    const observer = new ResizeObserver(() => {
+    const syncViewport = () => {
       setViewportSize((previous) => previous.width === viewport.clientWidth && previous.height === viewport.clientHeight ? previous : { width: viewport.clientWidth, height: viewport.clientHeight });
       cancelAnimationFrame(redrawFrame);
       redrawFrame = requestAnimationFrame(() => drawCanvasRef.current?.());
-    });
+    };
+    syncViewport();
+    const observer = new ResizeObserver(syncViewport);
     observer.observe(viewport);
     if (canvas) observer.observe(canvas);
     return () => {
@@ -5145,13 +5164,22 @@ export default function App() {
     const visible = ordered.filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
     const from = visible.findIndex((map) => map.id === id);
     if (from < 0) return;
+    const safeTargetIndex = Math.max(0, Math.min(visible.length - 1, targetIndex));
+    if (from === safeTargetIndex) return;
+    cardPositionsRef.current = new Map(
+      [...document.querySelectorAll("[data-map-id]")].map((element) => [
+        element.dataset.mapId,
+        element.getBoundingClientRect(),
+      ])
+    );
     const rearranged = visible.filter((map) => map.id !== id);
-    rearranged.splice(Math.max(0, Math.min(rearranged.length, targetIndex)), 0, visible[from]);
+    rearranged.splice(Math.max(0, Math.min(rearranged.length, safeTargetIndex)), 0, visible[from]);
     let visibleIndex = 0;
     const next = ordered.map((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter ? rearranged[visibleIndex++] : map)
       .map((map, order) => ({ ...map, order }));
     const active = next.find((map) => map.id === activeMapId);
     if (active) activeMapRef.current = active;
+    setCardSettling({ id });
     setMaps(next);
     saveMapsLocally(next);
     if (user) {
@@ -5332,10 +5360,8 @@ export default function App() {
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
       if (drag.frame) window.cancelAnimationFrame(drag.frame);
-      const fromRect = element.getBoundingClientRect();
       if (drag.active && e.type !== "pointercancel") {
         reorderCardsToIndex(id, drag.targetIndex);
-        setCardSettling({ id, left: fromRect.left, top: fromRect.top });
       }
       if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
       cardDragRef.current = null;
@@ -6855,7 +6881,7 @@ export default function App() {
               </div>
             <p className="maps-drag-hint">Перетаскивайте карты и категории, чтобы менять их порядок.</p>
             {mapActionError && <p className="field-error" role="alert">{mapActionError}</p>}
-            <div className="maps-list">
+            <div className={`maps-list${cardSettling ? " is-reordering" : ""}`}>
               {cardDrag?.dropRect && <div className="map-drop-indicator" aria-hidden="true" style={cardDrag.dropRect} />}
               {[...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
                 (map) => {

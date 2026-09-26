@@ -3101,6 +3101,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .maps-list .map-card { position: relative; cursor: grab; user-select: none; touch-action: pan-y; }
 .maps-list .map-card.is-dragging { z-index: 10; cursor: grabbing; transition: none; opacity: .88; box-shadow: 0 20px 55px #253d4938; }
 .maps-list .map-card.is-settling { z-index: 9; pointer-events: none; transition:none !important; will-change:transform; }
+.maps-list.is-reordering .map-card { transition:none !important; will-change:transform; }
 .map-drop-indicator { position: absolute; z-index: 8; box-sizing: border-box; border: 3px dashed #659176; border-radius: 18px; background: rgba(101,145,118,.08); pointer-events: none; }
 @keyframes daily-plan-success { 50% { border-color:#5f956b; box-shadow:0 5px 16px rgba(73,132,86,.18); transform:translateY(-1px); } }
 @keyframes daily-plan-sheen { 0%,55% { transform:translateX(-130%); } 85%,100% { transform:translateX(130%); } }
