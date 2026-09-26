@@ -1120,28 +1120,14 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       }}
     >
       {visibleIndices.map((index) => {
-        const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
         const filled = completedCells.has(index);
-        const isDrawingCell = map.mapType === "image" || drawingCells.has(index);
         return (
           <span
             key={index}
             className={`map-card-cell${filled ? " filled" : ""}`}
             style={{
-              backgroundColor: utilityCell
-                ? "#d3d3cc"
-                : filled
-                  ? map.colors?.[index] || "#32624f"
-                  : isDrawingCell
-                    ? map.colors?.[index] || "#aeb5ad"
-                    : "#deded8",
-              opacity: filled
-                ? 1
-                : utilityCell
-                  ? densePreview ? 0.3 : 0.48
-                  : isDrawingCell
-                    ? densePreview ? 0.34 : 0.46
-                    : densePreview ? 0.24 : 0.42,
+              backgroundColor: filled ? map.colors?.[index] || "#32624f" : "#deded8",
+              opacity: filled ? 1 : densePreview ? 0.24 : 0.42,
             }}
           />
         );
@@ -1393,6 +1379,7 @@ export default function App() {
   const cardDragRef = useRef(null);
   const [cardSettling, setCardSettling] = useState(null);
   const cardPositionsRef = useRef(null);
+  const cardAnimationsRef = useRef([]);
   const suppressCardClick = useRef(false);
   const [categoryDrag, setCategoryDrag] = useState(null);
   const categoryDragRef = useRef(null);
@@ -2100,6 +2087,7 @@ export default function App() {
 
   useLayoutEffect(() => {
     if (!cardSettling || !cardPositionsRef.current) return;
+    cardAnimationsRef.current.forEach((animation) => animation.cancel());
     const previousPositions = cardPositionsRef.current;
     cardPositionsRef.current = null;
     const animations = [...document.querySelectorAll("[data-map-id]")].flatMap((element) => {
@@ -2118,8 +2106,16 @@ export default function App() {
       setCardSettling(null);
       return;
     }
-    Promise.allSettled(animations.map((animation) => animation.finished)).then(() => setCardSettling(null));
-    return () => animations.forEach((animation) => animation.cancel());
+    cardAnimationsRef.current = animations;
+    Promise.allSettled(animations.map((animation) => animation.finished)).then(() => {
+      if (cardAnimationsRef.current !== animations) return;
+      cardAnimationsRef.current = [];
+      setCardSettling(null);
+    });
+    return () => {
+      animations.forEach((animation) => animation.cancel());
+      if (cardAnimationsRef.current === animations) cardAnimationsRef.current = [];
+    };
   }, [maps, cardSettling]);
 
   useEffect(() => {
@@ -5303,6 +5299,9 @@ export default function App() {
 
   function beginCardDrag(event, id) {
     if (event.button !== 0 || event.target.closest("button, input, textarea, a") || deletingIdsRef.current.has(id)) return;
+    cardAnimationsRef.current.forEach((animation) => animation.cancel());
+    cardAnimationsRef.current = [];
+    setCardSettling(null);
     const element = event.currentTarget;
     const visible = [...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
     const drag = { id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, scrollX: window.scrollX, scrollY: window.scrollY, dx: 0, dy: 0, targetIndex: visible.findIndex((map) => map.id === id), dropRect: null, active: false };
@@ -6907,7 +6906,7 @@ export default function App() {
 
                   return (
                     <article
-                      className={`map-card${deletingIds.includes(map.id) ? " is-deleting" : ""}${cardDrag?.id === map.id ? " is-dragging" : ""}${cardSettling?.id === map.id ? " is-settling" : ""}${planDoneToday ? " daily-plan-complete" : ""}`}
+                      className={`map-card${deletingIds.includes(map.id) ? " is-deleting" : ""}${cardDrag?.id === map.id ? " is-dragging" : ""}${cardSettling?.id === map.id ? " is-settling" : ""}${planDoneToday ? " daily-plan-complete" : ""}${p >= 100 ? " is-complete" : ""}`}
                       data-map-id={map.id}
                       tabIndex={0}
                       aria-label={`Карта: ${map.name}`}
@@ -6981,6 +6980,7 @@ export default function App() {
                           <i
                             style={{
                               width: `${p}%`,
+                              backgroundColor: `hsl(${Math.round(p * 1.2)} 62% 43%)`,
                             }}
                           />
                         </div>

@@ -3101,8 +3101,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .maps-list { position: relative; }
 .maps-list .map-card { position: relative; cursor: grab; user-select: none; touch-action: pan-y; }
 .maps-list .map-card.is-dragging { z-index: 10; cursor: grabbing; transition: none; opacity: .88; box-shadow: 0 20px 55px #253d4938; }
-.maps-list .map-card.is-settling { z-index: 9; pointer-events: none; transition:none !important; will-change:transform; }
+.maps-list .map-card.is-settling { z-index: 9; transition:none !important; will-change:transform; }
 .maps-list.is-reordering .map-card { transition:none !important; will-change:transform; }
+.map-card-progress i { transition:width 360ms cubic-bezier(.16,1,.3,1),background-color 520ms ease; }
+@keyframes completed-card-glow { 50% { border-color:#8caf94; box-shadow:0 8px 24px rgba(50,98,79,.13); } }
+.maps-list .map-card.is-complete:not(.is-dragging):not(.is-settling) { animation:completed-card-glow 3.6s ease-in-out infinite; }
 .map-drop-indicator { position: absolute; z-index: 8; box-sizing: border-box; border: 3px dashed #659176; border-radius: 18px; background: rgba(101,145,118,.08); pointer-events: none; }
 @keyframes daily-plan-success { 50% { border-color:#5f956b; box-shadow:0 5px 16px rgba(73,132,86,.18); transform:translateY(-1px); } }
 @keyframes daily-plan-sheen { 0%,55% { transform:translateX(-130%); } 85%,100% { transform:translateX(130%); } }
@@ -3116,7 +3119,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @keyframes card-content-dissolve { to { opacity: 0; filter: blur(5px); transform: translateY(18px) scale(.95); } }
 @keyframes debris-fall { 0% { opacity: 0; transform: scale(.3); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--turn)) scale(.1); } }
 @media (prefers-reduced-motion: reduce) {
-  .maps-list .map-card.is-deleting, .map-card.is-deleting > *, .card-debris i, .map-card .daily-plan.completed, .map-card .daily-plan.completed::after, .grid-selection.selection-ready, .grid-selection.selection-ready > span { animation-duration:1ms; }
+  .maps-list .map-card.is-deleting, .maps-list .map-card.is-complete, .map-card.is-deleting > *, .card-debris i, .map-card .daily-plan.completed, .map-card .daily-plan.completed::after, .grid-selection.selection-ready, .grid-selection.selection-ready > span { animation-duration:1ms; }
 }
 .utility-color-section { display:grid; grid-template-columns:minmax(0,1fr) 42px; align-items:center; gap:11px; padding-top:11px; border-top:1px solid #e2dbd0; }
 .utility-color-copy { display:grid; gap:3px; }
