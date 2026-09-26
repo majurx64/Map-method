@@ -1563,12 +1563,15 @@ export default function App() {
   const [showFeedbackThanks, setShowFeedbackThanks] = useState(false);
   const [feedbackMessages, setFeedbackMessages] = useState([]);
   const [feedbackInboxLoading, setFeedbackInboxLoading] = useState(false);
+  const [feedbackNoteDrafts, setFeedbackNoteDrafts] = useState({});
+  const [feedbackAdminState, setFeedbackAdminState] = useState({});
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
   const [savedAccountDragId, setSavedAccountDragId] = useState(null);
   const [savedAccountDropId, setSavedAccountDropId] = useState(null);
   const [savedAccountDragVisual, setSavedAccountDragVisual] = useState(null);
   const [switchingAccountId, setSwitchingAccountId] = useState(null);
   const [accountToRemove, setAccountToRemove] = useState(null);
+  const [isAccountRemoveClosing, setIsAccountRemoveClosing] = useState(false);
   const [removingSavedAccountId, setRemovingSavedAccountId] = useState(null);
   const [savedAccounts, setSavedAccounts] = useState(() => {
     try {
@@ -2128,6 +2131,10 @@ export default function App() {
 
       if (downloadChoice) {
         closeModal("download");
+        return;
+      }
+      if (accountToRemove) {
+        closeAccountRemoveModal();
         return;
       }
       if (isFeedbackOpen) {
@@ -2814,14 +2821,25 @@ export default function App() {
   useEffect(() => {
     if (!user || !isLibraryOwner) return undefined;
     let cancelled = false;
+    let initialLoad = true;
     async function loadFeedbackMessages() {
-      if (!cancelled) setFeedbackInboxLoading(true);
+      if (!cancelled && initialLoad) setFeedbackInboxLoading(true);
       const { data, error } = await supabase
         .from(FEEDBACK_TABLE)
         .select("*")
         .order("created_at", { ascending: false });
-      if (!cancelled && !error) setFeedbackMessages(data || []);
-      if (!cancelled) setFeedbackInboxLoading(false);
+      if (!cancelled && !error) {
+        setFeedbackMessages(data || []);
+        setFeedbackNoteDrafts((previous) => {
+          const next = { ...previous };
+          (data || []).forEach((message) => {
+            if (!(message.id in next)) next[message.id] = message.owner_note || "";
+          });
+          return next;
+        });
+      }
+      if (!cancelled && initialLoad) setFeedbackInboxLoading(false);
+      initialLoad = false;
     }
     loadFeedbackMessages();
     const refreshOnFocus = () => loadFeedbackMessages();
@@ -3015,16 +3033,46 @@ export default function App() {
   function confirmRemoveSavedAccount() {
     if (!accountToRemove || removingSavedAccountId) return;
     const accountId = accountToRemove.id;
-    setAccountToRemove(null);
-    setRemovingSavedAccountId(accountId);
+    setIsAccountRemoveClosing(true);
     window.setTimeout(() => {
-      setSavedAccounts((previous) => {
-        const next = previous.filter((account) => account.id !== accountId);
-        localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
-        return next;
-      });
-      setRemovingSavedAccountId(null);
-    }, 380);
+      setAccountToRemove(null);
+      setIsAccountRemoveClosing(false);
+      setRemovingSavedAccountId(accountId);
+      window.setTimeout(() => {
+        setSavedAccounts((previous) => {
+          const next = previous.filter((account) => account.id !== accountId);
+          localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
+          return next;
+        });
+        setRemovingSavedAccountId(null);
+      }, 380);
+    }, 260);
+  }
+
+  function closeAccountRemoveModal() {
+    if (!accountToRemove || isAccountRemoveClosing) return;
+    setIsAccountRemoveClosing(true);
+    window.setTimeout(() => {
+      setAccountToRemove(null);
+      setIsAccountRemoveClosing(false);
+    }, 260);
+  }
+
+  async function updateFeedbackAdminField(messageId, patch) {
+    const previous = feedbackMessages.find((message) => message.id === messageId);
+    if (!previous) return;
+    setFeedbackMessages((messages) => messages.map((message) => message.id === messageId ? { ...message, ...patch } : message));
+    setFeedbackAdminState((state) => ({ ...state, [messageId]: "saving" }));
+    const { error } = await supabase.from(FEEDBACK_TABLE).update(patch).eq("id", messageId);
+    if (error) {
+      setFeedbackMessages((messages) => messages.map((message) => message.id === messageId ? previous : message));
+      setFeedbackAdminState((state) => ({ ...state, [messageId]: "error" }));
+      return;
+    }
+    setFeedbackAdminState((state) => ({ ...state, [messageId]: "saved" }));
+    window.setTimeout(() => {
+      setFeedbackAdminState((state) => state[messageId] === "saved" ? { ...state, [messageId]: "" } : state);
+    }, 1400);
   }
 
   async function openFeedbackInbox() {
@@ -5748,6 +5796,7 @@ export default function App() {
                             onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
+                              setIsAccountRemoveClosing(false);
                               setAccountToRemove(account);
                             }}
                           >
@@ -6468,8 +6517,11 @@ export default function App() {
             <p className="feedback-inbox-empty">Загружаем сообщения…</p>
           ) : feedbackMessages.length ? (
             <div className="feedback-inbox-list">
-              {feedbackMessages.map((message) => (
-                <article className="feedback-inbox-card" key={message.id}>
+              {feedbackMessages.map((message) => {
+                const workStatus = message.work_status || "new";
+                const replyEmail = message.reply_email || "";
+                return (
+                  <article className={`feedback-inbox-card status-${workStatus}`} key={message.id}>
                   <div className="feedback-inbox-meta">
                     <strong>{message.kind}</strong>
                     <time>{new Date(message.created_at).toLocaleString("ru-RU")}</time>
@@ -6477,7 +6529,13 @@ export default function App() {
                   <p>{message.message}</p>
                   <div className="feedback-inbox-contact">
                     <span>Отправитель: {message.sender_email || "не указан"}</span>
-                    <span>Для ответа: {message.reply_email || "не указан"}</span>
+                    <span>
+                      Для ответа: {replyEmail ? (
+                        <a href={`https://mail.yandex.ru/compose?mailto=${encodeURIComponent(`mailto:${replyEmail}`)}`} target="_blank" rel="noreferrer">
+                          {replyEmail}
+                        </a>
+                      ) : "не указан"}
+                    </span>
                   </div>
                   {!!message.attachments?.length && (
                     <div className="feedback-inbox-attachments">
@@ -6488,8 +6546,37 @@ export default function App() {
                       ))}
                     </div>
                   )}
-                </article>
-              ))}
+                  <div className="feedback-workspace">
+                    <div className="feedback-work-status" aria-label="Статус обращения">
+                      {[["new", "Не обработано"], ["in_progress", "В работе"], ["done", "Готово"]].map(([value, label]) => (
+                        <button
+                          type="button"
+                          className={workStatus === value ? "active" : ""}
+                          key={value}
+                          onClick={() => updateFeedbackAdminField(message.id, { work_status: value })}
+                        >
+                          <i aria-hidden="true" /> {label}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="feedback-owner-note">
+                      <span>Личная заметка</span>
+                      <textarea
+                        value={feedbackNoteDrafts[message.id] ?? message.owner_note ?? ""}
+                        placeholder="Например: проверил ошибку, осталось подготовить ответ"
+                        onChange={(event) => setFeedbackNoteDrafts((drafts) => ({ ...drafts, [message.id]: event.target.value }))}
+                      />
+                    </label>
+                    <div className="feedback-note-actions">
+                      <span className={`feedback-admin-state ${feedbackAdminState[message.id] || ""}`}>
+                        {feedbackAdminState[message.id] === "saving" ? "Сохраняем…" : feedbackAdminState[message.id] === "saved" ? "Сохранено" : feedbackAdminState[message.id] === "error" ? "Не удалось сохранить" : ""}
+                      </span>
+                      <button type="button" onClick={() => updateFeedbackAdminField(message.id, { owner_note: feedbackNoteDrafts[message.id] ?? "" })}>Сохранить заметку</button>
+                    </div>
+                  </div>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <p className="feedback-inbox-empty">Новых обращений пока нет.</p>
@@ -8133,18 +8220,18 @@ export default function App() {
       )}
 
       {accountToRemove && (
-        <div className="modal-overlay" onMouseDown={() => setAccountToRemove(null)}>
+        <div className={`modal-overlay account-remove-overlay${isAccountRemoveClosing ? " is-closing" : ""}`} onMouseDown={closeAccountRemoveModal}>
           <div className="create-modal saved-account-remove-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h2>Убрать аккаунт?</h2>
                 <p><strong>{accountToRemove.name}</strong> исчезнет из быстрого переключения на этом устройстве.</p>
               </div>
-              <button type="button" className="modal-close" onClick={() => setAccountToRemove(null)}>×</button>
+              <button type="button" className="modal-close" onClick={closeAccountRemoveModal}>×</button>
             </div>
             <p className="saved-account-remove-note">Сам аккаунт, его карты и прогресс останутся сохранены. Его можно будет добавить снова через вход.</p>
             <div className="saved-account-remove-actions">
-              <button type="button" onClick={() => setAccountToRemove(null)}>Отмена</button>
+              <button type="button" onClick={closeAccountRemoveModal}>Отмена</button>
               <button type="button" className="danger-action" onClick={confirmRemoveSavedAccount}>Убрать</button>
             </div>
           </div>
