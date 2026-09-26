@@ -1568,6 +1568,8 @@ export default function App() {
   const [savedAccountDropId, setSavedAccountDropId] = useState(null);
   const [savedAccountDragVisual, setSavedAccountDragVisual] = useState(null);
   const [switchingAccountId, setSwitchingAccountId] = useState(null);
+  const [accountToRemove, setAccountToRemove] = useState(null);
+  const [removingSavedAccountId, setRemovingSavedAccountId] = useState(null);
   const [savedAccounts, setSavedAccounts] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(SAVED_ACCOUNTS_KEY) || "[]");
@@ -1593,6 +1595,9 @@ export default function App() {
   const accountNameInputRef = useRef(null);
   const accountNameCloseTimerRef = useRef(null);
   const feedbackFileInputRef = useRef(null);
+  const feedbackModalRef = useRef(null);
+  const feedbackModalHeightRef = useRef(null);
+  const feedbackModalAnimationRef = useRef(null);
   const savedAccountPositionsRef = useRef(new Map());
   const savedAccountPointerRef = useRef(null);
   const suppressSavedAccountClickRef = useRef(false);
@@ -2321,6 +2326,30 @@ export default function App() {
     });
   }, [savedAccounts, savedAccountDragId]);
 
+  useLayoutEffect(() => {
+    if (!isFeedbackOpen || !feedbackModalRef.current) {
+      feedbackModalHeightRef.current = null;
+      feedbackModalAnimationRef.current?.cancel();
+      return;
+    }
+    const modal = feedbackModalRef.current;
+    const nextHeight = modal.getBoundingClientRect().height;
+    const previousHeight = feedbackModalHeightRef.current;
+    feedbackModalHeightRef.current = nextHeight;
+    if (!previousHeight || Math.abs(previousHeight - nextHeight) < 2) return;
+    feedbackModalAnimationRef.current?.cancel();
+    modal.style.overflow = "hidden";
+    const animation = modal.animate(
+      [{ height: `${previousHeight}px` }, { height: `${nextHeight}px` }],
+      { duration: 440, easing: "cubic-bezier(.16,1,.3,1)" }
+    );
+    feedbackModalAnimationRef.current = animation;
+    animation.onfinish = () => {
+      modal.style.overflow = "";
+      feedbackModalAnimationRef.current = null;
+    };
+  }, [feedbackFiles.length, isFeedbackOpen]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -2981,6 +3010,21 @@ export default function App() {
       setSavedAccountDragVisual(null);
     }
     window.setTimeout(() => { suppressSavedAccountClickRef.current = false; }, 300);
+  }
+
+  function confirmRemoveSavedAccount() {
+    if (!accountToRemove || removingSavedAccountId) return;
+    const accountId = accountToRemove.id;
+    setAccountToRemove(null);
+    setRemovingSavedAccountId(accountId);
+    window.setTimeout(() => {
+      setSavedAccounts((previous) => {
+        const next = previous.filter((account) => account.id !== accountId);
+        localStorage.setItem(SAVED_ACCOUNTS_KEY, JSON.stringify(next));
+        return next;
+      });
+      setRemovingSavedAccountId(null);
+    }, 380);
   }
 
   async function openFeedbackInbox() {
@@ -5355,7 +5399,7 @@ export default function App() {
             setScreen("home");
           }}
         >
-          <img className="brand-mark" src="/mm-logo.png" alt="" />
+          <img className="brand-mark" src={`${import.meta.env.BASE_URL}mm-logo.png`} alt="" />
 
           <span className="brand-context" key={`${screen}-${language}`}>
             {screen === "home"
@@ -5678,17 +5722,37 @@ export default function App() {
                   {isAccountSwitcherOpen && (
                     <div className="saved-account-list">
                       {otherSavedAccounts.map((account) => (
-                        <button
-                          type="button"
-                          className={`saved-account-item${savedAccountDragId === account.id ? " is-dragging" : ""}${savedAccountDropId === account.id ? " is-drop-target" : ""}`}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          className={`saved-account-item${savedAccountDragId === account.id ? " is-dragging" : ""}${savedAccountDropId === account.id ? " is-drop-target" : ""}${removingSavedAccountId === account.id ? " is-removing" : ""}`}
                           data-saved-account-id={account.id}
                           key={account.id}
                           onClick={() => {
                             if (!suppressSavedAccountClickRef.current) switchToSavedAccount(account);
                           }}
+                          onKeyDown={(event) => {
+                            if ((event.key === "Enter" || event.key === " ") && !suppressSavedAccountClickRef.current) {
+                              event.preventDefault();
+                              switchToSavedAccount(account);
+                            }
+                          }}
                         >
                           <span className="saved-account-avatar">{account.name?.charAt(0).toUpperCase() || "M"}</span>
                           <i><strong>{account.name}</strong><small>{account.email}</small></i>
+                          <button
+                            type="button"
+                            className="saved-account-remove"
+                            aria-label={`Удалить ${account.name} из списка`}
+                            onKeyDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setAccountToRemove(account);
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8v10m4-10v10m4-10v10M5 5h14M9 5V3h6v2m3 0-1 16H7L6 5" /></svg>
+                          </button>
                           <span
                             className="saved-account-handle"
                             aria-label="Перетащить аккаунт"
@@ -5698,7 +5762,7 @@ export default function App() {
                             onPointerUp={(event) => finishSavedAccountDrag(event)}
                             onPointerCancel={(event) => finishSavedAccountDrag(event, true)}
                           >≡</span>
-                        </button>
+                        </div>
                       ))}
                       <button type="button" className="add-account-action" onClick={handleSwitchAccount}>＋ Добавить аккаунт</button>
                     </div>
@@ -7964,7 +8028,7 @@ export default function App() {
 
       {isFeedbackOpen && (
         <div className={`modal-overlay${closingModal === "feedback" ? " is-closing" : ""}`} onMouseDown={() => closeModal("feedback")}>
-          <form className="create-modal feedback-modal" onSubmit={submitFeedback} onMouseDown={(event) => event.stopPropagation()}>
+          <form ref={feedbackModalRef} className="create-modal feedback-modal" onSubmit={submitFeedback} onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
                 <h2>Обратная связь</h2>
@@ -8051,7 +8115,7 @@ export default function App() {
                                 return next;
                               });
                               setFeedbackRemovingFile("");
-                            }, 520);
+                            }, 400);
                           }}
                         >×</button>
                       </div>
@@ -8065,6 +8129,25 @@ export default function App() {
               {feedbackStatus === "sending" ? "Отправляем…" : "Отправить"}
             </button>
           </form>
+        </div>
+      )}
+
+      {accountToRemove && (
+        <div className="modal-overlay" onMouseDown={() => setAccountToRemove(null)}>
+          <div className="create-modal saved-account-remove-modal" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Убрать аккаунт?</h2>
+                <p><strong>{accountToRemove.name}</strong> исчезнет из быстрого переключения на этом устройстве.</p>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setAccountToRemove(null)}>×</button>
+            </div>
+            <p className="saved-account-remove-note">Сам аккаунт, его карты и прогресс останутся сохранены. Его можно будет добавить снова через вход.</p>
+            <div className="saved-account-remove-actions">
+              <button type="button" onClick={() => setAccountToRemove(null)}>Отмена</button>
+              <button type="button" className="danger-action" onClick={confirmRemoveSavedAccount}>Убрать</button>
+            </div>
+          </div>
         </div>
       )}
 
