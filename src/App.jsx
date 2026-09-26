@@ -1572,6 +1572,7 @@ export default function App() {
   const [isFeedbackThanksClosing, setIsFeedbackThanksClosing] = useState(false);
   const [feedbackMessages, setFeedbackMessages] = useState([]);
   const [feedbackInboxLoading, setFeedbackInboxLoading] = useState(false);
+  const [feedbackInboxFilter, setFeedbackInboxFilter] = useState("all");
   const [feedbackNoteDrafts, setFeedbackNoteDrafts] = useState({});
   const [feedbackAdminState, setFeedbackAdminState] = useState({});
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
@@ -1737,15 +1738,19 @@ export default function App() {
   const accountTriggerCharacters = Math.max(6, headerAccountName.length);
   const otherSavedAccounts = savedAccounts.filter((account) => account.id !== user?.id);
   const unreadFeedbackCount = feedbackMessages.filter((message) => !message.is_read).length;
-  const feedbackGroups = [
+  const feedbackFilters = [
+    ["all", "Все"],
     ["new", "Не обработано"],
     ["in_progress", "В работе"],
     ["done", "Готово"],
   ].map(([key, title]) => ({
     key,
     title,
-    messages: feedbackMessages.filter((message) => (message.work_status || "new") === key),
+    count: key === "all" ? feedbackMessages.length : feedbackMessages.filter((message) => (message.work_status || "new") === key).length,
   }));
+  const visibleFeedbackMessages = feedbackInboxFilter === "all"
+    ? feedbackMessages
+    : feedbackMessages.filter((message) => (message.work_status || "new") === feedbackInboxFilter);
 
   const accountMapStats = maps.map((map) => {
     const statsSource = map.id === activeMapId
@@ -6550,19 +6555,26 @@ export default function App() {
             </div>
             <span>{feedbackMessages.length}</span>
           </div>
+          <div className="feedback-inbox-filters" role="tablist" aria-label="Фильтр обращений">
+            {feedbackFilters.map((filter) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={feedbackInboxFilter === filter.key}
+                className={`${feedbackInboxFilter === filter.key ? "active " : ""}filter-${filter.key}`}
+                key={filter.key}
+                onClick={() => setFeedbackInboxFilter(filter.key)}
+              >
+                {filter.title}<span>{filter.count}</span>
+              </button>
+            ))}
+          </div>
           {feedbackInboxLoading ? (
             <p className="feedback-inbox-empty">Загружаем сообщения…</p>
           ) : feedbackMessages.length ? (
-            <div className="feedback-inbox-groups">
-              {feedbackGroups.map((group) => (
-                <section className={`feedback-inbox-group group-${group.key}`} key={group.key}>
-                  <div className="feedback-inbox-group-heading">
-                    <h2>{group.title}</h2>
-                    <span>{group.messages.length}</span>
-                  </div>
-                  {group.messages.length ? (
-                    <div className="feedback-inbox-list">
-              {group.messages.map((message) => {
+            visibleFeedbackMessages.length ? (
+              <div className="feedback-inbox-list" key={feedbackInboxFilter}>
+              {visibleFeedbackMessages.map((message) => {
                 const workStatus = message.work_status || "new";
                 const replyEmail = message.reply_email || "";
                 return (
@@ -6622,13 +6634,10 @@ export default function App() {
                   </article>
                 );
               })}
-                    </div>
-                  ) : (
-                    <p className="feedback-inbox-group-empty">Здесь пока нет обращений.</p>
-                  )}
-                </section>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <p className="feedback-inbox-group-empty">В этом разделе пока нет обращений.</p>
+            )
           ) : (
             <p className="feedback-inbox-empty">Новых обращений пока нет.</p>
           )}
