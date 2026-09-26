@@ -5172,8 +5172,8 @@ export default function App() {
         element.getBoundingClientRect(),
       ])
     );
-    const rearranged = visible.filter((map) => map.id !== id);
-    rearranged.splice(Math.max(0, Math.min(rearranged.length, safeTargetIndex)), 0, visible[from]);
+    const rearranged = [...visible];
+    [rearranged[from], rearranged[safeTargetIndex]] = [rearranged[safeTargetIndex], rearranged[from]];
     let visibleIndex = 0;
     const next = ordered.map((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter ? rearranged[visibleIndex++] : map)
       .map((map, order) => ({ ...map, order }));
