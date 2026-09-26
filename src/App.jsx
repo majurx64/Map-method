@@ -1120,14 +1120,24 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       }}
     >
       {visibleIndices.map((index) => {
+        const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
         const filled = completedCells.has(index);
+        const backgroundDrawingCell = !utilityCell && (map.mapType === "image" || drawingCells.has(index));
         return (
           <span
             key={index}
             className={`map-card-cell${filled ? " filled" : ""}`}
             style={{
-              backgroundColor: filled ? map.colors?.[index] || "#32624f" : "#deded8",
-              opacity: filled ? 1 : densePreview ? 0.24 : 0.42,
+              backgroundColor: filled
+                ? map.colors?.[index] || "#32624f"
+                : backgroundDrawingCell
+                  ? map.colors?.[index] || "#aeb5ad"
+                  : "#deded8",
+              opacity: filled
+                ? 1
+                : backgroundDrawingCell
+                  ? densePreview ? 0.38 : 0.52
+                  : densePreview ? 0.34 : 0.62,
             }}
           />
         );
