@@ -1064,6 +1064,7 @@ function mapFromSupabaseRow(row) {
 const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false }) {
   const completedCells = new Set(map.progressCompleted || []);
   const drawingCells = new Set(map.completed || []);
+  const densePreview = dimensions.actualTotal >= 2000;
   const meaningfulCells = [...drawingCells].filter((index) => (
     map.mapType !== "free" || normalizeHexColor(map.colors?.[index]) !== UTILITY_COLOR
   ));
@@ -1093,7 +1094,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
 
   return (
     <div
-      className="map-card-grid"
+      className={`map-card-grid${densePreview ? " is-dense" : ""}`}
       style={{
         gridTemplateColumns: cropToDrawing
           ? `repeat(${visibleCols},${previewCellSize}px)`
@@ -1118,7 +1119,13 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
                   : isDrawingCell
                     ? map.colors?.[index] || "#aeb5ad"
                     : "#deded8",
-              opacity: utilityCell ? 1 : !filled && isDrawingCell ? 0.58 : 1,
+              opacity: filled
+                ? 1
+                : utilityCell
+                  ? densePreview ? 0.3 : 0.48
+                  : isDrawingCell
+                    ? densePreview ? 0.34 : 0.46
+                    : densePreview ? 0.24 : 0.42,
             }}
           />
         );
