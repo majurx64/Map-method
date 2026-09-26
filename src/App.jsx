@@ -1121,7 +1121,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     >
       {visibleIndices.map((index) => {
         const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
-        const filled = completedCells.has(index);
+        const filled = completedCells.has(index) && !utilityCell;
         const backgroundDrawingCell = !utilityCell && (map.mapType === "image" || drawingCells.has(index));
         return (
           <span
