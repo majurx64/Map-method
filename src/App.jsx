@@ -1874,11 +1874,19 @@ export default function App() {
         .select("id,owner_id,name,data")
         .order("created_at", { ascending: true });
       if (cancelled || error) return;
-      const savedItems = (data || []).map((row) => ({
+      const hiddenBuiltinIds = new Set((data || [])
+        .map((row) => row.data?.hiddenBuiltinId)
+        .filter(Boolean));
+      const savedItems = (data || [])
+        .filter((row) => !row.data?.hiddenBuiltinId)
+        .map((row) => ({
         ...normalizeMap({ ...row.data, id: row.id, name: row.name }),
         publicLibraryOwnerId: row.owner_id,
       }));
-      setPublicLibrary([...BUILTIN_PUBLIC_LIBRARY, ...savedItems]);
+      setPublicLibrary([
+        ...BUILTIN_PUBLIC_LIBRARY.filter((item) => !hiddenBuiltinIds.has(item.id)),
+        ...savedItems,
+      ]);
     };
     loadPublicLibrary();
     return () => { cancelled = true; };
@@ -1953,12 +1961,19 @@ export default function App() {
   }
 
   async function removePublicLibraryItem(item) {
-    if (!user || !isLibraryOwner || !item.publicLibraryOwnerId) return;
-    const { error } = await supabase
-      .from(PUBLIC_LIBRARY_TABLE)
-      .delete()
-      .eq("id", item.id)
-      .eq("owner_id", user.id);
+    if (!user || !isLibraryOwner) return;
+    const { error } = item.publicLibraryOwnerId
+      ? await supabase
+          .from(PUBLIC_LIBRARY_TABLE)
+          .delete()
+          .eq("id", item.id)
+          .eq("owner_id", user.id)
+      : await supabase.from(PUBLIC_LIBRARY_TABLE).insert({
+          id: `hidden-${item.id}`,
+          owner_id: user.id,
+          name: item.name,
+          data: { hiddenBuiltinId: item.id },
+        });
     if (error) {
       setLibraryStatus("Не удалось удалить рисунок из публичной коллекции.");
       return;
@@ -4515,8 +4530,13 @@ export default function App() {
           manualCols
         );
 
+        const offset = {
+          x: 0,
+          y: 0,
+          frame: { left: 0, top: 0, width: dimensions.cols, height: dimensions.rows },
+        };
         setImage(src);
-        setImageOffset({ x: 0, y: 0 });
+        setImageOffset(offset);
 
         setImageRatio(ratio);
 
@@ -4535,7 +4555,7 @@ export default function App() {
           ratio,
           dimensions.cols,
           dimensions.rows,
-          { x: 0, y: 0 },
+          offset,
           dimensions.actualTotal
         );
       };
@@ -5115,7 +5135,9 @@ export default function App() {
         sourceImageRef.current = source;
         if (m.mapType === "image" && !m.imageOffset.cellsEdited) {
           const dimensions = getGridDimensions(m.totalCells, m.imageRatio, m.gridMode, m.manualRows, m.manualCols);
-          const offset = imagePlacement(source.width, source.height, dimensions.cols, dimensions.rows, dimensions.actualTotal, m.imageOffset).offset;
+          const offset = m.imageOffset.frame
+            ? m.imageOffset
+            : { x: 0, y: 0, frame: { left: 0, top: 0, width: dimensions.cols, height: dimensions.rows } };
           const nextColors = sampleImageColors(source, dimensions.cols, dimensions.rows, offset, dimensions.actualTotal);
           colorsRef.current = nextColors;
           setColors(nextColors);
@@ -5748,6 +5770,7 @@ export default function App() {
       draftId: draft.id,
       originalId: source.id,
       grouped: Boolean(groupedMaps),
+      originScrollY: Math.max(window.scrollY, document.documentElement.scrollTop, document.body.scrollTop),
     });
     setSubmissionEditStatus("");
     setActiveMapId(draft.id);
@@ -5756,10 +5779,10 @@ export default function App() {
     localStorage.setItem(ACTIVE_MAP_KEY, draft.id);
   }
 
-  async function finishSubmissionEditing(saveChanges) {
+  async function finishSubmissionEditing(action) {
     if (!submissionEditContext) return;
     const context = submissionEditContext;
-    if (saveChanges) {
+    if (action) {
       const message = feedbackMessages.find((entry) => entry.id === context.messageId);
       const currentMap = buildCurrentMap();
       if (!message || !currentMap) return;
@@ -5775,24 +5798,55 @@ export default function App() {
         activityLog: [],
         modeDrafts: {},
       });
+      let savedSubmission = editedSubmission;
+      let libraryItem = null;
+      if (action === "publish") {
+        libraryItem = normalizeMap({
+          ...editedSubmission,
+          id: `public-${createMapId()}`,
+        });
+        const { error: libraryError } = await supabase.from(PUBLIC_LIBRARY_TABLE).insert({
+          id: libraryItem.id,
+          owner_id: user.id,
+          name: libraryItem.name,
+          data: libraryItem,
+        });
+        if (libraryError) {
+          setSubmissionEditStatus("error");
+          return;
+        }
+        savedSubmission = { ...editedSubmission, approved_library_id: libraryItem.id };
+      }
       const submissionData = context.grouped
         ? {
             ...message.submission_data,
-            maps: message.submission_data.maps.map((map, index) => index === context.submissionIndex ? editedSubmission : map),
+            maps: message.submission_data.maps.map((map, index) => index === context.submissionIndex ? savedSubmission : map),
           }
-        : editedSubmission;
-      const { error } = await supabase.from(FEEDBACK_TABLE).update({ submission_data: submissionData }).eq("id", message.id);
+        : savedSubmission;
+      const allApproved = Array.isArray(submissionData.maps)
+        ? submissionData.maps.every((map) => map.approved_library_id)
+        : Boolean(submissionData.approved_library_id);
+      const nextWorkStatus = action === "publish" && allApproved ? "done" : (message.work_status || "new");
+      const { error } = await supabase.from(FEEDBACK_TABLE).update({ submission_data: submissionData, work_status: nextWorkStatus }).eq("id", message.id);
       if (error) {
         setSubmissionEditStatus("error");
         return;
       }
-      setFeedbackMessages((messages) => messages.map((entry) => entry.id === message.id ? { ...entry, submission_data: submissionData } : entry));
+      if (libraryItem) {
+        setPublicLibrary((current) => [...current, { ...libraryItem, publicLibraryOwnerId: user.id }]);
+      }
+      setFeedbackMessages((messages) => messages.map((entry) => entry.id === message.id ? { ...entry, submission_data: submissionData, work_status: nextWorkStatus } : entry));
     }
     setMaps((current) => current.filter((map) => map.id !== context.draftId));
     if (user) void supabase.from("maps").delete().eq("id", context.draftId);
     setActiveMapId(null);
     setSubmissionEditContext(null);
     setSubmissionEditStatus("");
+    setFeedbackInboxSection("sketches");
+    const positions = JSON.parse(localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}");
+    positions["feedback-inbox"] = context.originScrollY || 0;
+    localStorage.setItem(SCROLL_POSITIONS_KEY, JSON.stringify(positions));
+    preservedScrollRef.current = { screen: "feedback-inbox", position: context.originScrollY || 0 };
     setScreen("feedback-inbox");
     localStorage.removeItem(ACTIVE_MAP_KEY);
   }
@@ -7041,7 +7095,7 @@ export default function App() {
                 const workStatus = message.work_status || "new";
                 const replyEmail = message.reply_email || "";
                 return (
-                  <article className={`feedback-inbox-card status-${workStatus}${feedbackDeletingIds.includes(message.id) ? " is-deleting" : ""}${feedbackSelectedIds.includes(message.id) ? " is-selected" : ""}`} key={message.id}>
+                  <article id={`feedback-message-${message.id}`} className={`feedback-inbox-card status-${workStatus}${feedbackDeletingIds.includes(message.id) ? " is-deleting" : ""}${feedbackSelectedIds.includes(message.id) ? " is-selected" : ""}`} key={message.id}>
                   <div className="feedback-inbox-meta">
                     <label className="feedback-select-message">
                       <input
@@ -7175,9 +7229,9 @@ export default function App() {
                   <article className="library-card" key={item.id}>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
                     <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
-                    <div className={`library-card-actions${isLibraryOwner && item.publicLibraryOwnerId ? "" : " single"}`}>
+                    <div className={`library-card-actions${isLibraryOwner ? "" : " single"}`}>
                       <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
-                      {isLibraryOwner && item.publicLibraryOwnerId && <button type="button" className="danger-action" onClick={() => removePublicLibraryItem(item)}>Удалить</button>}
+                      {isLibraryOwner && <button type="button" className="danger-action" onClick={() => removePublicLibraryItem(item)}>Удалить</button>}
                     </div>
                   </article>
                 );
@@ -7544,8 +7598,11 @@ export default function App() {
               <div className="map-actions">
                 {submissionEditContext ? (
                   <>
-                    <button className="text-action submission-save-action" disabled={submissionEditStatus === "saving"} onClick={() => finishSubmissionEditing(true)}>
+                    <button className="text-action submission-save-action" disabled={submissionEditStatus === "saving"} onClick={() => finishSubmissionEditing("save")}>
                       {submissionEditStatus === "saving" ? "Сохраняем…" : "Сохранить доработку"}
+                    </button>
+                    <button className="text-action submission-publish-action" disabled={submissionEditStatus === "saving"} onClick={() => finishSubmissionEditing("publish")}>
+                      Добавить в общую библиотеку
                     </button>
                     <button className="text-action" disabled={submissionEditStatus === "saving"} onClick={() => finishSubmissionEditing(false)}>Отменить</button>
                     {submissionEditStatus === "error" && <span className="field-error">Не удалось сохранить доработку</span>}
@@ -7827,7 +7884,7 @@ export default function App() {
               </div>
               {actualTotal % cols !== 0 && (
                 <p className="grid-fill-hint">
-                  Добавьте ещё {cols - (actualTotal % cols)} клеток, чтобы полностью заполнить последнюю строку. Это необязательно.
+                  Это необязательно. Добавьте ещё <strong>{cols - (actualTotal % cols)}</strong> клеток, чтобы полностью заполнить последнюю строку.
                 </p>
               )}
             </section>
