@@ -883,6 +883,16 @@ function getActivityDate(date = new Date()) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
+function cellWord(count) {
+  const value = Math.abs(Number(count) || 0);
+  const lastTwo = value % 100;
+  if (lastTwo >= 11 && lastTwo <= 14) return "клеток";
+  const last = value % 10;
+  if (last === 1) return "клетка";
+  if (last >= 2 && last <= 4) return "клетки";
+  return "клеток";
+}
+
 function dailyPlanCompleted(map, total, filled, today = new Date()) {
   return Boolean(map?.deadline) && map.dailyPlanDoneOn === getActivityDate(today);
 }
@@ -1329,6 +1339,7 @@ export default function App() {
   });
 
   const [maps, setMaps] = useState([]);
+  const [publicLibraryDraft, setPublicLibraryDraft] = useState(null);
   const [privateLibrary, setPrivateLibrary] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(PRIVATE_LIBRARY_KEY) || "{}");
@@ -1367,7 +1378,8 @@ export default function App() {
   const [victoryDismissing, setVictoryDismissing] = useState(false);
 
   const activeMap =
-    maps.find((m) => m.id === activeMapId) || null;
+    maps.find((m) => m.id === activeMapId)
+    || (publicLibraryDraft?.id === activeMapId ? publicLibraryDraft : null);
 
   const [
     mapType,
@@ -1398,6 +1410,10 @@ export default function App() {
   const deletedMapsRef = useRef([]);
   const restoringDeletedMapRef = useRef(false);
   const [restoredMapIds, setRestoredMapIds] = useState([]);
+  const pendingDeletesRef = useRef([]);
+  const pendingDeleteTimersRef = useRef(new Map());
+  const [pendingDeletes, setPendingDeletes] = useState([]);
+  const [deleteCountdownNow, setDeleteCountdownNow] = useState(Date.now());
   const [mapActionError, setMapActionError] = useState("");
   const [cardDrag, setCardDrag] = useState(null);
   const cardDragRef = useRef(null);
@@ -2075,7 +2091,7 @@ export default function App() {
   function editPublicLibraryItem(item) {
     if (!user || !isLibraryOwner) return;
     const draft = normalizeMap({ ...item, id: createMapId(), progressCompleted: [] });
-    setMaps((current) => [...current, draft]);
+    setPublicLibraryDraft(draft);
     setPublicLibraryEditContext({
       draftId: draft.id,
       itemId: item.id,
@@ -2110,12 +2126,18 @@ export default function App() {
       const storedItem = context.replacesBuiltinId
         ? { ...item, replacesBuiltinId: context.replacesBuiltinId }
         : item;
-      const { error } = await supabase.from(PUBLIC_LIBRARY_TABLE).upsert({
-        id: item.id,
-        owner_id: user.id,
-        name: item.name,
-        data: storedItem,
-      }, { onConflict: "id" });
+      const request = context.replacesBuiltinId && context.itemId === context.replacesBuiltinId
+        ? supabase.from(PUBLIC_LIBRARY_TABLE).insert({
+            id: item.id,
+            owner_id: user.id,
+            name: item.name,
+            data: storedItem,
+          })
+        : supabase.from(PUBLIC_LIBRARY_TABLE)
+            .update({ name: item.name, data: storedItem })
+            .eq("id", context.itemId)
+            .eq("owner_id", user.id);
+      const { error } = await request;
       if (error) {
         setPublicLibraryEditStatus("error");
         return;
@@ -2124,8 +2146,7 @@ export default function App() {
         ? { ...storedItem, publicLibraryOwnerId: user.id }
         : entry));
     }
-    setMaps((current) => current.filter((map) => map.id !== context.draftId));
-    if (user) void supabase.from("maps").delete().eq("id", context.draftId).eq("user_id", user.id);
+    setPublicLibraryDraft(null);
     setActiveMapId(null);
     setPublicLibraryEditContext(null);
     setPublicLibraryEditStatus("");
@@ -2329,7 +2350,7 @@ export default function App() {
         || event.target instanceof HTMLSelectElement
         || event.target?.isContentEditable;
       if (screen === "maps" && !targetIsField && (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
-        if (deletedMapsRef.current.length) {
+        if (pendingDeletesRef.current.length || deletedMapsRef.current.length) {
           event.preventDefault();
           void restoreLastDeletedMap();
         }
@@ -2384,6 +2405,10 @@ export default function App() {
         setSelectionTool(false);
         return;
       }
+      if (screen === "editor" && publicLibraryEditContext) {
+        void finishPublicLibraryEditing(false);
+        return;
+      }
       if (screen === "editor") {
         setScreen("maps");
       } else if (["maps", "account", "library", "auth"].includes(screen)) {
@@ -2400,6 +2425,12 @@ export default function App() {
 
     saveMapsLocally(maps);
   }, [maps, isMapInitialized]);
+
+  useEffect(() => {
+    if (!pendingDeletes.length) return;
+    const timer = window.setInterval(() => setDeleteCountdownNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, [pendingDeletes.length]);
 
   useEffect(() => {
     drawColorRef.current = drawColor;
@@ -2939,7 +2970,8 @@ export default function App() {
       !isMapInitialized ||
       hydratingRef.current ||
       !activeMapId ||
-      !user
+      !user ||
+      publicLibraryEditContext
     ) {
       return;
     }
@@ -2980,6 +3012,7 @@ export default function App() {
     activeMapId,
     buildCurrentMap,
     remoteSave,
+    publicLibraryEditContext,
   ]);
 
   useEffect(() => {
@@ -5380,7 +5413,8 @@ export default function App() {
 
   async function confirmDeleteMap() {
     if (!mapToDelete || deletingIdsRef.current.has(mapToDelete.id)) return;
-    const id = mapToDelete.id;
+    const deletedMap = normalizeMap(mapToDelete);
+    const id = deletedMap.id;
     deletingIdsRef.current.add(id);
     setDeletingIds((ids) => [...ids, id]);
     setMapActionError("");
@@ -5392,23 +5426,62 @@ export default function App() {
       localStorage.removeItem(ACTIVE_MAP_KEY);
     }
     setScreen("maps");
-    const deletedCard = document.querySelector(`[data-map-id="${CSS.escape(id)}"]`);
-    const grid = deletedCard?.parentElement;
-    const gridCards = grid ? [...grid.querySelectorAll("[data-map-id]")] : [];
-    const sameRowCards = deletedCard
-      ? gridCards.filter((card) => card !== deletedCard && card.offsetTop === deletedCard.offsetTop && !deletingIdsRef.current.has(card.dataset.mapId))
-      : [];
-    const isLastRow = deletedCard
-      ? !gridCards.some((card) => card.offsetTop > deletedCard.offsetTop)
-      : false;
-    if (deletedCard && grid && isLastRow && sameRowCards.length === 0) {
-      const rowGap = Number.parseFloat(getComputedStyle(grid).rowGap) || 0;
-      window.scrollTo({
-        top: Math.max(0, window.scrollY - deletedCard.offsetHeight - rowGap),
-        behavior: "smooth",
-      });
+    const pending = { map: deletedMap, deadline: Date.now() + 5000 };
+    pendingDeletesRef.current = [pending, ...pendingDeletesRef.current];
+    setPendingDeletes([...pendingDeletesRef.current]);
+    setDeleteCountdownNow(Date.now());
+    const timer = window.setTimeout(() => void finalizePendingDelete(id), 5000);
+    pendingDeleteTimersRef.current.set(id, timer);
+    window.setTimeout(() => {
+      if (!pendingDeletesRef.current.some((entry) => entry.map.id === id)) return;
+      setMaps((current) => current.filter((map) => map.id !== id));
+      deletingIdsRef.current.delete(id);
+      setDeletingIds((ids) => ids.filter((value) => value !== id));
+    }, 360);
+  }
+
+  async function restoreLastDeletedMap() {
+    if (restoringDeletedMapRef.current) return;
+    const pending = pendingDeletesRef.current[0];
+    const deleted = pending?.map || deletedMapsRef.current[0];
+    if (!deleted) return;
+    restoringDeletedMapRef.current = true;
+    if (pending) {
+      window.clearTimeout(pendingDeleteTimersRef.current.get(deleted.id));
+      pendingDeleteTimersRef.current.delete(deleted.id);
+      pendingDeletesRef.current = pendingDeletesRef.current.filter((entry) => entry.map.id !== deleted.id);
+      setPendingDeletes([...pendingDeletesRef.current]);
+    } else {
+      deletedMapsRef.current = deletedMapsRef.current.slice(1);
     }
-    const animation = new Promise((resolve) => window.setTimeout(resolve, 700));
+    setMapActionError("");
+    try {
+      if (user && !pending) {
+        const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(deleted, user.id), { onConflict: "id" });
+        if (error) throw error;
+      }
+      setMaps((current) => [...current.filter((map) => map.id !== deleted.id), deleted]);
+      deletingIdsRef.current.delete(deleted.id);
+      setDeletingIds((ids) => ids.filter((id) => id !== deleted.id));
+      setRestoredMapIds((ids) => [...ids, deleted.id]);
+      window.setTimeout(() => setRestoredMapIds((ids) => ids.filter((id) => id !== deleted.id)), 620);
+    } catch (error) {
+      console.error("Не удалось восстановить карту:", error);
+      if (!pending) deletedMapsRef.current = [deleted, ...deletedMapsRef.current].slice(0, 3);
+      setMapActionError("Не удалось восстановить карту. Проверьте соединение и повторите Ctrl+Z.");
+    } finally {
+      restoringDeletedMapRef.current = false;
+    }
+  }
+
+  async function finalizePendingDelete(id) {
+    const pending = pendingDeletesRef.current.find((entry) => entry.map.id === id);
+    if (!pending) return;
+    pendingDeleteTimersRef.current.delete(id);
+    pendingDeletesRef.current = pendingDeletesRef.current.filter((entry) => entry.map.id !== id);
+    setPendingDeletes([...pendingDeletesRef.current]);
+    setMaps((current) => current.filter((map) => map.id !== id));
+    deletedMapsRef.current = [pending.map, ...deletedMapsRef.current].slice(0, 3);
     try {
       const remove = async () => {
         if (!user) return;
@@ -5417,41 +5490,15 @@ export default function App() {
       };
       const request = remoteSaveQueueRef.current.then(remove, remove);
       remoteSaveQueueRef.current = request.catch(() => null);
-      await Promise.all([animation, request]);
-      deletedMapsRef.current = [normalizeMap(mapToDelete), ...deletedMapsRef.current].slice(0, 3);
-      setMaps((current) => current.filter((map) => map.id !== id));
+      await request;
       recordAnalytics("map_deleted");
     } catch (error) {
-      await animation;
       console.error("Не удалось удалить карту:", error);
-      deletingIdsRef.current.delete(id);
-      setMapActionError("Не удалось удалить карту. Проверьте соединение и повторите попытку.");
-    } finally {
-      setDeletingIds((ids) => ids.filter((value) => value !== id));
-    }
-  }
-
-  async function restoreLastDeletedMap() {
-    if (restoringDeletedMapRef.current) return;
-    const deleted = deletedMapsRef.current[0];
-    if (!deleted) return;
-    restoringDeletedMapRef.current = true;
-    deletedMapsRef.current = deletedMapsRef.current.slice(1);
-    setMapActionError("");
-    try {
-      if (user) {
-        const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(deleted, user.id), { onConflict: "id" });
-        if (error) throw error;
-      }
-      setMaps((current) => [...current.filter((map) => map.id !== deleted.id), deleted]);
-      setRestoredMapIds((ids) => [...ids, deleted.id]);
-      window.setTimeout(() => setRestoredMapIds((ids) => ids.filter((id) => id !== deleted.id)), 620);
-    } catch (error) {
-      console.error("Не удалось восстановить карту:", error);
-      deletedMapsRef.current = [deleted, ...deletedMapsRef.current].slice(0, 3);
-      setMapActionError("Не удалось восстановить карту. Проверьте соединение и повторите Ctrl+Z.");
-    } finally {
-      restoringDeletedMapRef.current = false;
+      deletedMapsRef.current = deletedMapsRef.current.filter((map) => map.id !== id);
+      setMaps((current) => [...current.filter((map) => map.id !== id), pending.map]);
+      setRestoredMapIds((ids) => [...ids, id]);
+      window.setTimeout(() => setRestoredMapIds((ids) => ids.filter((value) => value !== id)), 620);
+      setMapActionError("Не удалось удалить карту. Она возвращена в список.");
     }
   }
 
@@ -7236,7 +7283,7 @@ export default function App() {
                           return (
                             <div className="submission-preview-card" key={submittedMap.id || index}>
                               <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing previewBounds={{ width: 138, height: 118 }} /></div>
-                              <div><strong>{submittedMap.name}</strong><span>{submittedMap.completed.length} клеток</span></div>
+                              <div><strong>{submittedMap.name}</strong><span>{submittedMap.completed.length} {cellWord(submittedMap.completed.length)}</span></div>
                               <div className="submission-preview-actions">
                                 <button type="button" disabled={Boolean(submission.approved_library_id)} onClick={() => editLibrarySubmission(message, index)}>Доработать</button>
                                 <button type="button" disabled={Boolean(submission.approved_library_id)} onClick={() => approveLibrarySubmission(message, index)}>
@@ -7341,7 +7388,7 @@ export default function App() {
                 return (
                   <article className="library-card" key={item.id}>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
-                    <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
+                    <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)}</span></div>
                     <div className={`library-card-actions${isLibraryOwner ? " owner" : " single"}`}>
                       <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
                       {isLibraryOwner && <button type="button" className="edit-action" onClick={() => editPublicLibraryItem(item)}>Изменить</button>}
@@ -7370,7 +7417,7 @@ export default function App() {
                   return (
                     <article className="library-card" key={item.id}>
                       <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
-                      <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
+                      <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)}</span></div>
                       <div className="library-card-actions">
                         <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
                         <button type="button" className="danger-action" onClick={() => removeLibraryItem(item.id)}>Удалить</button>
@@ -7402,6 +7449,21 @@ export default function App() {
               + {t("newMap")}
             </button>
           </div>
+
+          {!!pendingDeletes.length && (() => {
+            const latest = pendingDeletes[0];
+            const remainingMs = Math.max(0, latest.deadline - deleteCountdownNow);
+            return (
+              <div className="delete-undo-bar" role="status">
+                <div className="delete-undo-copy">
+                  <span>Карта «{latest.map.name}» удалена</span>
+                  <strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong>
+                  <button type="button" onClick={() => void restoreLastDeletedMap()}>Отменить</button>
+                </div>
+                <i><b style={{ width: `${remainingMs / 50}%` }} /></i>
+              </div>
+            );
+          })()}
 
           {authLoading || mapsLoading || !isMapInitialized ? (
             <div className="maps-loading-placeholder" aria-label="Загружаем карты">
@@ -7701,7 +7763,7 @@ export default function App() {
                 <AnimatedSelect
                   ariaLabel={t("name")}
                   value={activeMapId || ""}
-                  options={maps.filter((map) => {
+                  options={(publicLibraryDraft ? [publicLibraryDraft] : maps).filter((map) => {
                     const draftId = submissionEditContext?.draftId || publicLibraryEditContext?.draftId;
                     return !draftId || map.id === draftId;
                   }).map((map) => ({ value: map.id, label: map.name }))}
@@ -8005,11 +8067,11 @@ export default function App() {
                 {rows} ×{" "}
                 {cols} ·{" "}
                 {actualTotal}{" "}
-                {language === "ru" ? "Клеток" : t("cells")}
+                {language === "ru" ? cellWord(actualTotal) : t("cells")}
               </div>
               {actualTotal % cols !== 0 && (
                 <p className="grid-fill-hint">
-                  Необязательно: добавьте ещё <strong>{cols - (actualTotal % cols)}</strong> клеток, чтобы полностью заполнить последнюю строку.
+                  Необязательно: добавьте ещё <strong>{cols - (actualTotal % cols)}</strong> {cellWord(cols - (actualTotal % cols))}, чтобы полностью заполнить последнюю строку.
                 </p>
               )}
             </section>
