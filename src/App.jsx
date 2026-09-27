@@ -1607,10 +1607,11 @@ export default function App() {
   const [feedbackInboxFilter, setFeedbackInboxFilter] = useState("all");
   const [feedbackNoteDrafts, setFeedbackNoteDrafts] = useState({});
   const [feedbackAdminState, setFeedbackAdminState] = useState({});
-  const [feedbackDeleteTarget, setFeedbackDeleteTarget] = useState(null);
+  const [feedbackDeleteTargets, setFeedbackDeleteTargets] = useState([]);
   const [isFeedbackDeleteClosing, setIsFeedbackDeleteClosing] = useState(false);
-  const [feedbackDeletingId, setFeedbackDeletingId] = useState("");
+  const [feedbackDeletingIds, setFeedbackDeletingIds] = useState([]);
   const [feedbackDeleteError, setFeedbackDeleteError] = useState("");
+  const [feedbackSelectedIds, setFeedbackSelectedIds] = useState([]);
   const [feedbackInboxSection, setFeedbackInboxSection] = useState("messages");
   const [analyticsPeriod, setAnalyticsPeriod] = useState(30);
   const [analyticsData, setAnalyticsData] = useState(null);
@@ -1620,6 +1621,8 @@ export default function App() {
   const [sketchSubmissionMapIds, setSketchSubmissionMapIds] = useState([]);
   const [sketchSubmissionNote, setSketchSubmissionNote] = useState("");
   const [sketchSubmissionStatus, setSketchSubmissionStatus] = useState("");
+  const [submissionEditContext, setSubmissionEditContext] = useState(null);
+  const [submissionEditStatus, setSubmissionEditStatus] = useState("");
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
   const [savedAccountDragId, setSavedAccountDragId] = useState(null);
   const [savedAccountDropId, setSavedAccountDropId] = useState(null);
@@ -2239,7 +2242,7 @@ export default function App() {
         closeAccountRemoveModal();
         return;
       }
-      if (feedbackDeleteTarget) {
+      if (feedbackDeleteTargets.length) {
         closeFeedbackDeleteModal();
         return;
       }
@@ -3221,44 +3224,48 @@ export default function App() {
     }, 1400);
   }
 
-  function openFeedbackDeleteModal(message) {
+  function openFeedbackDeleteModal(messages) {
+    const targets = Array.isArray(messages) ? messages : [messages];
+    if (!targets.length) return;
     setFeedbackDeleteError("");
     setIsFeedbackDeleteClosing(false);
-    setFeedbackDeleteTarget(message);
+    setFeedbackDeleteTargets(targets);
   }
 
   function closeFeedbackDeleteModal() {
-    if (!feedbackDeleteTarget || isFeedbackDeleteClosing || feedbackDeletingId) return;
+    if (!feedbackDeleteTargets.length || isFeedbackDeleteClosing || feedbackDeletingIds.length) return;
     setIsFeedbackDeleteClosing(true);
     window.setTimeout(() => {
-      setFeedbackDeleteTarget(null);
+      setFeedbackDeleteTargets([]);
       setIsFeedbackDeleteClosing(false);
       setFeedbackDeleteError("");
     }, 260);
   }
 
   async function confirmDeleteFeedback() {
-    if (!feedbackDeleteTarget || feedbackDeletingId || !isLibraryOwner) return;
-    const message = feedbackDeleteTarget;
-    setFeedbackDeletingId(message.id);
+    if (!feedbackDeleteTargets.length || feedbackDeletingIds.length || !isLibraryOwner) return;
+    const messages = feedbackDeleteTargets;
+    const messageIds = messages.map((message) => message.id);
+    setFeedbackDeletingIds(messageIds);
     setFeedbackDeleteError("");
-    const { error } = await supabase.from(FEEDBACK_TABLE).delete().eq("id", message.id);
+    const { error } = await supabase.from(FEEDBACK_TABLE).delete().in("id", messageIds);
     if (error) {
-      setFeedbackDeletingId("");
+      setFeedbackDeletingIds([]);
       setFeedbackDeleteError("Не удалось удалить обращение.");
       return;
     }
-    const attachmentPaths = (message.attachments || []).map((attachment) => attachment.path).filter(Boolean);
+    const attachmentPaths = messages.flatMap((message) => message.attachments || []).map((attachment) => attachment.path).filter(Boolean);
     if (attachmentPaths.length) await supabase.storage.from(FEEDBACK_BUCKET).remove(attachmentPaths);
     setIsFeedbackDeleteClosing(true);
     window.setTimeout(() => {
-      setFeedbackMessages((messages) => messages.filter((entry) => entry.id !== message.id));
-      setFeedbackDeleteTarget(null);
+      setFeedbackMessages((current) => current.filter((entry) => !messageIds.includes(entry.id)));
+      setFeedbackDeleteTargets([]);
       setIsFeedbackDeleteClosing(false);
-      setFeedbackDeletingId("");
+      setFeedbackDeletingIds([]);
+      setFeedbackSelectedIds((ids) => ids.filter((id) => !messageIds.includes(id)));
       setFeedbackNoteDrafts((drafts) => {
         const next = { ...drafts };
-        delete next[message.id];
+        messageIds.forEach((id) => delete next[id]);
         return next;
       });
     }, 260);
@@ -4682,7 +4689,13 @@ export default function App() {
       };
       nextImageOffset = offset;
       setImageOffset(offset);
-      processImage(image, imageRatio, after.cols, after.rows, offset, after.actualTotal);
+      if (sourceImageRef.current?.complete) {
+        nextColors = sampleImageColors(sourceImageRef.current, after.cols, after.rows, offset, after.actualTotal);
+        colorsRef.current = nextColors;
+        setColors(nextColors);
+      } else {
+        processImage(image, imageRatio, after.cols, after.rows, offset, after.actualTotal);
+      }
     }
     if (restore) {
       const fullyRestored = after.rows >= restore.dimensions.rows
@@ -5721,6 +5734,67 @@ export default function App() {
     setPublicLibrary((current) => [...current, { ...item, publicLibraryOwnerId: user.id }]);
     setFeedbackMessages((current) => current.map((entry) => entry.id === message.id ? { ...entry, submission_data: submissionData, work_status: nextWorkStatus } : entry));
     setFeedbackAdminState((state) => ({ ...state, [message.id]: "saved" }));
+  }
+
+  function editLibrarySubmission(message, submissionIndex = 0) {
+    const groupedMaps = Array.isArray(message.submission_data?.maps) ? message.submission_data.maps : null;
+    const source = groupedMaps ? groupedMaps[submissionIndex] : message.submission_data;
+    if (!source || source.approved_library_id) return;
+    const draft = normalizeMap({ ...source, id: createMapId(), progressCompleted: [] });
+    setMaps((current) => [...current, draft]);
+    setSubmissionEditContext({
+      messageId: message.id,
+      submissionIndex,
+      draftId: draft.id,
+      originalId: source.id,
+      grouped: Boolean(groupedMaps),
+    });
+    setSubmissionEditStatus("");
+    setActiveMapId(draft.id);
+    openMap(draft);
+    setScreen("editor");
+    localStorage.setItem(ACTIVE_MAP_KEY, draft.id);
+  }
+
+  async function finishSubmissionEditing(saveChanges) {
+    if (!submissionEditContext) return;
+    const context = submissionEditContext;
+    if (saveChanges) {
+      const message = feedbackMessages.find((entry) => entry.id === context.messageId);
+      const currentMap = buildCurrentMap();
+      if (!message || !currentMap) return;
+      setSubmissionEditStatus("saving");
+      const editedSubmission = normalizeMap({
+        ...currentMap,
+        id: context.originalId,
+        mapType: "free",
+        image: null,
+        showImage: false,
+        progressCompleted: [],
+        progressExtra: 0,
+        activityLog: [],
+        modeDrafts: {},
+      });
+      const submissionData = context.grouped
+        ? {
+            ...message.submission_data,
+            maps: message.submission_data.maps.map((map, index) => index === context.submissionIndex ? editedSubmission : map),
+          }
+        : editedSubmission;
+      const { error } = await supabase.from(FEEDBACK_TABLE).update({ submission_data: submissionData }).eq("id", message.id);
+      if (error) {
+        setSubmissionEditStatus("error");
+        return;
+      }
+      setFeedbackMessages((messages) => messages.map((entry) => entry.id === message.id ? { ...entry, submission_data: submissionData } : entry));
+    }
+    setMaps((current) => current.filter((map) => map.id !== context.draftId));
+    if (user) void supabase.from("maps").delete().eq("id", context.draftId);
+    setActiveMapId(null);
+    setSubmissionEditContext(null);
+    setSubmissionEditStatus("");
+    setScreen("feedback-inbox");
+    localStorage.removeItem(ACTIVE_MAP_KEY);
   }
 
   function dismissVictory() {
@@ -6918,10 +6992,10 @@ export default function App() {
             <span>{feedbackMessages.length}</span>
           </div>
           <div className="feedback-inbox-sections" role="tablist" aria-label="Тип входящих сообщений">
-            <button type="button" className={feedbackInboxSection === "messages" ? "active" : ""} onClick={() => { setFeedbackInboxSection("messages"); setFeedbackInboxFilter("all"); }}>
+            <button type="button" className={feedbackInboxSection === "messages" ? "active" : ""} onClick={() => { setFeedbackInboxSection("messages"); setFeedbackInboxFilter("all"); setFeedbackSelectedIds([]); }}>
               Обращения <span>{feedbackMessages.filter((message) => message.kind !== "Эскиз в общую библиотеку").length}</span>
             </button>
-            <button type="button" className={feedbackInboxSection === "sketches" ? "active" : ""} onClick={() => { setFeedbackInboxSection("sketches"); setFeedbackInboxFilter("all"); }}>
+            <button type="button" className={feedbackInboxSection === "sketches" ? "active" : ""} onClick={() => { setFeedbackInboxSection("sketches"); setFeedbackInboxFilter("all"); setFeedbackSelectedIds([]); }}>
               Эскизы в библиотеку <span>{feedbackMessages.filter((message) => message.kind === "Эскиз в общую библиотеку").length}</span>
             </button>
           </div>
@@ -6933,12 +7007,31 @@ export default function App() {
                 aria-selected={feedbackInboxFilter === filter.key}
                 className={`${feedbackInboxFilter === filter.key ? "active " : ""}filter-${filter.key}`}
                 key={filter.key}
-                onClick={() => setFeedbackInboxFilter(filter.key)}
+                onClick={() => { setFeedbackInboxFilter(filter.key); setFeedbackSelectedIds([]); }}
               >
                 {filter.title}<span>{filter.count}</span>
               </button>
             ))}
           </div>
+          {!!visibleFeedbackMessages.length && (
+            <div className="feedback-bulk-actions">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={visibleFeedbackMessages.every((message) => feedbackSelectedIds.includes(message.id))}
+                  onChange={(event) => setFeedbackSelectedIds(event.target.checked ? visibleFeedbackMessages.map((message) => message.id) : [])}
+                />
+                Выбрать все показанные
+              </label>
+              <button
+                type="button"
+                disabled={!feedbackSelectedIds.length}
+                onClick={() => openFeedbackDeleteModal(feedbackMessages.filter((message) => feedbackSelectedIds.includes(message.id)))}
+              >
+                Удалить выбранные{feedbackSelectedIds.length ? ` (${feedbackSelectedIds.length})` : ""}
+              </button>
+            </div>
+          )}
           {feedbackInboxLoading ? (
             <p className="feedback-inbox-empty">Загружаем сообщения…</p>
           ) : sectionFeedbackMessages.length ? (
@@ -6948,12 +7041,19 @@ export default function App() {
                 const workStatus = message.work_status || "new";
                 const replyEmail = message.reply_email || "";
                 return (
-                  <article className={`feedback-inbox-card status-${workStatus}${feedbackDeletingId === message.id ? " is-deleting" : ""}`} key={message.id}>
+                  <article className={`feedback-inbox-card status-${workStatus}${feedbackDeletingIds.includes(message.id) ? " is-deleting" : ""}${feedbackSelectedIds.includes(message.id) ? " is-selected" : ""}`} key={message.id}>
                   <div className="feedback-inbox-meta">
-                    <strong>{message.kind}</strong>
+                    <label className="feedback-select-message">
+                      <input
+                        type="checkbox"
+                        checked={feedbackSelectedIds.includes(message.id)}
+                        onChange={(event) => setFeedbackSelectedIds((ids) => event.target.checked ? [...new Set([...ids, message.id])] : ids.filter((id) => id !== message.id))}
+                      />
+                      <strong>{message.kind}</strong>
+                    </label>
                     <div className="feedback-inbox-meta-actions">
                       <time>{new Date(message.created_at).toLocaleString("ru-RU")}</time>
-                      <button type="button" onClick={() => openFeedbackDeleteModal(message)}>Удалить</button>
+                      <button type="button" onClick={() => openFeedbackDeleteModal([message])}>Удалить</button>
                     </div>
                   </div>
                   <p>{message.message}</p>
@@ -6970,9 +7070,12 @@ export default function App() {
                             <div className="submission-preview-card" key={submittedMap.id || index}>
                               <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing previewBounds={{ width: 138, height: 118 }} /></div>
                               <div><strong>{submittedMap.name}</strong><span>{submittedMap.completed.length} клеток</span></div>
-                              <button type="button" disabled={Boolean(submission.approved_library_id)} onClick={() => approveLibrarySubmission(message, index)}>
-                                {submission.approved_library_id ? "Уже добавлен" : "Добавить в общую библиотеку"}
-                              </button>
+                              <div className="submission-preview-actions">
+                                <button type="button" disabled={Boolean(submission.approved_library_id)} onClick={() => editLibrarySubmission(message, index)}>Доработать</button>
+                                <button type="button" disabled={Boolean(submission.approved_library_id)} onClick={() => approveLibrarySubmission(message, index)}>
+                                  {submission.approved_library_id ? "Уже добавлен" : "Добавить в общую библиотеку"}
+                                </button>
+                              </div>
                             </div>
                           );
                         })}
@@ -7430,7 +7533,7 @@ export default function App() {
                 <AnimatedSelect
                   ariaLabel={t("name")}
                   value={activeMapId || ""}
-                  options={maps.map((map) => ({ value: map.id, label: map.name }))}
+                  options={maps.filter((map) => !submissionEditContext || map.id === submissionEditContext.draftId).map((map) => ({ value: map.id, label: map.name }))}
                   onChange={(id) => {
                     const map = maps.find((item) => item.id === id);
                     if (map) openMap(map);
@@ -7439,17 +7542,18 @@ export default function App() {
               </div>
 
               <div className="map-actions">
-                <button
-                  className="text-action"
-                  onClick={
-                    openCreateModal
-                  }
-                >
-                  + {t("new")}
-                </button>
-
-                {activeMap && (
+                {submissionEditContext ? (
                   <>
+                    <button className="text-action submission-save-action" disabled={submissionEditStatus === "saving"} onClick={() => finishSubmissionEditing(true)}>
+                      {submissionEditStatus === "saving" ? "Сохраняем…" : "Сохранить доработку"}
+                    </button>
+                    <button className="text-action" disabled={submissionEditStatus === "saving"} onClick={() => finishSubmissionEditing(false)}>Отменить</button>
+                    {submissionEditStatus === "error" && <span className="field-error">Не удалось сохранить доработку</span>}
+                  </>
+                ) : (
+                  <>
+                    <button className="text-action" onClick={openCreateModal}>+ {t("new")}</button>
+                    {activeMap && <>
                     <button
                       className="text-action"
                       onClick={() =>
@@ -7475,6 +7579,7 @@ export default function App() {
                         "delete"
                       )}
                     </button>
+                    </>}
                   </>
                 )}
               </div>
@@ -7720,6 +7825,11 @@ export default function App() {
                 {actualTotal}{" "}
                 {language === "ru" ? "Клеток" : t("cells")}
               </div>
+              {actualTotal % cols !== 0 && (
+                <p className="grid-fill-hint">
+                  Добавьте ещё {cols - (actualTotal % cols)} клеток, чтобы полностью заполнить последнюю строку. Это необязательно.
+                </p>
+              )}
             </section>
 
             <section className="sidebar-section">
@@ -8893,7 +9003,7 @@ export default function App() {
         </div>
       )}
 
-      {feedbackDeleteTarget && (
+      {!!feedbackDeleteTargets.length && (
         <div
           className={`modal-overlay${isFeedbackDeleteClosing ? " is-closing" : ""}`}
           onMouseDown={closeFeedbackDeleteModal}
@@ -8904,13 +9014,15 @@ export default function App() {
               <button type="button" className="modal-close" onClick={closeFeedbackDeleteModal}>×</button>
             </div>
             <p className="delete-modal-text">
-              Обращение «{feedbackDeleteTarget.kind}» и его вложения будут удалены без возможности восстановления.
+              {feedbackDeleteTargets.length === 1
+                ? `Обращение «${feedbackDeleteTargets[0].kind}» и его вложения будут удалены без возможности восстановления.`
+                : `${feedbackDeleteTargets.length} обращений и все их вложения будут удалены без возможности восстановления.`}
             </p>
             {feedbackDeleteError && <p className="feedback-result error">{feedbackDeleteError}</p>}
             <div className="delete-modal-actions">
-              <button type="button" className="cancel-delete-btn" disabled={Boolean(feedbackDeletingId)} onClick={closeFeedbackDeleteModal}>Отмена</button>
-              <button type="button" className="confirm-delete-btn" disabled={Boolean(feedbackDeletingId)} onClick={confirmDeleteFeedback}>
-                {feedbackDeletingId ? "Удаляем…" : "Удалить"}
+              <button type="button" className="cancel-delete-btn" disabled={Boolean(feedbackDeletingIds.length)} onClick={closeFeedbackDeleteModal}>Отмена</button>
+              <button type="button" className="confirm-delete-btn" disabled={Boolean(feedbackDeletingIds.length)} onClick={confirmDeleteFeedback}>
+                {feedbackDeletingIds.length ? "Удаляем…" : "Удалить"}
               </button>
             </div>
           </div>
