@@ -1309,6 +1309,36 @@ function sameState(a, b) {
   );
 }
 
+const AnimatedPercent = memo(function AnimatedPercent({ value }) {
+  const target = Math.max(0, Number(value) || 0);
+  const currentRef = useRef(target);
+  const [current, setCurrent] = useState(target);
+
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      currentRef.current = target;
+      setCurrent(target);
+      return;
+    }
+    const start = currentRef.current;
+    const startedAt = performance.now();
+    let frame = 0;
+    const animate = (now) => {
+      const progress = Math.min(1, (now - startedAt) / 420);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const next = start + (target - start) * eased;
+      currentRef.current = next;
+      setCurrent(next);
+      if (progress < 1) frame = requestAnimationFrame(animate);
+    };
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [target]);
+
+  const rounded = Math.round(current * 10) / 10;
+  return <>{Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%</>;
+});
+
 export default function App() {
   const initial = getInitialData();
 
@@ -1414,6 +1444,7 @@ export default function App() {
   const pendingDeleteTimersRef = useRef(new Map());
   const [pendingDeletes, setPendingDeletes] = useState([]);
   const [deleteCountdownNow, setDeleteCountdownNow] = useState(Date.now());
+  const [deleteCollapseHeight, setDeleteCollapseHeight] = useState(0);
   const [mapActionError, setMapActionError] = useState("");
   const [cardDrag, setCardDrag] = useState(null);
   const cardDragRef = useRef(null);
@@ -2345,17 +2376,6 @@ export default function App() {
 
   useEffect(() => {
     const handleEscape = (event) => {
-      const targetIsField = event.target instanceof HTMLInputElement
-        || event.target instanceof HTMLTextAreaElement
-        || event.target instanceof HTMLSelectElement
-        || event.target?.isContentEditable;
-      if (screen === "maps" && !targetIsField && (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
-        if (pendingDeletesRef.current.length || deletedMapsRef.current.length) {
-          event.preventDefault();
-          void restoreLastDeletedMap();
-        }
-        return;
-      }
       if (event.key !== "Escape") return;
 
       if (downloadChoice) {
@@ -2418,6 +2438,22 @@ export default function App() {
 
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
+  });
+
+  useEffect(() => {
+    const handleDeletedMapUndo = (event) => {
+      if (screen !== "maps" || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.code !== "KeyZ") return;
+      const targetIsField = event.target instanceof HTMLInputElement
+        || event.target instanceof HTMLTextAreaElement
+        || event.target instanceof HTMLSelectElement
+        || event.target?.isContentEditable;
+      if (targetIsField || (!pendingDeletesRef.current.length && !deletedMapsRef.current.length)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void restoreLastDeletedMap();
+    };
+    window.addEventListener("keydown", handleDeletedMapUndo, true);
+    return () => window.removeEventListener("keydown", handleDeletedMapUndo, true);
   });
 
   useEffect(() => {
@@ -5415,6 +5451,16 @@ export default function App() {
     if (!mapToDelete || deletingIdsRef.current.has(mapToDelete.id)) return;
     const deletedMap = normalizeMap(mapToDelete);
     const id = deletedMap.id;
+    const deletedCard = document.querySelector(`[data-map-id="${CSS.escape(id)}"]`);
+    const grid = deletedCard?.parentElement;
+    const gridCards = grid ? [...grid.querySelectorAll("[data-map-id]")] : [];
+    const isBottomRow = deletedCard
+      ? !gridCards.some((card) => card !== deletedCard && card.offsetTop > deletedCard.offsetTop)
+      : false;
+    const collapseHeight = isBottomRow && deletedCard
+      ? deletedCard.offsetHeight + (Number.parseFloat(getComputedStyle(grid).rowGap) || 0)
+      : 0;
+    if (collapseHeight) setDeleteCollapseHeight(collapseHeight);
     deletingIdsRef.current.add(id);
     setDeletingIds((ids) => [...ids, id]);
     setMapActionError("");
@@ -5437,6 +5483,9 @@ export default function App() {
       setMaps((current) => current.filter((map) => map.id !== id));
       deletingIdsRef.current.delete(id);
       setDeletingIds((ids) => ids.filter((value) => value !== id));
+      if (collapseHeight) {
+        requestAnimationFrame(() => requestAnimationFrame(() => setDeleteCollapseHeight(0)));
+      }
     }, 360);
   }
 
@@ -7107,7 +7156,7 @@ export default function App() {
               </div>
               <div className="account-goal-progress">
                 <div>
-                  <strong>{accountProgressPercent}%</strong>
+                  <strong><AnimatedPercent value={accountProgressPercent} /></strong>
                   <span>общий прогресс</span>
                 </div>
                 <div className="account-goal-track" aria-label={`Общий прогресс: ${accountProgressPercent}%`}>
@@ -7652,7 +7701,7 @@ export default function App() {
                           </div>
 
                           <strong className="map-card-percent">
-                            {p}%
+                            <AnimatedPercent value={p} />
                           </strong>
                         </div>
 
@@ -7744,6 +7793,7 @@ export default function App() {
             </div>
             </>
           )}
+          <div className="delete-layout-spacer" aria-hidden="true" style={{ height: deleteCollapseHeight }} />
         </section>
       )}
 
@@ -8634,7 +8684,7 @@ export default function App() {
               {dailyPlan && <p className="daily-plan" aria-live="polite">{dailyPlan}</p>}
               <div className="preview-progress">
                 <strong>
-                  {displayedProgress}%
+                  <AnimatedPercent value={displayedProgress} />
                 </strong>
 
                 <span>
