@@ -26,6 +26,7 @@ const PUBLIC_LIBRARY_OWNER_EMAIL = "majurx64@yandex.ru";
 const PUBLIC_LIBRARY_TABLE = "library_items";
 const SAVED_ACCOUNTS_KEY = "mm-saved-accounts";
 const FEEDBACK_TABLE = "feedback_messages";
+const MAPS_COLUMNS_KEY = "mm-maps-columns";
 
 function getYandexReplyUrl(message) {
   const email = message.reply_email || "";
@@ -1595,6 +1596,10 @@ export default function App() {
   const [renameCategory, setRenameCategory] = useState("Личное");
   const [renameDeadline, setRenameDeadline] = useState("");
   const [mapCategoryFilter, setMapCategoryFilter] = useState("Все");
+  const [mapColumns, setMapColumns] = useState(() => {
+    const saved = Number(localStorage.getItem(MAPS_COLUMNS_KEY));
+    return [1, 2, 3, 4].includes(saved) ? saved : 2;
+  });
   const [celebratingAchievements, setCelebratingAchievements] = useState(() => {
     try {
       return new Set(JSON.parse(sessionStorage.getItem(ACHIEVEMENT_SESSION_KEY) || "[]"));
@@ -2286,11 +2291,14 @@ export default function App() {
       const destination = element.getBoundingClientRect();
       const deltaX = previous.left - destination.left;
       const deltaY = previous.top - destination.top;
-      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return [];
+      const resize = cardSettling.type === "layout";
+      const scaleX = resize ? previous.width / destination.width : 1;
+      const scaleY = resize ? previous.height / destination.height : 1;
+      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1 && Math.abs(scaleX - 1) < .01 && Math.abs(scaleY - 1) < .01) return [];
       return [element.animate([
-        { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` },
+        { transform: `translate3d(${deltaX}px, ${deltaY}px, 0) scale(${scaleX}, ${scaleY})`, transformOrigin: "top left" },
         { transform: "translate3d(0, 0, 0)" },
-      ], { duration: 420, easing: "cubic-bezier(.16,1,.3,1)" })];
+      ], { duration: resize ? 520 : 420, easing: "cubic-bezier(.16,1,.3,1)" })];
     });
     if (!animations.length) {
       setCardSettling(null);
@@ -5447,6 +5455,34 @@ export default function App() {
     setIsDeleteOpen(true);
   }
 
+  function prepareCardLayoutTransition(type, id = null) {
+    cardPositionsRef.current = new Map(
+      [...document.querySelectorAll("[data-map-id]")].map((element) => [
+        element.dataset.mapId,
+        element.getBoundingClientRect(),
+      ])
+    );
+    setCardSettling({ id, type });
+  }
+
+  function scrollToRestoredMap(id) {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const card = document.querySelector(`[data-map-id="${CSS.escape(id)}"]`);
+      if (!card) return;
+      const bounds = card.getBoundingClientRect();
+      if (bounds.bottom > window.innerHeight - 24 || bounds.top < 24) {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }));
+  }
+
+  function changeMapColumns(columns) {
+    if (columns === mapColumns) return;
+    prepareCardLayoutTransition("layout");
+    setMapColumns(columns);
+    localStorage.setItem(MAPS_COLUMNS_KEY, String(columns));
+  }
+
   async function confirmDeleteMap() {
     if (!mapToDelete || deletingIdsRef.current.has(mapToDelete.id)) return;
     const deletedMap = normalizeMap(mapToDelete);
@@ -5480,6 +5516,7 @@ export default function App() {
     pendingDeleteTimersRef.current.set(id, timer);
     window.setTimeout(() => {
       if (!pendingDeletesRef.current.some((entry) => entry.map.id === id)) return;
+      prepareCardLayoutTransition("delete");
       setMaps((current) => current.filter((map) => map.id !== id));
       deletingIdsRef.current.delete(id);
       setDeletingIds((ids) => ids.filter((value) => value !== id));
@@ -5509,11 +5546,13 @@ export default function App() {
         const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(deleted, user.id), { onConflict: "id" });
         if (error) throw error;
       }
+      prepareCardLayoutTransition("restore", deleted.id);
       setMaps((current) => [...current.filter((map) => map.id !== deleted.id), deleted]);
       deletingIdsRef.current.delete(deleted.id);
       setDeletingIds((ids) => ids.filter((id) => id !== deleted.id));
       setRestoredMapIds((ids) => [...ids, deleted.id]);
       window.setTimeout(() => setRestoredMapIds((ids) => ids.filter((id) => id !== deleted.id)), 620);
+      scrollToRestoredMap(deleted.id);
     } catch (error) {
       console.error("Не удалось восстановить карту:", error);
       if (!pending) deletedMapsRef.current = [deleted, ...deletedMapsRef.current].slice(0, 3);
@@ -5544,9 +5583,11 @@ export default function App() {
     } catch (error) {
       console.error("Не удалось удалить карту:", error);
       deletedMapsRef.current = deletedMapsRef.current.filter((map) => map.id !== id);
+      prepareCardLayoutTransition("restore", id);
       setMaps((current) => [...current.filter((map) => map.id !== id), pending.map]);
       setRestoredMapIds((ids) => [...ids, id]);
       window.setTimeout(() => setRestoredMapIds((ids) => ids.filter((value) => value !== id)), 620);
+      scrollToRestoredMap(id);
       setMapActionError("Не удалось удалить карту. Она возвращена в список.");
     }
   }
@@ -5558,12 +5599,7 @@ export default function App() {
     if (from < 0) return;
     const safeTargetIndex = Math.max(0, Math.min(visible.length - 1, targetIndex));
     if (from === safeTargetIndex) return;
-    cardPositionsRef.current = new Map(
-      [...document.querySelectorAll("[data-map-id]")].map((element) => [
-        element.dataset.mapId,
-        element.getBoundingClientRect(),
-      ])
-    );
+    prepareCardLayoutTransition("reorder", id);
     const rearranged = [...visible];
     [rearranged[from], rearranged[safeTargetIndex]] = [rearranged[safeTargetIndex], rearranged[from]];
     let visibleIndex = 0;
@@ -5571,7 +5607,6 @@ export default function App() {
       .map((map, order) => ({ ...map, order }));
     const active = next.find((map) => map.id === activeMapId);
     if (active) activeMapRef.current = active;
-    setCardSettling({ id });
     setMaps(next);
     saveMapsLocally(next);
     if (user) {
@@ -7489,14 +7524,31 @@ export default function App() {
               </h1>
             </div>
 
-            <button
-              className="save-map-btn"
-              onClick={
-                openCreateModal
-              }
-            >
-              + {t("newMap")}
-            </button>
+            <div className="maps-page-actions">
+              {!!maps.length && (
+                <div className="maps-view-switch" role="group" aria-label="Количество карточек в ряду">
+                  <span>В ряд</span>
+                  {[1, 2, 3, 4].map((columns) => (
+                    <button
+                      type="button"
+                      key={columns}
+                      className={mapColumns === columns ? "active" : ""}
+                      aria-pressed={mapColumns === columns}
+                      aria-label={`${columns} ${columns === 1 ? "карточка" : "карточки"} в ряду`}
+                      onClick={() => changeMapColumns(columns)}
+                    >
+                      {columns}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button
+                className="save-map-btn"
+                onClick={openCreateModal}
+              >
+                + {t("newMap")}
+              </button>
+            </div>
           </div>
 
           {!!pendingDeletes.length && (() => {
@@ -7597,7 +7649,7 @@ export default function App() {
               </div>
             <p className="maps-drag-hint">Перетаскивайте карты и категории, чтобы менять их порядок.</p>
             {mapActionError && <p className="field-error" role="alert">{mapActionError}</p>}
-            <div className={`maps-list${cardSettling ? " is-reordering" : ""}`}>
+            <div className={`maps-list maps-list-columns-${mapColumns}${cardSettling ? " is-reordering" : ""}`} style={{ "--map-columns": mapColumns }}>
               {cardDrag?.dropRect && <div className="map-drop-indicator" aria-hidden="true" style={cardDrag.dropRect} />}
               {[...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
                 (map) => {
