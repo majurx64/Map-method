@@ -1013,6 +1013,9 @@ function normalizeMap(map = {}) {
       typeof map.description === "string" ? map.description : "",
     category: typeof map.category === "string" && map.category.trim().slice(0, 36) ? map.category.trim().slice(0, 36) : "Личное",
     deadline: /^\d{4}-\d{2}-\d{2}$/.test(map.deadline || "") ? map.deadline : "",
+    lastPaintedAt: typeof map.lastPaintedAt === "string" && Number.isFinite(Date.parse(map.lastPaintedAt))
+      ? map.lastPaintedAt
+      : "",
     activityLog: normalizeActivityLog(map.activityLog),
     dailyPlanDoneOn: /^\d{4}-\d{2}-\d{2}$/.test(map.dailyPlanDoneOn || "") ? map.dailyPlanDoneOn : "",
     privateLibraryItem: Boolean(map.privateLibraryItem),
@@ -1078,7 +1081,7 @@ function mapFromSupabaseRow(row) {
   });
 }
 
-const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false }) {
+const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null }) {
   const completedCells = new Set(map.progressCompleted || []);
   const drawingCells = new Set(map.completed || []);
   const densePreview = dimensions.actualTotal >= 2000;
@@ -1099,10 +1102,12 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   }
   const visibleRows = endRow - startRow + 1;
   const visibleCols = endCol - startCol + 1;
+  const previewWidth = previewBounds?.width || 330;
+  const previewHeight = previewBounds?.height || 204;
   const previewCellSize = cropToDrawing
-    ? Math.max(3, Math.min(16, Math.floor(Math.min(
-        (330 - Math.max(0, visibleCols - 1)) / visibleCols,
-        (204 - Math.max(0, visibleRows - 1)) / visibleRows
+    ? Math.max(previewBounds ? 1 : 3, Math.min(16, Math.floor(Math.min(
+        (previewWidth - Math.max(0, visibleCols - 1)) / visibleCols,
+        (previewHeight - Math.max(0, visibleRows - 1)) / visibleRows
       ))))
     : null;
   const visibleIndices = Array.from({ length: visibleRows * visibleCols }, (_, index) => (
@@ -1149,7 +1154,9 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   && previous.dimensions.cols === next.dimensions.cols
   && previous.dimensions.rows === next.dimensions.rows
   && previous.dimensions.actualTotal === next.dimensions.actualTotal
-  && previous.cropToDrawing === next.cropToDrawing);
+  && previous.cropToDrawing === next.cropToDrawing
+  && previous.previewBounds?.width === next.previewBounds?.width
+  && previous.previewBounds?.height === next.previewBounds?.height);
 
 
 
@@ -3664,6 +3671,11 @@ export default function App() {
       return;
 
     if (strokeCountRef.current > 0) {
+      const lastPaintedAt = new Date().toISOString();
+      activeMapRef.current = { ...activeMapRef.current, lastPaintedAt };
+      setMaps((previous) => previous.map((map) => (
+        map.id === activeMapId ? { ...map, lastPaintedAt } : map
+      )));
       recordAnalytics(drawModeRef.current === "draw" ? "cells_painted" : "cells_erased", {
         value: strokeCountRef.current,
         metadata: { mode: isGameMode ? "game" : "drawing" },
@@ -6867,7 +6879,7 @@ export default function App() {
                     const submittedDimensions = getGridDimensions(submittedMap.totalCells, submittedMap.imageRatio, submittedMap.gridMode, submittedMap.manualRows, submittedMap.manualCols);
                     return (
                       <div className="submission-preview-card">
-                        <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing /></div>
+                        <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing previewBounds={{ width: 108, height: 108 }} /></div>
                         <div><strong>{submittedMap.name}</strong><span>{submittedMap.completed.length} клеток</span></div>
                         <button type="button" disabled={Boolean(message.submission_data.approved_library_id)} onClick={() => approveLibrarySubmission(message)}>
                           {message.submission_data.approved_library_id ? "Уже добавлен" : "Добавить в общую библиотеку"}
@@ -7200,6 +7212,18 @@ export default function App() {
                               <span>{map.category || "Личное"}</span>
                               {map.deadline && <span>Срок до {map.deadline.split("-").reverse().join(".")}</span>}
                             </span>
+                            {map.lastPaintedAt && (
+                              <span className="map-card-updated">
+                                Последнее изменение: {new Date(map.lastPaintedAt).toLocaleString("ru-RU", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                })}
+                              </span>
+                            )}
                           </div>
 
                           <strong className="map-card-percent">
@@ -8238,8 +8262,12 @@ export default function App() {
           className={`modal-overlay${closingModal === "create" ? " is-closing" : ""}`}
           onMouseDown={() => closeModal("create")}
         >
-          <div
+          <form
             className="create-modal"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createMap();
+            }}
             onMouseDown={(e) =>
               e.stopPropagation()
             }
@@ -8250,6 +8278,7 @@ export default function App() {
               </h2>
 
               <button
+                type="button"
                 className="modal-close"
                 onClick={() => closeModal("create")}
               >
@@ -8301,7 +8330,7 @@ export default function App() {
 
             {newMapCategory === "__custom__" && (
               <div className="category-create">
-                <input autoFocus value={newCategoryDraft} placeholder="Например, Финансы" onChange={(event) => setNewCategoryDraft(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addCustomCategory("create")} />
+                <input autoFocus value={newCategoryDraft} placeholder="Например, Финансы" onChange={(event) => setNewCategoryDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addCustomCategory("create"); } }} />
                 <button type="button" onClick={() => addCustomCategory("create")}>Добавить</button>
               </div>
             )}
@@ -8313,6 +8342,7 @@ export default function App() {
 
               <div className="modal-map-types">
                 <button
+                  type="button"
                   className={`map-type-btn ${
                     newMapType ===
                     "image"
@@ -8329,6 +8359,7 @@ export default function App() {
                 </button>
 
                 <button
+                  type="button"
                   className={`map-type-btn ${
                     newMapType ===
                     "free"
@@ -8355,6 +8386,7 @@ export default function App() {
 
               <div className="modal-map-types">
                 <button
+                  type="button"
                   className={`map-type-btn ${
                     newMapGridMode ===
                     "auto"
@@ -8371,6 +8403,7 @@ export default function App() {
                 </button>
 
                 <button
+                  type="button"
                   className={`map-type-btn ${
                     newMapGridMode ===
                     "manual"
@@ -8461,17 +8494,15 @@ export default function App() {
 
             {newMapInvalid && <p className="field-error" role="alert">{newMapCount > MAX_CELLS ? "Лимит — 10000 клеток" : "Введите целое число от 1 до 10000"}</p>}
             <button
+              type="submit"
               className="modal-create-btn"
               disabled={newMapInvalid}
-              onClick={
-                createMap
-              }
             >
               {t(
                 "createMap"
               )}
             </button>
-          </div>
+          </form>
         </div>
       )}
 
