@@ -4,7 +4,7 @@ import "./App.css";
 import { supabase } from "./lib/supabase";
 import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
-import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -1607,6 +1607,10 @@ export default function App() {
   const [feedbackInboxFilter, setFeedbackInboxFilter] = useState("all");
   const [feedbackNoteDrafts, setFeedbackNoteDrafts] = useState({});
   const [feedbackAdminState, setFeedbackAdminState] = useState({});
+  const [feedbackDeleteTarget, setFeedbackDeleteTarget] = useState(null);
+  const [isFeedbackDeleteClosing, setIsFeedbackDeleteClosing] = useState(false);
+  const [feedbackDeletingId, setFeedbackDeletingId] = useState("");
+  const [feedbackDeleteError, setFeedbackDeleteError] = useState("");
   const [feedbackInboxSection, setFeedbackInboxSection] = useState("messages");
   const [analyticsPeriod, setAnalyticsPeriod] = useState(30);
   const [analyticsData, setAnalyticsData] = useState(null);
@@ -2233,6 +2237,10 @@ export default function App() {
       }
       if (accountToRemove) {
         closeAccountRemoveModal();
+        return;
+      }
+      if (feedbackDeleteTarget) {
+        closeFeedbackDeleteModal();
         return;
       }
       if (isFeedbackOpen) {
@@ -3211,6 +3219,49 @@ export default function App() {
     window.setTimeout(() => {
       setFeedbackAdminState((state) => state[messageId] === "saved" ? { ...state, [messageId]: "" } : state);
     }, 1400);
+  }
+
+  function openFeedbackDeleteModal(message) {
+    setFeedbackDeleteError("");
+    setIsFeedbackDeleteClosing(false);
+    setFeedbackDeleteTarget(message);
+  }
+
+  function closeFeedbackDeleteModal() {
+    if (!feedbackDeleteTarget || isFeedbackDeleteClosing || feedbackDeletingId) return;
+    setIsFeedbackDeleteClosing(true);
+    window.setTimeout(() => {
+      setFeedbackDeleteTarget(null);
+      setIsFeedbackDeleteClosing(false);
+      setFeedbackDeleteError("");
+    }, 260);
+  }
+
+  async function confirmDeleteFeedback() {
+    if (!feedbackDeleteTarget || feedbackDeletingId || !isLibraryOwner) return;
+    const message = feedbackDeleteTarget;
+    setFeedbackDeletingId(message.id);
+    setFeedbackDeleteError("");
+    const { error } = await supabase.from(FEEDBACK_TABLE).delete().eq("id", message.id);
+    if (error) {
+      setFeedbackDeletingId("");
+      setFeedbackDeleteError("Не удалось удалить обращение.");
+      return;
+    }
+    const attachmentPaths = (message.attachments || []).map((attachment) => attachment.path).filter(Boolean);
+    if (attachmentPaths.length) await supabase.storage.from(FEEDBACK_BUCKET).remove(attachmentPaths);
+    setIsFeedbackDeleteClosing(true);
+    window.setTimeout(() => {
+      setFeedbackMessages((messages) => messages.filter((entry) => entry.id !== message.id));
+      setFeedbackDeleteTarget(null);
+      setIsFeedbackDeleteClosing(false);
+      setFeedbackDeletingId("");
+      setFeedbackNoteDrafts((drafts) => {
+        const next = { ...drafts };
+        delete next[message.id];
+        return next;
+      });
+    }, 260);
   }
 
   function closeFeedbackThanks() {
@@ -4624,9 +4675,11 @@ export default function App() {
       colorsRef.current = nextColors;
       setColors(nextColors);
     } else if (image) {
-      const offset = sides
-        ? resizeImageOffset(sourceImageRef.current?.width || imageRatio, sourceImageRef.current?.height || 1, before, imageOffset, dx, dy)
-        : { x: imageOffset.x, y: imageOffset.y };
+      const offset = {
+        x: 0,
+        y: 0,
+        frame: { left: 0, top: 0, width: after.cols, height: after.rows },
+      };
       nextImageOffset = offset;
       setImageOffset(offset);
       processImage(image, imageRatio, after.cols, after.rows, offset, after.actualTotal);
@@ -5584,9 +5637,9 @@ export default function App() {
     const sources = maps.filter((map) => sketchSubmissionMapIds.includes(map.id));
     if (!sources.length || !user) return;
     setSketchSubmissionStatus("sending");
-    const submissions = sources.map((source) => {
+    const submittedMaps = sources.map((source) => {
       const dimensions = getGridDimensions(source.totalCells, source.imageRatio, source.gridMode, source.manualRows, source.manualCols);
-      const submission = normalizeMap({
+      return normalizeMap({
         ...source,
         id: createMapId(),
         mapType: "free",
@@ -5598,17 +5651,18 @@ export default function App() {
         activityLog: [],
         modeDrafts: {},
       });
-      return {
-        sender_id: user.id,
-        sender_email: user.email || "",
-        reply_email: user.email || null,
-        kind: "Эскиз в общую библиотеку",
-        message: sketchSubmissionNote.trim() || `Предлагаю добавить эскиз «${source.name}» в общую библиотеку.`,
-        attachments: [],
-        submission_data: submission,
-      };
     });
-    const { error } = await supabase.from(FEEDBACK_TABLE).insert(submissions);
+    const { error } = await supabase.from(FEEDBACK_TABLE).insert({
+      sender_id: user.id,
+      sender_email: user.email || "",
+      reply_email: user.email || null,
+      kind: "Эскиз в общую библиотеку",
+      message: sketchSubmissionNote.trim() || (submittedMaps.length > 1
+        ? `Предлагаю добавить ${submittedMaps.length} эскиза в общую библиотеку.`
+        : `Предлагаю добавить эскиз «${submittedMaps[0].name}» в общую библиотеку.`),
+      attachments: [],
+      submission_data: { maps: submittedMaps },
+    });
     if (error) {
       setSketchSubmissionStatus("error");
       return;
@@ -5625,11 +5679,14 @@ export default function App() {
     }, 500);
   }
 
-  async function approveLibrarySubmission(message) {
-    if (!user || !isLibraryOwner || !message.submission_data || message.submission_data.approved_library_id) return;
+  async function approveLibrarySubmission(message, submissionIndex = 0) {
+    if (!user || !isLibraryOwner || !message.submission_data) return;
+    const groupedMaps = Array.isArray(message.submission_data.maps) ? message.submission_data.maps : null;
+    const selectedSubmission = groupedMaps ? groupedMaps[submissionIndex] : message.submission_data;
+    if (!selectedSubmission || selectedSubmission.approved_library_id) return;
     setFeedbackAdminState((state) => ({ ...state, [message.id]: "saving" }));
     const item = normalizeMap({
-      ...message.submission_data,
+      ...selectedSubmission,
       id: `public-${createMapId()}`,
       progressCompleted: [],
       progressExtra: 0,
@@ -5646,14 +5703,23 @@ export default function App() {
       setFeedbackAdminState((state) => ({ ...state, [message.id]: "error" }));
       return;
     }
-    const submissionData = { ...message.submission_data, approved_library_id: item.id };
-    const { error } = await supabase.from(FEEDBACK_TABLE).update({ submission_data: submissionData, work_status: "done" }).eq("id", message.id);
+    const submissionData = groupedMaps
+      ? {
+          ...message.submission_data,
+          maps: groupedMaps.map((map, index) => index === submissionIndex ? { ...map, approved_library_id: item.id } : map),
+        }
+      : { ...message.submission_data, approved_library_id: item.id };
+    const allApproved = Array.isArray(submissionData.maps)
+      ? submissionData.maps.every((map) => map.approved_library_id)
+      : Boolean(submissionData.approved_library_id);
+    const nextWorkStatus = allApproved ? "done" : (message.work_status || "new");
+    const { error } = await supabase.from(FEEDBACK_TABLE).update({ submission_data: submissionData, work_status: nextWorkStatus }).eq("id", message.id);
     if (error) {
       setFeedbackAdminState((state) => ({ ...state, [message.id]: "error" }));
       return;
     }
     setPublicLibrary((current) => [...current, { ...item, publicLibraryOwnerId: user.id }]);
-    setFeedbackMessages((current) => current.map((entry) => entry.id === message.id ? { ...entry, submission_data: submissionData, work_status: "done" } : entry));
+    setFeedbackMessages((current) => current.map((entry) => entry.id === message.id ? { ...entry, submission_data: submissionData, work_status: nextWorkStatus } : entry));
     setFeedbackAdminState((state) => ({ ...state, [message.id]: "saved" }));
   }
 
@@ -6882,22 +6948,34 @@ export default function App() {
                 const workStatus = message.work_status || "new";
                 const replyEmail = message.reply_email || "";
                 return (
-                  <article className={`feedback-inbox-card status-${workStatus}`} key={message.id}>
+                  <article className={`feedback-inbox-card status-${workStatus}${feedbackDeletingId === message.id ? " is-deleting" : ""}`} key={message.id}>
                   <div className="feedback-inbox-meta">
                     <strong>{message.kind}</strong>
-                    <time>{new Date(message.created_at).toLocaleString("ru-RU")}</time>
+                    <div className="feedback-inbox-meta-actions">
+                      <time>{new Date(message.created_at).toLocaleString("ru-RU")}</time>
+                      <button type="button" onClick={() => openFeedbackDeleteModal(message)}>Удалить</button>
+                    </div>
                   </div>
                   <p>{message.message}</p>
                   {message.submission_data && (() => {
-                    const submittedMap = normalizeMap(message.submission_data);
-                    const submittedDimensions = getGridDimensions(submittedMap.totalCells, submittedMap.imageRatio, submittedMap.gridMode, submittedMap.manualRows, submittedMap.manualCols);
+                    const submittedMaps = Array.isArray(message.submission_data.maps)
+                      ? message.submission_data.maps
+                      : [message.submission_data];
                     return (
-                      <div className="submission-preview-card">
-                        <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing previewBounds={{ width: 178, height: 158 }} /></div>
-                        <div><strong>{submittedMap.name}</strong><span>{submittedMap.completed.length} клеток</span></div>
-                        <button type="button" disabled={Boolean(message.submission_data.approved_library_id)} onClick={() => approveLibrarySubmission(message)}>
-                          {message.submission_data.approved_library_id ? "Уже добавлен" : "Добавить в общую библиотеку"}
-                        </button>
+                      <div className="submission-preview-grid">
+                        {submittedMaps.map((submission, index) => {
+                          const submittedMap = normalizeMap(submission);
+                          const submittedDimensions = getGridDimensions(submittedMap.totalCells, submittedMap.imageRatio, submittedMap.gridMode, submittedMap.manualRows, submittedMap.manualCols);
+                          return (
+                            <div className="submission-preview-card" key={submittedMap.id || index}>
+                              <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing previewBounds={{ width: 138, height: 118 }} /></div>
+                              <div><strong>{submittedMap.name}</strong><span>{submittedMap.completed.length} клеток</span></div>
+                              <button type="button" disabled={Boolean(submission.approved_library_id)} onClick={() => approveLibrarySubmission(message, index)}>
+                                {submission.approved_library_id ? "Уже добавлен" : "Добавить в общую библиотеку"}
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })()}
@@ -8811,6 +8889,30 @@ export default function App() {
             >
               {t("save")}
             </button>
+          </div>
+        </div>
+      )}
+
+      {feedbackDeleteTarget && (
+        <div
+          className={`modal-overlay${isFeedbackDeleteClosing ? " is-closing" : ""}`}
+          onMouseDown={closeFeedbackDeleteModal}
+        >
+          <div className="create-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Удалить обращение?</h2>
+              <button type="button" className="modal-close" onClick={closeFeedbackDeleteModal}>×</button>
+            </div>
+            <p className="delete-modal-text">
+              Обращение «{feedbackDeleteTarget.kind}» и его вложения будут удалены без возможности восстановления.
+            </p>
+            {feedbackDeleteError && <p className="feedback-result error">{feedbackDeleteError}</p>}
+            <div className="delete-modal-actions">
+              <button type="button" className="cancel-delete-btn" disabled={Boolean(feedbackDeletingId)} onClick={closeFeedbackDeleteModal}>Отмена</button>
+              <button type="button" className="confirm-delete-btn" disabled={Boolean(feedbackDeletingId)} onClick={confirmDeleteFeedback}>
+                {feedbackDeletingId ? "Удаляем…" : "Удалить"}
+              </button>
+            </div>
           </div>
         </div>
       )}
