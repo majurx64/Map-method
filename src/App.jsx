@@ -1395,6 +1395,9 @@ export default function App() {
   }, [rowAddSide, colAddSide]);
   const [deletingIds, setDeletingIds] = useState([]);
   const deletingIdsRef = useRef(new Set());
+  const deletedMapsRef = useRef([]);
+  const restoringDeletedMapRef = useRef(false);
+  const [restoredMapIds, setRestoredMapIds] = useState([]);
   const [mapActionError, setMapActionError] = useState("");
   const [cardDrag, setCardDrag] = useState(null);
   const cardDragRef = useRef(null);
@@ -1623,6 +1626,8 @@ export default function App() {
   const [sketchSubmissionStatus, setSketchSubmissionStatus] = useState("");
   const [submissionEditContext, setSubmissionEditContext] = useState(null);
   const [submissionEditStatus, setSubmissionEditStatus] = useState("");
+  const [publicLibraryEditContext, setPublicLibraryEditContext] = useState(null);
+  const [publicLibraryEditStatus, setPublicLibraryEditStatus] = useState("");
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
   const [savedAccountDragId, setSavedAccountDragId] = useState(null);
   const [savedAccountDropId, setSavedAccountDropId] = useState(null);
@@ -1875,13 +1880,14 @@ export default function App() {
         .order("created_at", { ascending: true });
       if (cancelled || error) return;
       const hiddenBuiltinIds = new Set((data || [])
-        .map((row) => row.data?.hiddenBuiltinId)
+        .flatMap((row) => [row.data?.hiddenBuiltinId, row.data?.replacesBuiltinId])
         .filter(Boolean));
       const savedItems = (data || [])
         .filter((row) => !row.data?.hiddenBuiltinId)
         .map((row) => ({
         ...normalizeMap({ ...row.data, id: row.id, name: row.name }),
         publicLibraryOwnerId: row.owner_id,
+        replacesBuiltinId: row.data?.replacesBuiltinId || null,
       }));
       setPublicLibrary([
         ...BUILTIN_PUBLIC_LIBRARY.filter((item) => !hiddenBuiltinIds.has(item.id)),
@@ -1963,7 +1969,13 @@ export default function App() {
   async function removePublicLibraryItem(item) {
     if (!user || !isLibraryOwner) return;
     const { error } = item.publicLibraryOwnerId
-      ? await supabase
+      ? item.replacesBuiltinId
+        ? await supabase
+          .from(PUBLIC_LIBRARY_TABLE)
+          .update({ data: { hiddenBuiltinId: item.replacesBuiltinId } })
+          .eq("id", item.id)
+          .eq("owner_id", user.id)
+        : await supabase
           .from(PUBLIC_LIBRARY_TABLE)
           .delete()
           .eq("id", item.id)
@@ -2058,6 +2070,71 @@ export default function App() {
     setActiveMapId(map.id);
     openMap(map);
     setScreen("editor");
+  }
+
+  function editPublicLibraryItem(item) {
+    if (!user || !isLibraryOwner) return;
+    const draft = normalizeMap({ ...item, id: createMapId(), progressCompleted: [] });
+    setMaps((current) => [...current, draft]);
+    setPublicLibraryEditContext({
+      draftId: draft.id,
+      itemId: item.id,
+      replacesBuiltinId: item.publicLibraryOwnerId ? item.replacesBuiltinId : item.id,
+      originScrollY: Math.max(window.scrollY, document.documentElement.scrollTop, document.body.scrollTop),
+    });
+    setPublicLibraryEditStatus("");
+    setActiveMapId(draft.id);
+    openMap(draft);
+    setScreen("editor");
+    localStorage.setItem(ACTIVE_MAP_KEY, draft.id);
+  }
+
+  async function finishPublicLibraryEditing(saveChanges) {
+    if (!publicLibraryEditContext) return;
+    const context = publicLibraryEditContext;
+    if (saveChanges) {
+      const currentMap = buildCurrentMap();
+      if (!currentMap) return;
+      setPublicLibraryEditStatus("saving");
+      const item = normalizeMap({
+        ...currentMap,
+        id: context.itemId,
+        mapType: "free",
+        image: null,
+        showImage: false,
+        progressCompleted: [],
+        progressExtra: 0,
+        activityLog: [],
+        modeDrafts: {},
+      });
+      const storedItem = context.replacesBuiltinId
+        ? { ...item, replacesBuiltinId: context.replacesBuiltinId }
+        : item;
+      const { error } = await supabase.from(PUBLIC_LIBRARY_TABLE).upsert({
+        id: item.id,
+        owner_id: user.id,
+        name: item.name,
+        data: storedItem,
+      }, { onConflict: "id" });
+      if (error) {
+        setPublicLibraryEditStatus("error");
+        return;
+      }
+      setPublicLibrary((current) => current.map((entry) => entry.id === context.itemId
+        ? { ...storedItem, publicLibraryOwnerId: user.id }
+        : entry));
+    }
+    setMaps((current) => current.filter((map) => map.id !== context.draftId));
+    if (user) void supabase.from("maps").delete().eq("id", context.draftId).eq("user_id", user.id);
+    setActiveMapId(null);
+    setPublicLibraryEditContext(null);
+    setPublicLibraryEditStatus("");
+    const positions = JSON.parse(localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}");
+    positions.library = context.originScrollY || 0;
+    localStorage.setItem(SCROLL_POSITIONS_KEY, JSON.stringify(positions));
+    preservedScrollRef.current = { screen: "library", position: context.originScrollY || 0 };
+    setScreen("library");
+    localStorage.removeItem(ACTIVE_MAP_KEY);
   }
 
   useEffect(() => {
@@ -2247,6 +2324,17 @@ export default function App() {
 
   useEffect(() => {
     const handleEscape = (event) => {
+      const targetIsField = event.target instanceof HTMLInputElement
+        || event.target instanceof HTMLTextAreaElement
+        || event.target instanceof HTMLSelectElement
+        || event.target?.isContentEditable;
+      if (screen === "maps" && !targetIsField && (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
+        if (deletedMapsRef.current.length) {
+          event.preventDefault();
+          void restoreLastDeletedMap();
+        }
+        return;
+      }
       if (event.key !== "Escape") return;
 
       if (downloadChoice) {
@@ -5330,6 +5418,7 @@ export default function App() {
       const request = remoteSaveQueueRef.current.then(remove, remove);
       remoteSaveQueueRef.current = request.catch(() => null);
       await Promise.all([animation, request]);
+      deletedMapsRef.current = [normalizeMap(mapToDelete), ...deletedMapsRef.current].slice(0, 3);
       setMaps((current) => current.filter((map) => map.id !== id));
       recordAnalytics("map_deleted");
     } catch (error) {
@@ -5339,6 +5428,30 @@ export default function App() {
       setMapActionError("Не удалось удалить карту. Проверьте соединение и повторите попытку.");
     } finally {
       setDeletingIds((ids) => ids.filter((value) => value !== id));
+    }
+  }
+
+  async function restoreLastDeletedMap() {
+    if (restoringDeletedMapRef.current) return;
+    const deleted = deletedMapsRef.current[0];
+    if (!deleted) return;
+    restoringDeletedMapRef.current = true;
+    deletedMapsRef.current = deletedMapsRef.current.slice(1);
+    setMapActionError("");
+    try {
+      if (user) {
+        const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(deleted, user.id), { onConflict: "id" });
+        if (error) throw error;
+      }
+      setMaps((current) => [...current.filter((map) => map.id !== deleted.id), deleted]);
+      setRestoredMapIds((ids) => [...ids, deleted.id]);
+      window.setTimeout(() => setRestoredMapIds((ids) => ids.filter((id) => id !== deleted.id)), 620);
+    } catch (error) {
+      console.error("Не удалось восстановить карту:", error);
+      deletedMapsRef.current = [deleted, ...deletedMapsRef.current].slice(0, 3);
+      setMapActionError("Не удалось восстановить карту. Проверьте соединение и повторите Ctrl+Z.");
+    } finally {
+      restoringDeletedMapRef.current = false;
     }
   }
 
@@ -7229,8 +7342,9 @@ export default function App() {
                   <article className="library-card" key={item.id}>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
                     <div><strong>{item.name}</strong><span>{item.completed.length} клеток</span></div>
-                    <div className={`library-card-actions${isLibraryOwner ? "" : " single"}`}>
+                    <div className={`library-card-actions${isLibraryOwner ? " owner" : " single"}`}>
                       <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
+                      {isLibraryOwner && <button type="button" className="edit-action" onClick={() => editPublicLibraryItem(item)}>Изменить</button>}
                       {isLibraryOwner && <button type="button" className="danger-action" onClick={() => removePublicLibraryItem(item)}>Удалить</button>}
                     </div>
                   </article>
@@ -7398,7 +7512,7 @@ export default function App() {
 
                   return (
                     <article
-                      className={`map-card${deletingIds.includes(map.id) ? " is-deleting" : ""}${cardDrag?.id === map.id ? " is-dragging" : ""}${cardSettling?.id === map.id ? " is-settling" : ""}${planDoneToday ? " daily-plan-complete" : ""}${p >= 100 ? " is-complete" : ""}`}
+                      className={`map-card${deletingIds.includes(map.id) ? " is-deleting" : ""}${restoredMapIds.includes(map.id) ? " is-restored" : ""}${cardDrag?.id === map.id ? " is-dragging" : ""}${cardSettling?.id === map.id ? " is-settling" : ""}${planDoneToday ? " daily-plan-complete" : ""}${p >= 100 ? " is-complete" : ""}`}
                       data-map-id={map.id}
                       tabIndex={0}
                       aria-label={`Карта: ${map.name}`}
@@ -7587,7 +7701,10 @@ export default function App() {
                 <AnimatedSelect
                   ariaLabel={t("name")}
                   value={activeMapId || ""}
-                  options={maps.filter((map) => !submissionEditContext || map.id === submissionEditContext.draftId).map((map) => ({ value: map.id, label: map.name }))}
+                  options={maps.filter((map) => {
+                    const draftId = submissionEditContext?.draftId || publicLibraryEditContext?.draftId;
+                    return !draftId || map.id === draftId;
+                  }).map((map) => ({ value: map.id, label: map.name }))}
                   onChange={(id) => {
                     const map = maps.find((item) => item.id === id);
                     if (map) openMap(map);
@@ -7606,6 +7723,14 @@ export default function App() {
                     </button>
                     <button className="text-action" disabled={submissionEditStatus === "saving"} onClick={() => finishSubmissionEditing(false)}>Отменить</button>
                     {submissionEditStatus === "error" && <span className="field-error">Не удалось сохранить доработку</span>}
+                  </>
+                ) : publicLibraryEditContext ? (
+                  <>
+                    <button className="text-action submission-save-action" disabled={publicLibraryEditStatus === "saving"} onClick={() => finishPublicLibraryEditing(true)}>
+                      {publicLibraryEditStatus === "saving" ? "Сохраняем…" : "Сохранить в библиотеке"}
+                    </button>
+                    <button className="text-action" disabled={publicLibraryEditStatus === "saving"} onClick={() => finishPublicLibraryEditing(false)}>Отменить</button>
+                    {publicLibraryEditStatus === "error" && <span className="field-error">Не удалось сохранить рисунок</span>}
                   </>
                 ) : (
                   <>
@@ -7884,7 +8009,7 @@ export default function App() {
               </div>
               {actualTotal % cols !== 0 && (
                 <p className="grid-fill-hint">
-                  Это необязательно. Добавьте ещё <strong>{cols - (actualTotal % cols)}</strong> клеток, чтобы полностью заполнить последнюю строку.
+                  Необязательно: добавьте ещё <strong>{cols - (actualTotal % cols)}</strong> клеток, чтобы полностью заполнить последнюю строку.
                 </p>
               )}
             </section>
