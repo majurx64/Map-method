@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import { createPortal } from "react-dom";
 import "./App.css";
 import { supabase } from "./lib/supabase";
+import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 
@@ -1311,6 +1312,7 @@ export default function App() {
       "account",
       "library",
       "feedback-inbox",
+      "analytics",
       "auth",
     ].includes(saved)
       ? saved
@@ -1596,6 +1598,15 @@ export default function App() {
   const [feedbackInboxFilter, setFeedbackInboxFilter] = useState("all");
   const [feedbackNoteDrafts, setFeedbackNoteDrafts] = useState({});
   const [feedbackAdminState, setFeedbackAdminState] = useState({});
+  const [feedbackInboxSection, setFeedbackInboxSection] = useState("messages");
+  const [analyticsPeriod, setAnalyticsPeriod] = useState(30);
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState("");
+  const [isSketchSubmissionOpen, setIsSketchSubmissionOpen] = useState(false);
+  const [sketchSubmissionMapId, setSketchSubmissionMapId] = useState("");
+  const [sketchSubmissionNote, setSketchSubmissionNote] = useState("");
+  const [sketchSubmissionStatus, setSketchSubmissionStatus] = useState("");
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
   const [savedAccountDragId, setSavedAccountDragId] = useState(null);
   const [savedAccountDropId, setSavedAccountDropId] = useState(null);
@@ -1652,6 +1663,7 @@ export default function App() {
   const cellAnimationTimerRef = useRef(null);
   const canvasAnimationFrameRef = useRef(null);
   const drawCanvasRef = useRef(null);
+  const analyticsSessionTrackedRef = useRef(false);
 
   const isDrawingRef = useRef(false);
   const drawModeRef = useRef("draw");
@@ -1755,6 +1767,9 @@ export default function App() {
 
   const accountEmail = user?.email || "";
   const isLibraryOwner = accountEmail.toLowerCase() === PUBLIC_LIBRARY_OWNER_EMAIL;
+  const recordAnalytics = (eventName, options = {}) => {
+    if (!isLibraryOwner) trackAnalytics(eventName, { ...options, userId: user?.id || null });
+  };
 
   const accountInitial =
     accountName.trim().charAt(0).toUpperCase() || "M";
@@ -1762,6 +1777,9 @@ export default function App() {
   const accountTriggerCharacters = Math.max(6, headerAccountName.length);
   const otherSavedAccounts = savedAccounts.filter((account) => account.id !== user?.id);
   const unreadFeedbackCount = feedbackMessages.filter((message) => !message.is_read).length;
+  const sectionFeedbackMessages = feedbackMessages.filter((message) =>
+    feedbackInboxSection === "sketches" ? message.kind === "Эскиз в общую библиотеку" : message.kind !== "Эскиз в общую библиотеку"
+  );
   const feedbackFilters = [
     ["all", "Все"],
     ["new", "Не обработано"],
@@ -1770,11 +1788,11 @@ export default function App() {
   ].map(([key, title]) => ({
     key,
     title,
-    count: key === "all" ? feedbackMessages.length : feedbackMessages.filter((message) => (message.work_status || "new") === key).length,
+    count: key === "all" ? sectionFeedbackMessages.length : sectionFeedbackMessages.filter((message) => (message.work_status || "new") === key).length,
   }));
   const visibleFeedbackMessages = feedbackInboxFilter === "all"
-    ? feedbackMessages
-    : feedbackMessages.filter((message) => (message.work_status || "new") === feedbackInboxFilter);
+    ? sectionFeedbackMessages
+    : sectionFeedbackMessages.filter((message) => (message.work_status || "new") === feedbackInboxFilter);
 
   const accountMapStats = maps.map((map) => {
     const statsSource = map.id === activeMapId
@@ -2004,6 +2022,8 @@ export default function App() {
     const next = [...maps, map];
     setMaps(next);
     saveMapsLocally(next);
+    recordAnalytics("map_created", { metadata: { source: "library" } });
+    recordAnalytics("cells_created", { value: Number(map.totalCells) || 0, metadata: { source: "library" } });
     setActiveMapId(map.id);
     openMap(map);
     setScreen("editor");
@@ -2066,7 +2086,7 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = (event) => {
-      const availableScreens = ["home", "maps", "editor", "account", "library", "feedback-inbox", "auth"];
+      const availableScreens = ["home", "maps", "editor", "account", "library", "feedback-inbox", "analytics", "auth"];
       const previousScreen = event.state?.mapMethod && availableScreens.includes(event.state.screen)
         ? event.state.screen
         : "home";
@@ -2925,6 +2945,42 @@ export default function App() {
     };
   }, [user?.id, isLibraryOwner]);
 
+  useEffect(() => {
+    if (authLoading || isLibraryOwner) return;
+    if (!analyticsSessionTrackedRef.current) {
+      analyticsSessionTrackedRef.current = true;
+      trackAnalytics("session_start", { userId: user?.id });
+    }
+    trackAnalytics("page_view", { userId: user?.id, metadata: { screen } });
+  }, [screen, authLoading, isLibraryOwner, user?.id]);
+
+  useEffect(() => {
+    if (authLoading || isLibraryOwner) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") trackAnalytics("active_seconds", { value: 60, userId: user?.id });
+    }, 60000);
+    const flushOnHide = () => { if (document.visibilityState === "hidden") void flushAnalytics(); };
+    document.addEventListener("visibilitychange", flushOnHide);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", flushOnHide);
+    };
+  }, [authLoading, isLibraryOwner, user?.id]);
+
+  useEffect(() => {
+    if (!isLibraryOwner || screen !== "analytics") return;
+    let cancelled = false;
+    setAnalyticsLoading(true);
+    setAnalyticsError("");
+    supabase.rpc("analytics_dashboard", { period_days: analyticsPeriod }).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) setAnalyticsError("Не удалось загрузить статистику.");
+      else setAnalyticsData(data);
+      setAnalyticsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [screen, isLibraryOwner, analyticsPeriod]);
+
   async function handleSignOut() {
     setIsAccountOpen(false);
 
@@ -3606,6 +3662,13 @@ export default function App() {
   function finishStroke() {
     if (!isDrawingRef.current)
       return;
+
+    if (strokeCountRef.current > 0) {
+      recordAnalytics(drawModeRef.current === "draw" ? "cells_painted" : "cells_erased", {
+        value: strokeCountRef.current,
+        metadata: { mode: isGameMode ? "game" : "drawing" },
+      });
+    }
 
     isDrawingRef.current = false;
     setStrokeCounter(null);
@@ -4913,6 +4976,9 @@ export default function App() {
       use,
     ]);
 
+    recordAnalytics("map_created");
+    recordAnalytics("cells_created", { value: Number(use.totalCells) || newMapCount });
+
     setActiveMapId(use.id);
 
     openMap(use);
@@ -5155,6 +5221,7 @@ export default function App() {
       remoteSaveQueueRef.current = request.catch(() => null);
       await Promise.all([animation, request]);
       setMaps((current) => current.filter((map) => map.id !== id));
+      recordAnalytics("map_deleted");
     } catch (error) {
       await animation;
       console.error("Не удалось удалить карту:", error);
@@ -5465,6 +5532,7 @@ export default function App() {
         attachments,
       });
       if (inboxError) throw inboxError;
+      recordAnalytics("feedback_sent");
       await fetch("https://formsubmit.co/ajax/majurx64@yandex.ru", {
         method: "POST",
         headers: { Accept: "application/json" },
@@ -5487,6 +5555,80 @@ export default function App() {
       console.error("Не удалось отправить обращение:", error);
       setFeedbackStatus("error");
     }
+  }
+
+  async function submitLibrarySketch(event) {
+    event.preventDefault();
+    const source = maps.find((map) => map.id === sketchSubmissionMapId);
+    if (!source || !user) return;
+    setSketchSubmissionStatus("sending");
+    const dimensions = getGridDimensions(source.totalCells, source.imageRatio, source.gridMode, source.manualRows, source.manualCols);
+    const submission = normalizeMap({
+      ...source,
+      id: createMapId(),
+      mapType: "free",
+      image: null,
+      showImage: false,
+      completed: source.mapType === "image" ? Array.from({ length: dimensions.actualTotal }, (_, index) => index) : source.completed,
+      progressCompleted: [],
+      progressExtra: 0,
+      activityLog: [],
+      modeDrafts: {},
+    });
+    const { error } = await supabase.from(FEEDBACK_TABLE).insert({
+      sender_id: user.id,
+      sender_email: user.email || "",
+      reply_email: user.email || null,
+      kind: "Эскиз в общую библиотеку",
+      message: sketchSubmissionNote.trim() || `Предлагаю добавить эскиз «${source.name}» в общую библиотеку.`,
+      attachments: [],
+      submission_data: submission,
+    });
+    if (error) {
+      setSketchSubmissionStatus("error");
+      return;
+    }
+    recordAnalytics("library_submission");
+    setSketchSubmissionStatus("sent");
+    window.setTimeout(() => {
+      setIsSketchSubmissionOpen(false);
+      setSketchSubmissionStatus("");
+      setSketchSubmissionNote("");
+      setShowFeedbackThanks(true);
+      feedbackThanksAutoTimerRef.current = window.setTimeout(closeFeedbackThanks, 2200);
+    }, 500);
+  }
+
+  async function approveLibrarySubmission(message) {
+    if (!user || !isLibraryOwner || !message.submission_data || message.submission_data.approved_library_id) return;
+    setFeedbackAdminState((state) => ({ ...state, [message.id]: "saving" }));
+    const item = normalizeMap({
+      ...message.submission_data,
+      id: `public-${createMapId()}`,
+      progressCompleted: [],
+      progressExtra: 0,
+      activityLog: [],
+      modeDrafts: {},
+    });
+    const { error: libraryError } = await supabase.from(PUBLIC_LIBRARY_TABLE).insert({
+      id: item.id,
+      owner_id: user.id,
+      name: item.name,
+      data: item,
+    });
+    if (libraryError) {
+      setFeedbackAdminState((state) => ({ ...state, [message.id]: "error" }));
+      return;
+    }
+    const submissionData = { ...message.submission_data, approved_library_id: item.id };
+    const { error } = await supabase.from(FEEDBACK_TABLE).update({ submission_data: submissionData, work_status: "done" }).eq("id", message.id);
+    if (error) {
+      setFeedbackAdminState((state) => ({ ...state, [message.id]: "error" }));
+      return;
+    }
+    setPublicLibrary((current) => [...current, { ...item, publicLibraryOwnerId: user.id }]);
+    setFeedbackMessages((current) => current.map((entry) => entry.id === message.id ? { ...entry, submission_data: submissionData, work_status: "done" } : entry));
+    setFeedbackAdminState((state) => ({ ...state, [message.id]: "saved" }));
   }
 
   function dismissVictory() {
@@ -5577,6 +5719,8 @@ export default function App() {
               ? "MM / Библиотека"
               : screen === "feedback-inbox"
               ? "MM / Обращения"
+              : screen === "analytics"
+              ? "MM / Аналитика"
               : screen ===
                 "account"
               ? `MM / ${t(
@@ -5935,10 +6079,15 @@ export default function App() {
                   )}
 
                   {isLibraryOwner && (
-                    <button type="button" className="account-popover-action inbox-menu-action" onClick={openFeedbackInbox}>
-                      ✉ Обращения
-                      {unreadFeedbackCount > 0 && <span>{unreadFeedbackCount > 99 ? "99+" : unreadFeedbackCount}</span>}
-                    </button>
+                    <>
+                      <button type="button" className="account-popover-action inbox-menu-action" onClick={openFeedbackInbox}>
+                        ✉ Обращения
+                        {unreadFeedbackCount > 0 && <span>{unreadFeedbackCount > 99 ? "99+" : unreadFeedbackCount}</span>}
+                      </button>
+                      <button type="button" className="account-popover-action" onClick={() => { setIsAccountOpen(false); setScreen("analytics"); }}>
+                        ◫ Аналитика сайта
+                      </button>
+                    </>
                   )}
 
                   <button
@@ -6620,6 +6769,52 @@ export default function App() {
         </section>
       )}
 
+      {screen === "analytics" && isLibraryOwner && (
+        <section className="analytics-page">
+          <div className="analytics-heading">
+            <div><span className="account-eyebrow">ТОЛЬКО ДЛЯ РАЗРАБОТЧИКА</span><h1>Аналитика сайта</h1><p>Посещения, активность пользователей и использование карт без тяжёлых сторонних счётчиков.</p></div>
+            <div className="analytics-periods">
+              {[[7, "7 дней"], [30, "30 дней"], [90, "90 дней"], [365, "Год"]].map(([days, label]) => (
+                <button type="button" className={analyticsPeriod === days ? "active" : ""} key={days} onClick={() => setAnalyticsPeriod(days)}>{label}</button>
+              ))}
+            </div>
+          </div>
+          {analyticsLoading ? <p className="analytics-empty">Собираем статистику…</p> : analyticsError ? <p className="analytics-empty error">{analyticsError}</p> : analyticsData ? (() => {
+            const summary = analyticsData.summary || {};
+            const daily = analyticsData.daily || [];
+            const maxViews = Math.max(1, ...daily.map((day) => Number(day.views) || 0));
+            const duration = Number(summary.active_seconds) || 0;
+            const durationText = duration >= 3600 ? `${Math.floor(duration / 3600)} ч ${Math.floor(duration % 3600 / 60)} мин` : `${Math.floor(duration / 60)} мин`;
+            const countryNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames(["ru"], { type: "region" }) : null;
+            const screenNames = { home: "Главная", maps: "Мои карты", editor: "Редактор", account: "Личный кабинет", library: "Библиотека", auth: "Вход" };
+            const cards = [
+              ["Уникальные посетители", summary.unique_visitors || 0, "Разные браузеры за период"],
+              ["Сеансы", summary.sessions || 0, "Отдельные посещения сайта"],
+              ["Просмотры страниц", summary.page_views || 0, "Переходы между разделами"],
+              ["Активное время", durationText, "Время с открытой активной вкладкой"],
+              ["Авторизованные", summary.authenticated_users || 0, "Пользователи, вошедшие в аккаунт"],
+              ["Создано карт", summary.maps_created || 0, `Удалено: ${summary.maps_deleted || 0}`],
+              ["Создано клеток", summary.cells_created || 0, "Объём новых карт"],
+              ["Закрашено клеток", summary.cells_painted || 0, "Все завершённые штрихи"],
+              ["Стёрто клеток", summary.cells_erased || 0, "Исправления пользователей"],
+              ["Обращения", summary.feedback_sent || 0, "Отправлено через обратную связь"],
+              ["Предложено эскизов", summary.library_submissions || 0, "Заявки в общую библиотеку"],
+            ];
+            return <>
+              <div className="analytics-summary">{cards.map(([label, value, hint]) => <article key={label}><span>{label}</span><strong>{typeof value === "number" ? value.toLocaleString("ru-RU") : value}</strong><small>{hint}</small></article>)}</div>
+              <section className="analytics-panel"><div className="analytics-panel-heading"><div><span className="account-eyebrow">ДИНАМИКА</span><h2>Посещения по дням</h2></div></div>
+                {daily.length ? <div className="analytics-chart">{daily.map((day) => <div className="analytics-day" key={day.day}><i style={{ height: `${Math.max(4, (Number(day.views) || 0) / maxViews * 100)}%` }} title={`${day.views} просмотров`} /><strong>{day.visitors}</strong><span>{new Date(`${day.day}T00:00:00`).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}</span></div>)}</div> : <p className="analytics-empty">Данные начнут появляться после новых посещений.</p>}
+              </section>
+              <div className="analytics-columns">
+                <section className="analytics-panel"><div className="analytics-panel-heading"><div><span className="account-eyebrow">ГЕОГРАФИЯ</span><h2>Страны</h2></div></div><div className="analytics-table">{(analyticsData.countries || []).map((row) => <div key={row.country}><strong>{row.country === "XX" ? "Не определена" : countryNames?.of(row.country) || row.country}</strong><span>{row.visitors} посетителей · {row.views} просмотров</span></div>)}</div></section>
+                <section className="analytics-panel"><div className="analytics-panel-heading"><div><span className="account-eyebrow">ИНТЕРЕС</span><h2>Разделы сайта</h2></div></div><div className="analytics-table">{(analyticsData.screens || []).map((row) => <div key={row.screen}><strong>{screenNames[row.screen] || row.screen}</strong><span>{row.views} просмотров</span></div>)}</div></section>
+              </div>
+              <p className="analytics-note">Статистика начала собираться после установки этого раздела. Ваши действия в аккаунте разработчика не учитываются.</p>
+            </>;
+          })() : <p className="analytics-empty">Статистика пока пуста.</p>}
+        </section>
+      )}
+
       {screen === "feedback-inbox" && isLibraryOwner && (
         <section className="feedback-inbox-page">
           <div className="feedback-inbox-heading">
@@ -6629,6 +6824,14 @@ export default function App() {
               <p>Отзывы, вопросы и сообщения об ошибках из формы обратной связи.</p>
             </div>
             <span>{feedbackMessages.length}</span>
+          </div>
+          <div className="feedback-inbox-sections" role="tablist" aria-label="Тип входящих сообщений">
+            <button type="button" className={feedbackInboxSection === "messages" ? "active" : ""} onClick={() => { setFeedbackInboxSection("messages"); setFeedbackInboxFilter("all"); }}>
+              Обращения <span>{feedbackMessages.filter((message) => message.kind !== "Эскиз в общую библиотеку").length}</span>
+            </button>
+            <button type="button" className={feedbackInboxSection === "sketches" ? "active" : ""} onClick={() => { setFeedbackInboxSection("sketches"); setFeedbackInboxFilter("all"); }}>
+              Эскизы в библиотеку <span>{feedbackMessages.filter((message) => message.kind === "Эскиз в общую библиотеку").length}</span>
+            </button>
           </div>
           <div className="feedback-inbox-filters" role="tablist" aria-label="Фильтр обращений">
             {feedbackFilters.map((filter) => (
@@ -6646,7 +6849,7 @@ export default function App() {
           </div>
           {feedbackInboxLoading ? (
             <p className="feedback-inbox-empty">Загружаем сообщения…</p>
-          ) : feedbackMessages.length ? (
+          ) : sectionFeedbackMessages.length ? (
             visibleFeedbackMessages.length ? (
               <div className="feedback-inbox-list" key={feedbackInboxFilter}>
               {visibleFeedbackMessages.map((message) => {
@@ -6659,6 +6862,19 @@ export default function App() {
                     <time>{new Date(message.created_at).toLocaleString("ru-RU")}</time>
                   </div>
                   <p>{message.message}</p>
+                  {message.submission_data && (() => {
+                    const submittedMap = normalizeMap(message.submission_data);
+                    const submittedDimensions = getGridDimensions(submittedMap.totalCells, submittedMap.imageRatio, submittedMap.gridMode, submittedMap.manualRows, submittedMap.manualCols);
+                    return (
+                      <div className="submission-preview-card">
+                        <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing /></div>
+                        <div><strong>{submittedMap.name}</strong><span>{submittedMap.completed.length} клеток</span></div>
+                        <button type="button" disabled={Boolean(message.submission_data.approved_library_id)} onClick={() => approveLibrarySubmission(message)}>
+                          {message.submission_data.approved_library_id ? "Уже добавлен" : "Добавить в общую библиотеку"}
+                        </button>
+                      </div>
+                    );
+                  })()}
                   <div className="feedback-inbox-contact">
                     <span>Отправитель: {message.sender_email || "не указан"}</span>
                     <span>
@@ -6732,8 +6948,13 @@ export default function App() {
           <section className="library-section">
             <div className="account-section-title">
               <div><span className="account-eyebrow">ДЛЯ ВСЕХ</span><h2>Публичная коллекция</h2></div>
-              <span>Предложить свой эскиз для общей коллекции можно через раздел «Обратная связь».</span>
+              <span>Пользователи могут отправить готовый эскиз на рассмотрение.</span>
             </div>
+            {!isLibraryOwner && !!maps.length && (
+              <button type="button" className="library-submit-sketch" onClick={() => { setSketchSubmissionMapId(maps[0]?.id || ""); setSketchSubmissionStatus(""); setIsSketchSubmissionOpen(true); }}>
+                Предложить свой эскиз
+              </button>
+            )}
             {isLibraryOwner && !!maps.length && (
               <div className="library-save-list library-public-save-list">
                 {maps.map((map) => <button type="button" key={map.id} onClick={() => saveMapToPublicLibrary(map)}>+ Добавить «{map.name}» для всех</button>)}
@@ -8251,6 +8472,24 @@ export default function App() {
               )}
             </button>
           </div>
+        </div>
+      )}
+
+      {isSketchSubmissionOpen && (
+        <div className="modal-overlay" onMouseDown={() => setIsSketchSubmissionOpen(false)}>
+          <form className="create-modal sketch-submission-modal" onSubmit={submitLibrarySketch} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><h2>Предложить эскиз</h2><p>Выберите свою карту. Рисунок и цвета попадут в заявку разработчику.</p></div><button type="button" className="modal-close" onClick={() => setIsSketchSubmissionOpen(false)}>×</button></div>
+            <div className="modal-field"><label>Карта</label><AnimatedSelect ariaLabel="Эскиз для общей библиотеки" value={sketchSubmissionMapId} onChange={setSketchSubmissionMapId} options={maps.map((map) => ({ value: map.id, label: map.name }))} /></div>
+            {(() => {
+              const selected = maps.find((map) => map.id === sketchSubmissionMapId);
+              if (!selected) return null;
+              const dimensions = getGridDimensions(selected.totalCells, selected.imageRatio, selected.gridMode, selected.manualRows, selected.manualCols);
+              return <div className="sketch-submission-preview"><div className="library-preview"><MapCardGrid map={{ ...selected, progressCompleted: selected.completed }} dimensions={dimensions} cropToDrawing /></div><div><strong>{selected.name}</strong><span>{selected.completed.length} клеток в рисунке</span></div></div>;
+            })()}
+            <div className="modal-field"><label>Комментарий <span className="optional-label">необязательно</span></label><textarea rows="4" value={sketchSubmissionNote} placeholder="Например: рисунок для категории «Спорт»" onChange={(event) => setSketchSubmissionNote(event.target.value)} /></div>
+            {sketchSubmissionStatus === "error" && <p className="feedback-result error">Не удалось отправить заявку. Попробуйте ещё раз.</p>}
+            <button className="modal-create-btn" type="submit" disabled={!sketchSubmissionMapId || sketchSubmissionStatus === "sending"}>{sketchSubmissionStatus === "sending" ? "Отправляем…" : sketchSubmissionStatus === "sent" ? "Заявка отправлена" : "Отправить на рассмотрение"}</button>
+          </form>
         </div>
       )}
 
