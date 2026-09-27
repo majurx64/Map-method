@@ -1105,10 +1105,12 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   const previewWidth = previewBounds?.width || 330;
   const previewHeight = previewBounds?.height || 204;
   const previewCellSize = cropToDrawing
-    ? Math.max(previewBounds ? 1 : 3, Math.min(16, Math.floor(Math.min(
-        (previewWidth - Math.max(0, visibleCols - 1)) / visibleCols,
-        (previewHeight - Math.max(0, visibleRows - 1)) / visibleRows
-      ))))
+    ? previewBounds
+      ? Math.max(0.35, Math.min(16, previewWidth / visibleCols, previewHeight / visibleRows))
+      : Math.max(3, Math.min(16, Math.floor(Math.min(
+          (previewWidth - Math.max(0, visibleCols - 1)) / visibleCols,
+          (previewHeight - Math.max(0, visibleRows - 1)) / visibleRows
+        ))))
     : null;
   const visibleIndices = Array.from({ length: visibleRows * visibleCols }, (_, index) => (
     (startRow + Math.floor(index / visibleCols)) * dimensions.cols + startCol + (index % visibleCols)
@@ -1116,7 +1118,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
 
   return (
     <div
-      className={`map-card-grid${densePreview ? " is-dense" : ""}`}
+      className={`map-card-grid${densePreview ? " is-dense" : ""}${previewBounds ? " is-bounded-preview" : ""}`}
       style={{
         gridTemplateColumns: cropToDrawing
           ? `repeat(${visibleCols},${previewCellSize}px)`
@@ -1611,7 +1613,7 @@ export default function App() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
   const [isSketchSubmissionOpen, setIsSketchSubmissionOpen] = useState(false);
-  const [sketchSubmissionMapId, setSketchSubmissionMapId] = useState("");
+  const [sketchSubmissionMapIds, setSketchSubmissionMapIds] = useState([]);
   const [sketchSubmissionNote, setSketchSubmissionNote] = useState("");
   const [sketchSubmissionStatus, setSketchSubmissionStatus] = useState("");
   const [isAccountSwitcherOpen, setIsAccountSwitcherOpen] = useState(false);
@@ -4787,8 +4789,16 @@ export default function App() {
   }
 
   function updateManualTotalCells(next) {
-    const nextRows = Math.max(1, Math.floor(Math.sqrt(Number(next) || 1)));
-    resizeGrid(next, "manual", nextRows, Math.ceil(Number(next) / nextRows), { rows: rowAddSide, cols: colAddSide });
+    const count = Math.max(1, Number(next) || 1);
+    const currentRatio = Math.max(
+      1 / MAX_CELLS,
+      mapType === "image" && image && !imageOffset.cellsEdited
+        ? imageRatio
+        : cols / Math.max(1, rows)
+    );
+    const nextCols = Math.max(1, Math.round(Math.sqrt(count * currentRatio)));
+    const nextRows = Math.max(1, Math.ceil(count / nextCols));
+    resizeGrid(count, "manual", nextRows, nextCols, { rows: rowAddSide, cols: colAddSide });
   }
 
   function handleManualTotalCellsChange(e) {
@@ -4995,13 +5005,13 @@ export default function App() {
 
     openMap(use);
 
-    setIsCreateOpen(false);
-    setScreen("editor");
-
-    localStorage.setItem(
-      ACTIVE_MAP_KEY,
-      use.id
-    );
+    setClosingModal("create");
+    window.setTimeout(() => {
+      setIsCreateOpen(false);
+      setClosingModal("");
+      setScreen("editor");
+      localStorage.setItem(ACTIVE_MAP_KEY, use.id);
+    }, 260);
   }
 
   function openMap(map) {
@@ -5571,41 +5581,45 @@ export default function App() {
 
   async function submitLibrarySketch(event) {
     event.preventDefault();
-    const source = maps.find((map) => map.id === sketchSubmissionMapId);
-    if (!source || !user) return;
+    const sources = maps.filter((map) => sketchSubmissionMapIds.includes(map.id));
+    if (!sources.length || !user) return;
     setSketchSubmissionStatus("sending");
-    const dimensions = getGridDimensions(source.totalCells, source.imageRatio, source.gridMode, source.manualRows, source.manualCols);
-    const submission = normalizeMap({
-      ...source,
-      id: createMapId(),
-      mapType: "free",
-      image: null,
-      showImage: false,
-      completed: source.mapType === "image" ? Array.from({ length: dimensions.actualTotal }, (_, index) => index) : source.completed,
-      progressCompleted: [],
-      progressExtra: 0,
-      activityLog: [],
-      modeDrafts: {},
+    const submissions = sources.map((source) => {
+      const dimensions = getGridDimensions(source.totalCells, source.imageRatio, source.gridMode, source.manualRows, source.manualCols);
+      const submission = normalizeMap({
+        ...source,
+        id: createMapId(),
+        mapType: "free",
+        image: null,
+        showImage: false,
+        completed: source.mapType === "image" ? Array.from({ length: dimensions.actualTotal }, (_, index) => index) : source.completed,
+        progressCompleted: [],
+        progressExtra: 0,
+        activityLog: [],
+        modeDrafts: {},
+      });
+      return {
+        sender_id: user.id,
+        sender_email: user.email || "",
+        reply_email: user.email || null,
+        kind: "Эскиз в общую библиотеку",
+        message: sketchSubmissionNote.trim() || `Предлагаю добавить эскиз «${source.name}» в общую библиотеку.`,
+        attachments: [],
+        submission_data: submission,
+      };
     });
-    const { error } = await supabase.from(FEEDBACK_TABLE).insert({
-      sender_id: user.id,
-      sender_email: user.email || "",
-      reply_email: user.email || null,
-      kind: "Эскиз в общую библиотеку",
-      message: sketchSubmissionNote.trim() || `Предлагаю добавить эскиз «${source.name}» в общую библиотеку.`,
-      attachments: [],
-      submission_data: submission,
-    });
+    const { error } = await supabase.from(FEEDBACK_TABLE).insert(submissions);
     if (error) {
       setSketchSubmissionStatus("error");
       return;
     }
-    recordAnalytics("library_submission");
+    recordAnalytics("library_submission", { value: sources.length });
     setSketchSubmissionStatus("sent");
     window.setTimeout(() => {
       setIsSketchSubmissionOpen(false);
       setSketchSubmissionStatus("");
       setSketchSubmissionNote("");
+      setSketchSubmissionMapIds([]);
       setShowFeedbackThanks(true);
       feedbackThanksAutoTimerRef.current = window.setTimeout(closeFeedbackThanks, 2200);
     }, 500);
@@ -6879,7 +6893,7 @@ export default function App() {
                     const submittedDimensions = getGridDimensions(submittedMap.totalCells, submittedMap.imageRatio, submittedMap.gridMode, submittedMap.manualRows, submittedMap.manualCols);
                     return (
                       <div className="submission-preview-card">
-                        <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing previewBounds={{ width: 108, height: 108 }} /></div>
+                        <div className="library-preview"><MapCardGrid map={submittedMap} dimensions={submittedDimensions} cropToDrawing previewBounds={{ width: 178, height: 158 }} /></div>
                         <div><strong>{submittedMap.name}</strong><span>{submittedMap.completed.length} клеток</span></div>
                         <button type="button" disabled={Boolean(message.submission_data.approved_library_id)} onClick={() => approveLibrarySubmission(message)}>
                           {message.submission_data.approved_library_id ? "Уже добавлен" : "Добавить в общую библиотеку"}
@@ -6963,7 +6977,7 @@ export default function App() {
               <span>Пользователи могут отправить готовый эскиз на рассмотрение.</span>
             </div>
             {!isLibraryOwner && !!maps.length && (
-              <button type="button" className="library-submit-sketch" onClick={() => { setSketchSubmissionMapId(maps[0]?.id || ""); setSketchSubmissionStatus(""); setIsSketchSubmissionOpen(true); }}>
+              <button type="button" className="library-submit-sketch" onClick={() => { setSketchSubmissionMapIds(maps[0]?.id ? [maps[0].id] : []); setSketchSubmissionStatus(""); setIsSketchSubmissionOpen(true); }}>
                 Предложить свой эскиз
               </button>
             )}
@@ -8509,17 +8523,31 @@ export default function App() {
       {isSketchSubmissionOpen && (
         <div className="modal-overlay" onMouseDown={() => setIsSketchSubmissionOpen(false)}>
           <form className="create-modal sketch-submission-modal" onSubmit={submitLibrarySketch} onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><h2>Предложить эскиз</h2><p>Выберите свою карту. Рисунок и цвета попадут в заявку разработчику.</p></div><button type="button" className="modal-close" onClick={() => setIsSketchSubmissionOpen(false)}>×</button></div>
-            <div className="modal-field"><label>Карта</label><AnimatedSelect ariaLabel="Эскиз для общей библиотеки" value={sketchSubmissionMapId} onChange={setSketchSubmissionMapId} options={maps.map((map) => ({ value: map.id, label: map.name }))} /></div>
-            {(() => {
-              const selected = maps.find((map) => map.id === sketchSubmissionMapId);
-              if (!selected) return null;
-              const dimensions = getGridDimensions(selected.totalCells, selected.imageRatio, selected.gridMode, selected.manualRows, selected.manualCols);
-              return <div className="sketch-submission-preview"><div className="library-preview"><MapCardGrid map={{ ...selected, progressCompleted: selected.completed }} dimensions={dimensions} cropToDrawing /></div><div><strong>{selected.name}</strong><span>{selected.completed.length} клеток в рисунке</span></div></div>;
-            })()}
+            <div className="modal-header"><div><h2>Предложить эскизы</h2><p>Выберите одну или несколько карт. Рисунки и цвета попадут в заявку разработчику.</p></div><button type="button" className="modal-close" onClick={() => setIsSketchSubmissionOpen(false)}>×</button></div>
+            <div className="modal-field">
+              <label>Карты</label>
+              <div className="sketch-map-options">
+                {maps.map((map) => (
+                  <label key={map.id} className={sketchSubmissionMapIds.includes(map.id) ? "selected" : ""}>
+                    <input
+                      type="checkbox"
+                      checked={sketchSubmissionMapIds.includes(map.id)}
+                      onChange={() => setSketchSubmissionMapIds((current) => current.includes(map.id) ? current.filter((id) => id !== map.id) : [...current, map.id])}
+                    />
+                    <span>{map.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="sketch-submission-previews">
+              {maps.filter((map) => sketchSubmissionMapIds.includes(map.id)).map((selected) => {
+                const dimensions = getGridDimensions(selected.totalCells, selected.imageRatio, selected.gridMode, selected.manualRows, selected.manualCols);
+                return <div className="sketch-submission-preview" key={selected.id}><div className="library-preview"><MapCardGrid map={{ ...selected, progressCompleted: selected.completed }} dimensions={dimensions} cropToDrawing previewBounds={{ width: 168, height: 148 }} /></div><div><strong>{selected.name}</strong><span>{selected.completed.length} клеток в рисунке</span></div></div>;
+              })}
+            </div>
             <div className="modal-field"><label>Комментарий <span className="optional-label">необязательно</span></label><textarea rows="4" value={sketchSubmissionNote} placeholder="Например: рисунок для категории «Спорт»" onChange={(event) => setSketchSubmissionNote(event.target.value)} /></div>
             {sketchSubmissionStatus === "error" && <p className="feedback-result error">Не удалось отправить заявку. Попробуйте ещё раз.</p>}
-            <button className="modal-create-btn" type="submit" disabled={!sketchSubmissionMapId || sketchSubmissionStatus === "sending"}>{sketchSubmissionStatus === "sending" ? "Отправляем…" : sketchSubmissionStatus === "sent" ? "Заявка отправлена" : "Отправить на рассмотрение"}</button>
+            <button className="modal-create-btn" type="submit" disabled={!sketchSubmissionMapIds.length || sketchSubmissionStatus === "sending"}>{sketchSubmissionStatus === "sending" ? "Отправляем…" : sketchSubmissionStatus === "sent" ? "Заявка отправлена" : `Отправить на рассмотрение${sketchSubmissionMapIds.length > 1 ? ` (${sketchSubmissionMapIds.length})` : ""}`}</button>
           </form>
         </div>
       )}
