@@ -1131,6 +1131,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     <div
       className={`map-card-grid${densePreview ? " is-dense" : ""}${previewBounds ? " is-bounded-preview" : ""}`}
       style={{
+        "--preview-ratio": visibleCols / visibleRows,
         gridTemplateColumns: cropToDrawing
           ? `repeat(${visibleCols},${previewCellSize}px)`
           : `repeat(${visibleCols},minmax(0,1fr))`,
@@ -1596,10 +1597,7 @@ export default function App() {
   const [renameCategory, setRenameCategory] = useState("Личное");
   const [renameDeadline, setRenameDeadline] = useState("");
   const [mapCategoryFilter, setMapCategoryFilter] = useState("Все");
-  const [mapColumns, setMapColumns] = useState(() => {
-    const saved = Number(localStorage.getItem(MAPS_COLUMNS_KEY));
-    return [1, 2, 3, 4].includes(saved) ? saved : 2;
-  });
+  const [mapColumns, setMapColumns] = useState(2);
   const [celebratingAchievements, setCelebratingAchievements] = useState(() => {
     try {
       return new Set(JSON.parse(sessionStorage.getItem(ACHIEVEMENT_SESSION_KEY) || "[]"));
@@ -2218,6 +2216,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(LANGUAGE_KEY, language);
   }, [language]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setMapColumns(2);
+      return;
+    }
+    const saved = Number(localStorage.getItem(`${MAPS_COLUMNS_KEY}:${user.id}`));
+    setMapColumns([1, 2, 3, 4].includes(saved) ? saved : 2);
+  }, [user?.id]);
 
   useEffect(() => {
     let timer;
@@ -5480,7 +5487,7 @@ export default function App() {
     if (columns === mapColumns) return;
     prepareCardLayoutTransition("layout");
     setMapColumns(columns);
-    localStorage.setItem(MAPS_COLUMNS_KEY, String(columns));
+    if (user?.id) localStorage.setItem(`${MAPS_COLUMNS_KEY}:${user.id}`, String(columns));
   }
 
   async function confirmDeleteMap() {
@@ -7527,7 +7534,7 @@ export default function App() {
             <div className="maps-page-actions">
               {!!maps.length && (
                 <div className="maps-view-switch" role="group" aria-label="Количество карточек в ряду">
-                  <span>В ряд</span>
+                  <span>Карточек в строке</span>
                   {[1, 2, 3, 4].map((columns) => (
                     <button
                       type="button"
