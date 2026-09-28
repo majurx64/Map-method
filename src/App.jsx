@@ -1149,11 +1149,12 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    if (cropToDrawing || !canvas) return undefined;
+    const preview = canvas?.parentElement;
+    if (cropToDrawing || !canvas || !preview) return undefined;
     const progressCells = new Set(map.progressCompleted || []);
     const templateCells = new Set(map.completed || []);
     const draw = () => {
-      const bounds = canvas.getBoundingClientRect();
+      const bounds = preview.getBoundingClientRect();
       const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
       const width = Math.max(1, Math.round(bounds.width * pixelRatio));
       const height = Math.max(1, Math.round(bounds.height * pixelRatio));
@@ -1194,7 +1195,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     };
     draw();
     const observer = new ResizeObserver(draw);
-    observer.observe(canvas);
+    observer.observe(preview);
     return () => observer.disconnect();
   }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices]);
 

@@ -3498,7 +3498,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .maps-list-columns-3 .map-card-actions,.maps-list-columns-4 .map-card-actions { width:100%; max-width:none; }
 .maps-list-columns-4 .map-card-heading strong { font-size:18px; }
 .maps-list-columns-4 .map-card-heading { gap:10px; }
-.map-card-preview .map-card-grid.is-canvas-preview { display:block; width:100%; height:100%; max-width:100%; max-height:100%; margin:auto; image-rendering:pixelated; }
+.map-card-preview .map-card-grid.is-canvas-preview { position:absolute; inset:0; display:block; width:100%; height:100%; max-width:none; max-height:none; margin:0; image-rendering:pixelated; }
 .maps-list-columns-3 .map-card-preview,.maps-list-columns-4 .map-card-preview { border-bottom:0; }
 
 @media (hover:hover) {
@@ -3523,3 +3523,4 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   .maps-list-columns-3 .map-card-preview .map-card-grid,.maps-list-columns-4 .map-card-preview .map-card-grid { width:100%; height:auto; max-width:100%; max-height:none; }
   .maps-list-columns-3 .map-card-body,.maps-list-columns-4 .map-card-body { min-height:154px; }
 }
+.map-card-preview > canvas.map-card-grid.is-canvas-preview { position:absolute; inset:0; width:100%; height:100%; max-width:none; max-height:none; margin:0; }
