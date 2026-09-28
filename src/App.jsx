@@ -1153,21 +1153,26 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     if (cropToDrawing || !canvas || !preview) return undefined;
     const progressCells = new Set(map.progressCompleted || []);
     const templateCells = new Set(map.completed || []);
-    const draw = () => {
-      const bounds = preview.getBoundingClientRect();
-      const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
-      const width = Math.max(1, Math.round(bounds.width * pixelRatio));
-      const height = Math.max(1, Math.round(bounds.height * pixelRatio));
+    // Layout dimensions must never include the ancestor's temporary FLIP scale.
+    // Observe the canvas content box, not its transformed screen rectangle.
+    const draw = (entries) => {
+      const bounds = entries?.[0]?.contentRect;
+      const cssWidth = bounds?.width ?? canvas.clientWidth;
+      const cssHeight = bounds?.height ?? canvas.clientHeight;
+      if (cssWidth <= 0 || cssHeight <= 0) return;
+      const pixelRatio = window.devicePixelRatio || 1;
+      const width = Math.max(1, Math.round(cssWidth * pixelRatio));
+      const height = Math.max(1, Math.round(cssHeight * pixelRatio));
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
       const context = canvas.getContext("2d", { alpha: true });
       context.clearRect(0, 0, width, height);
-      const cellSize = Math.max(1, Math.floor(Math.min(width / visibleCols, height / visibleRows)));
+      const cellSize = Math.min(width / visibleCols, height / visibleRows);
       const gridWidth = cellSize * visibleCols;
       const gridHeight = cellSize * visibleRows;
-      const offsetX = Math.floor((width - gridWidth) / 2);
-      const offsetY = Math.floor((height - gridHeight) / 2);
-      const gap = cellSize >= 6 ? Math.max(1, Math.round(cellSize * (densePreview ? 0.025 : 0.07))) : 0;
+      const offsetX = Math.max(0, Math.round((width - gridWidth) / 2));
+      const offsetY = Math.max(0, Math.round((height - gridHeight) / 2));
+      const gap = !densePreview && cellSize >= 6 ? 1 : 0;
       visibleIndices.forEach((index) => {
         const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
         const filled = progressCells.has(index) && !utilityCell;
@@ -1184,26 +1189,32 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
             : densePreview ? 0.34 : 0.62;
         const row = Math.floor(index / dimensions.cols) - startRow;
         const column = index % dimensions.cols - startCol;
-        context.fillRect(
-          offsetX + column * cellSize + gap,
-          offsetY + row * cellSize + gap,
-          Math.max(1, cellSize - gap * 2),
-          Math.max(1, cellSize - gap * 2)
-        );
+        // Adjacent cells share the exact same rounded boundary: no seams,
+        // overlaps or cropping, including when a cell is smaller than a pixel.
+        const left = Math.round(offsetX + column * cellSize);
+        const top = Math.round(offsetY + row * cellSize);
+        const right = Math.round(offsetX + (column + 1) * cellSize);
+        const bottom = Math.round(offsetY + (row + 1) * cellSize);
+        context.fillRect(left, top, Math.max(0, right - left - gap), Math.max(0, bottom - top - gap));
       });
       context.globalAlpha = 1;
     };
     draw();
     const observer = new ResizeObserver(draw);
-    observer.observe(preview);
-    return () => observer.disconnect();
+    observer.observe(canvas);
+    const redraw = () => draw();
+    window.addEventListener("resize", redraw);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", redraw);
+    };
   }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices]);
 
   if (!cropToDrawing) {
     return (
       <canvas
         ref={canvasRef}
-        className={`map-card-grid is-canvas-preview${densePreview ? " is-dense" : ""}`}
+        className="map-preview-canvas"
         aria-hidden="true"
       />
     );
@@ -2371,11 +2382,9 @@ export default function App() {
       const deltaX = previous.left - destination.left;
       const deltaY = previous.top - destination.top;
       const resize = cardSettling.type === "layout";
-      const scaleX = resize ? previous.width / destination.width : 1;
-      const scaleY = resize ? previous.height / destination.height : 1;
-      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1 && Math.abs(scaleX - 1) < .01 && Math.abs(scaleY - 1) < .01) return [];
+      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return [];
       return [element.animate([
-        { transform: `translate3d(${deltaX}px, ${deltaY}px, 0) scale(${scaleX}, ${scaleY})`, transformOrigin: "top left" },
+        { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` },
         { transform: "translate3d(0, 0, 0)" },
       ], { duration: resize ? 520 : 420, easing: "cubic-bezier(.16,1,.3,1)" })];
     });
