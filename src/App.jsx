@@ -1127,6 +1127,56 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     (startRow + Math.floor(index / visibleCols)) * dimensions.cols + startCol + (index % visibleCols)
   )).filter((index) => index < dimensions.actualTotal);
 
+  const getCellAppearance = (index) => {
+    const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
+    const filled = completedCells.has(index) && !utilityCell;
+    const backgroundDrawingCell = !utilityCell && (map.mapType === "image" || drawingCells.has(index));
+    return {
+      filled,
+      color: filled
+        ? map.colors?.[index] || "#32624f"
+        : backgroundDrawingCell
+          ? map.colors?.[index] || "#aeb5ad"
+          : "#deded8",
+      opacity: filled
+        ? 1
+        : backgroundDrawingCell
+          ? densePreview ? 0.38 : 0.52
+          : densePreview ? 0.34 : 0.62,
+    };
+  };
+
+  if (!cropToDrawing) {
+    const inset = densePreview ? 0.015 : 0.045;
+    return (
+      <svg
+        className={`map-card-grid is-svg-preview${densePreview ? " is-dense" : ""}`}
+        viewBox={`0 0 ${visibleCols} ${visibleRows}`}
+        preserveAspectRatio="xMidYMid meet"
+        shapeRendering="crispEdges"
+        aria-hidden="true"
+      >
+        {visibleIndices.map((index) => {
+          const cell = getCellAppearance(index);
+          const row = Math.floor(index / dimensions.cols) - startRow;
+          const column = index % dimensions.cols - startCol;
+          return (
+            <rect
+              key={index}
+              className={`map-card-cell${cell.filled ? " filled" : ""}`}
+              x={column + inset}
+              y={row + inset}
+              width={1 - inset * 2}
+              height={1 - inset * 2}
+              fill={cell.color}
+              fillOpacity={cell.opacity}
+            />
+          );
+        })}
+      </svg>
+    );
+  }
+
   return (
     <div
       className={`map-card-grid${densePreview ? " is-dense" : ""}${previewBounds ? " is-bounded-preview" : ""}`}
@@ -1140,24 +1190,14 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       }}
     >
       {visibleIndices.map((index) => {
-        const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
-        const filled = completedCells.has(index) && !utilityCell;
-        const backgroundDrawingCell = !utilityCell && (map.mapType === "image" || drawingCells.has(index));
+        const cell = getCellAppearance(index);
         return (
           <span
             key={index}
-            className={`map-card-cell${filled ? " filled" : ""}`}
+            className={`map-card-cell${cell.filled ? " filled" : ""}`}
             style={{
-              backgroundColor: filled
-                ? map.colors?.[index] || "#32624f"
-                : backgroundDrawingCell
-                  ? map.colors?.[index] || "#aeb5ad"
-                  : "#deded8",
-              opacity: filled
-                ? 1
-                : backgroundDrawingCell
-                  ? densePreview ? 0.38 : 0.52
-                  : densePreview ? 0.34 : 0.62,
+              backgroundColor: cell.color,
+              opacity: cell.opacity,
             }}
           />
         );
