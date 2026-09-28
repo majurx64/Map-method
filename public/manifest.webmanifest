@@ -1,0 +1,14 @@
+{
+  "name": "Map Method",
+  "short_name": "Map Method",
+  "description": "Превращайте цели в наглядные карты прогресса.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f2eb",
+  "theme_color": "#32624f",
+  "icons": [
+    { "src": "/favicon.png", "sizes": "64x64", "type": "image/png", "purpose": "any" },
+    { "src": "/mm-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

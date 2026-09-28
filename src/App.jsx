@@ -4,7 +4,8 @@ import "./App.css";
 import { supabase } from "./lib/supabase";
 import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
-import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
+import { PLAN_MODES, adaptiveDailyTarget, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, restoreSnapshot } from "./lib/productFeatures";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -27,6 +28,10 @@ const PUBLIC_LIBRARY_TABLE = "library_items";
 const SAVED_ACCOUNTS_KEY = "mm-saved-accounts";
 const FEEDBACK_TABLE = "feedback_messages";
 const MAPS_COLUMNS_KEY = "mm-maps-columns";
+const LIBRARY_FAVORITES_KEY = "mm-library-favorites";
+const LIBRARY_USAGE_KEY = "mm-library-usage";
+const ONBOARDING_KEY = "mm-onboarding";
+const SHARED_MAPS_TABLE = "shared_maps";
 
 function getYandexReplyUrl(message) {
   const email = message.reply_email || "";
@@ -899,7 +904,7 @@ function dailyPlanCompleted(map, total, filled, today = new Date()) {
 }
 
 function getDailyPlanProgress(map, total, filled, today = new Date()) {
-  if (!map?.deadline || !total) return null;
+  if (!map?.deadline || !total || map.planMode === "paused" || (map.planPausedUntil && map.planPausedUntil >= getActivityDate(today))) return null;
   const [year, month, day] = map.deadline.split("-").map(Number);
   const end = Date.UTC(year, month - 1, day);
   const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
@@ -910,12 +915,13 @@ function getDailyPlanProgress(map, total, filled, today = new Date()) {
     .filter((entry) => entry.date === todayKey)
     .reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
   const filledBeforeToday = Math.max(0, filled - paintedToday);
-  const target = Math.ceil(Math.max(0, total - filledBeforeToday) / days);
+  const multiplier = PLAN_MODES[map.planMode]?.multiplier || 1;
+  const target = Math.max(1, Math.ceil(Math.max(0, total - filledBeforeToday) / days * multiplier));
   return target > 0 ? { target, paintedToday, days } : null;
 }
 
 function dailyQuotaMet(map, total, filled, today = new Date()) {
-  if (!map?.deadline || !total) return false;
+  if (!map?.deadline || !total || map.planMode === "paused" || (map.planPausedUntil && map.planPausedUntil >= getActivityDate(today))) return false;
   const [year, month, day] = map.deadline.split("-").map(Number);
   const end = Date.UTC(year, month - 1, day);
   const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
@@ -924,7 +930,8 @@ function dailyQuotaMet(map, total, filled, today = new Date()) {
   const todayKey = getActivityDate(today);
   const paintedToday = (map.activityLog || []).filter((entry) => entry.date === todayKey).reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
   const filledBeforeToday = Math.max(0, filled - paintedToday);
-  const target = Math.ceil(Math.max(0, total - filledBeforeToday) / days);
+  const multiplier = PLAN_MODES[map.planMode]?.multiplier || 1;
+  const target = Math.max(1, Math.ceil(Math.max(0, total - filledBeforeToday) / days * multiplier));
   return target > 0 && paintedToday >= target;
 }
 
@@ -1029,6 +1036,11 @@ function normalizeMap(map = {}) {
       : "",
     activityLog: normalizeActivityLog(map.activityLog),
     dailyPlanDoneOn: /^\d{4}-\d{2}-\d{2}$/.test(map.dailyPlanDoneOn || "") ? map.dailyPlanDoneOn : "",
+    createdAt: typeof map.createdAt === "string" && Number.isFinite(Date.parse(map.createdAt)) ? map.createdAt : new Date().toISOString(),
+    completedAt: typeof map.completedAt === "string" && Number.isFinite(Date.parse(map.completedAt)) ? map.completedAt : "",
+    planMode: PLAN_MODES[map.planMode] ? map.planMode : "balanced",
+    planPausedUntil: /^\d{4}-\d{2}-\d{2}$/.test(map.planPausedUntil || "") ? map.planPausedUntil : "",
+    versions: normalizeVersions(map.versions),
     privateLibraryItem: Boolean(map.privateLibraryItem),
     modeDrafts: {
       ...(freeDraft ? { free: freeDraft } : {}),
@@ -1447,6 +1459,7 @@ export default function App() {
       "library",
       "feedback-inbox",
       "analytics",
+      "shared",
       "auth",
     ].includes(saved)
       ? saved
@@ -1464,6 +1477,32 @@ export default function App() {
   });
   const [publicLibrary, setPublicLibrary] = useState(BUILTIN_PUBLIC_LIBRARY);
   const [libraryStatus, setLibraryStatus] = useState("");
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [librarySort, setLibrarySort] = useState("popular");
+  const [libraryCategory, setLibraryCategory] = useState("Все");
+  const [libraryFavorites, setLibraryFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LIBRARY_FAVORITES_KEY) || "[]"); } catch { return []; }
+  });
+  const [libraryUsage, setLibraryUsage] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LIBRARY_USAGE_KEY) || "{}"); } catch { return {}; }
+  });
+  const [historyMapId, setHistoryMapId] = useState(null);
+  const [historyPreviewIndex, setHistoryPreviewIndex] = useState(0);
+  const [historyPlaying, setHistoryPlaying] = useState(false);
+  const [shareMap, setShareMap] = useState(null);
+  const [shareProgressVisible, setShareProgressVisible] = useState(true);
+  const [shareActivityVisible, setShareActivityVisible] = useState(false);
+  const [shareStatus, setShareStatus] = useState("");
+  const [sharedView, setSharedView] = useState(null);
+  const [sharedViewStatus, setSharedViewStatus] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("shared") || params.get("snapshot") ? "loading" : "";
+  });
+  const [backupStatus, setBackupStatus] = useState("");
+  const backupInputRef = useRef(null);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
   const [isEditingAccountName, setIsEditingAccountName] = useState(false);
   const [isClosingAccountName, setIsClosingAccountName] = useState(false);
   const [accountNameDraft, setAccountNameDraft] = useState("");
@@ -1637,6 +1676,7 @@ export default function App() {
   const [newMapDescription, setNewMapDescription] = useState("");
   const [newMapCategory, setNewMapCategory] = useState("Личное");
   const [newMapDeadline, setNewMapDeadline] = useState("");
+  const [newMapPlanMode, setNewMapPlanMode] = useState("balanced");
   const [newCategoryDraft, setNewCategoryDraft] = useState("");
   const [customCategories, setCustomCategories] = useState(() => {
     try { return JSON.parse(localStorage.getItem(CUSTOM_CATEGORIES_KEY) || "[]").filter((item) => typeof item === "string"); }
@@ -1679,6 +1719,8 @@ export default function App() {
   const [renameDescription, setRenameDescription] = useState("");
   const [renameCategory, setRenameCategory] = useState("Личное");
   const [renameDeadline, setRenameDeadline] = useState("");
+  const [renamePlanMode, setRenamePlanMode] = useState("balanced");
+  const [renamePausedUntil, setRenamePausedUntil] = useState("");
   const [mapCategoryFilter, setMapCategoryFilter] = useState("Все");
   const [mapColumns, setMapColumns] = useState(2);
   const [celebratingAchievements, setCelebratingAchievements] = useState(() => {
@@ -1873,7 +1915,7 @@ export default function App() {
   const displayedCompleted = progressCompleted.filter((i) => i < actualTotal && (mapType === "image" || drawingSet.has(i)));
   const displayedTotal = currentStats.total;
   const displayedProgress = currentStats.percent;
-  const dailyPlan = dailyTarget(activeMap?.deadline, displayedTotal, currentStats.filled, todayDate);
+  const dailyPlan = activeMap ? adaptiveDailyTarget({ ...activeMap, totalCells, imageRatio, gridMode, manualRows, manualCols, completed, progressCompleted }, todayDate) : null;
   const newMapCount = newMapGridMode === "manual" ? Number(newMapRows) * Number(newMapCols) : Number(newMapCells);
   const newMapInvalid = !Number.isInteger(newMapCount) || newMapCount < 1 || newMapCount > MAX_CELLS
     || (newMapGridMode === "manual" && (!Number.isInteger(Number(newMapRows)) || !Number.isInteger(Number(newMapCols)) || Number(newMapRows) < 1 || Number(newMapCols) < 1));
@@ -2003,13 +2045,27 @@ export default function App() {
   ];
   const libraryUserKey = user?.id || "guest";
   const personalLibrary = Array.isArray(privateLibrary[libraryUserKey]) ? privateLibrary[libraryUserKey] : [];
+  const libraryCategories = ["Все", ...new Set(publicLibrary.map((item) => item.category || "Другое"))];
+  const visiblePublicLibrary = publicLibrary
+    .filter((item) => libraryCategory === "Все" || item.category === libraryCategory)
+    .filter((item) => !librarySearch.trim() || `${item.name} ${item.category || ""}`.toLowerCase().includes(librarySearch.trim().toLowerCase()))
+    .sort((a, b) => {
+      if (librarySort === "name") return a.name.localeCompare(b.name, "ru");
+      if (librarySort === "new") return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+      if (librarySort === "favorites") return Number(libraryFavorites.includes(b.id)) - Number(libraryFavorites.includes(a.id));
+      return Math.max(Number(b.useCount) || 0, Number(libraryUsage[b.id]) || 0) - Math.max(Number(a.useCount) || 0, Number(libraryUsage[a.id]) || 0);
+    });
+  const activityCalendar = buildActivityCalendar(maps, 365, todayDate);
+  const activityMax = Math.max(1, ...activityCalendar.map((day) => day.cells));
+  const streaks = calculateStreaks(maps, todayDate);
+  const historyMap = maps.find((map) => map.id === historyMapId) || null;
 
   useEffect(() => {
     let cancelled = false;
     const loadPublicLibrary = async () => {
       const { data, error } = await supabase
         .from(PUBLIC_LIBRARY_TABLE)
-        .select("id,owner_id,name,data")
+        .select("*")
         .order("created_at", { ascending: true });
       if (cancelled || error) return;
       const hiddenBuiltinIds = new Set((data || [])
@@ -2021,6 +2077,8 @@ export default function App() {
         ...normalizeMap({ ...row.data, id: row.id, name: row.name }),
         publicLibraryOwnerId: row.owner_id,
         replacesBuiltinId: row.data?.replacesBuiltinId || null,
+        useCount: Number(row.use_count) || 0,
+        createdAt: row.created_at || row.data?.createdAt,
       }));
       setPublicLibrary([
         ...BUILTIN_PUBLIC_LIBRARY.filter((item) => !hiddenBuiltinIds.has(item.id)),
@@ -2038,6 +2096,79 @@ export default function App() {
       console.warn("Не удалось сохранить личную библиотеку:", error);
     }
   }, [privateLibrary]);
+
+  useEffect(() => {
+    localStorage.setItem(LIBRARY_FAVORITES_KEY, JSON.stringify(libraryFavorites));
+  }, [libraryFavorites]);
+
+  useEffect(() => {
+    localStorage.setItem(LIBRARY_USAGE_KEY, JSON.stringify(libraryUsage));
+  }, [libraryUsage]);
+
+  useEffect(() => {
+    const handleInstall = (event) => {
+      event.preventDefault();
+      setInstallPrompt(event);
+    };
+    window.addEventListener("beforeinstallprompt", handleInstall);
+    return () => window.removeEventListener("beforeinstallprompt", handleInstall);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("shared");
+    const snapshot = params.get("snapshot");
+    if (!token && !snapshot) return;
+    let cancelled = false;
+    if (snapshot) {
+      decodeSharedSnapshot(snapshot).then((data) => {
+        if (cancelled) return;
+        setSharedView({ ...data, map: normalizeMap(data.map) });
+        setSharedViewStatus("ready");
+        setScreen("shared");
+      }).catch(() => {
+        if (!cancelled) { setSharedViewStatus("missing"); setScreen("shared"); }
+      });
+      return () => { cancelled = true; };
+    }
+    supabase.from(SHARED_MAPS_TABLE).select("id,map_data,settings,updated_at").eq("id", token).maybeSingle().then(({ data, error }) => {
+      if (cancelled) return;
+      if (error || !data) {
+        setSharedViewStatus("missing");
+        setScreen("shared");
+        return;
+      }
+      setSharedView({ ...data, map: normalizeMap(data.map_data) });
+      setSharedViewStatus("ready");
+      setScreen("shared");
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id || mapsLoading || !isMapInitialized || maps.length) return;
+    const key = `${ONBOARDING_KEY}:${user.id}`;
+    if (localStorage.getItem(key)) return;
+    const timer = window.setTimeout(() => {
+      setOnboardingStep(0);
+      setOnboardingOpen(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [user?.id, mapsLoading, isMapInitialized, maps.length]);
+
+  useEffect(() => {
+    if (!historyPlaying || !historyMap?.versions?.length) return undefined;
+    const timer = window.setInterval(() => {
+      setHistoryPreviewIndex((index) => {
+        if (index >= historyMap.versions.length - 1) {
+          setHistoryPlaying(false);
+          return index;
+        }
+        return index + 1;
+      });
+    }, 850);
+    return () => window.clearInterval(timer);
+  }, [historyPlaying, historyMapId, historyMap?.versions?.length]);
 
   async function saveMapToLibrary(map) {
     const dimensions = getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols);
@@ -2200,6 +2331,8 @@ export default function App() {
     saveMapsLocally(next);
     recordAnalytics("map_created", { metadata: { source: "library" } });
     recordAnalytics("cells_created", { value: Number(map.totalCells) || 0, metadata: { source: "library" } });
+    setLibraryUsage((current) => ({ ...current, [item.id]: (Number(current[item.id]) || 0) + 1 }));
+    if (item.publicLibraryOwnerId) void supabase.rpc("increment_library_item_use", { item_id: item.id });
     setActiveMapId(map.id);
     openMap(map);
     setScreen("editor");
@@ -2341,7 +2474,7 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = (event) => {
-      const availableScreens = ["home", "maps", "editor", "account", "library", "feedback-inbox", "analytics", "auth"];
+      const availableScreens = ["home", "maps", "editor", "account", "library", "feedback-inbox", "analytics", "shared", "auth"];
       const previousScreen = event.state?.mapMethod && availableScreens.includes(event.state.screen)
         ? event.state.screen
         : "home";
@@ -2617,10 +2750,14 @@ export default function App() {
     if (complete && !wasGameCompleteRef.current) {
       setVictoryDismissing(false);
       setShowVictory(true);
-      window.setTimeout(() => setShowVictory(false), 3200);
+      if (activeMap && !activeMap.completedAt) {
+        const finished = normalizeMap({ ...activeMap, completedAt: new Date().toISOString() });
+        setMaps((current) => current.map((map) => map.id === finished.id ? finished : map));
+        if (user) void supabase.from("maps").upsert(mapToSupabaseRow(finished, user.id), { onConflict: "id" });
+      }
     }
     wasGameCompleteRef.current = complete;
-  }, [isGameMode, mapType, actualTotal, completed, progressCompleted, activeMapId, isMapInitialized, mapsLoading]);
+  }, [isGameMode, mapType, actualTotal, completed, progressCompleted, activeMapId, isMapInitialized, mapsLoading, activeMap?.completedAt, user?.id]);
 
   useEffect(() => {
     const complete = heroDemoCells.size === DEMO_PYRAMID_TOTAL;
@@ -2965,7 +3102,7 @@ export default function App() {
       )
         ? prev.map((m) =>
             m.id === activeMapId
-              ? next
+              ? normalizeMap(addDailySnapshot(m, next))
               : m
           )
         : prev
@@ -5228,6 +5365,7 @@ export default function App() {
     setNewMapDescription("");
     setNewMapCategory("Личное");
     setNewMapDeadline("");
+    setNewMapPlanMode("balanced");
     setNewCategoryDraft("");
     setNewMapType("free");
     setNewMapGridMode("auto");
@@ -5275,6 +5413,8 @@ export default function App() {
       description: newMapDescription.trim(),
       category: newMapCategory === "__custom__" ? "Личное" : newMapCategory,
       deadline: newMapDeadline,
+      planMode: newMapPlanMode,
+      createdAt: new Date().toISOString(),
       mapType: newMapType,
       gridMode:
         newMapGridMode,
@@ -5462,6 +5602,8 @@ export default function App() {
     setRenameDescription(map.description || "");
     setRenameCategory(map.category || "Личное");
     setRenameDeadline(map.deadline || "");
+    setRenamePlanMode(PLAN_MODES[map.planMode] ? map.planMode : "balanced");
+    setRenamePausedUntil(map.planPausedUntil || "");
     setNewCategoryDraft("");
 
     setRenameMapId(map.id);
@@ -5494,6 +5636,8 @@ export default function App() {
         description: renameDescription.trim(),
         category: renameCategory === "__custom__" ? old.category || "Личное" : renameCategory,
         deadline: renameDeadline,
+        planMode: renamePlanMode,
+        planPausedUntil: renamePlanMode === "paused" ? renamePausedUntil : "",
       });
 
     setMaps((p) =>
@@ -5532,6 +5676,8 @@ export default function App() {
     setRenameDescription("");
     setRenameCategory("Личное");
     setRenameDeadline("");
+    setRenamePlanMode("balanced");
+    setRenamePausedUntil("");
     setRenameMapId(null);
   }
 
@@ -6192,6 +6338,129 @@ export default function App() {
     }, 180);
   }
 
+  async function persistFeatureMap(map) {
+    const normalized = normalizeMap(map);
+    setMaps((current) => current.map((item) => item.id === normalized.id ? normalized : item));
+    saveMapsLocally(maps.map((item) => item.id === normalized.id ? normalized : item));
+    if (user) await remoteSave(normalized);
+    return normalized;
+  }
+
+  async function saveMapVersion(map, label = "Сохранённая версия") {
+    const current = map.id === activeMapId ? buildCurrentMap() || map : map;
+    const versioned = normalizeMap({ ...current, versions: [...(current.versions || []), createMapSnapshot(current, label)].slice(-20) });
+    await persistFeatureMap(versioned);
+    setHistoryMapId(versioned.id);
+    setHistoryPreviewIndex(versioned.versions.length - 1);
+  }
+
+  async function restoreMapVersion(map, snapshot) {
+    const withCurrent = { ...map, versions: [...(map.versions || []), createMapSnapshot(map, "Перед восстановлением")].slice(-20) };
+    const restored = normalizeMap(restoreSnapshot(withCurrent, snapshot));
+    await persistFeatureMap(restored);
+    if (restored.id === activeMapId) openMap(restored);
+    setHistoryMapId(restored.id);
+    setHistoryPlaying(false);
+    setHistoryPreviewIndex(Math.max(0, restored.versions.length - 1));
+  }
+
+  async function publishShare() {
+    if (!shareMap || !user) return;
+    setShareStatus("saving");
+    const id = shareMap.shareId || crypto.randomUUID();
+    const source = shareMap.id === activeMapId ? buildCurrentMap() || shareMap : shareMap;
+    const { error } = await supabase.from(SHARED_MAPS_TABLE).upsert({
+      id,
+      owner_id: user.id,
+      map_id: source.id,
+      map_data: normalizeMap(source),
+      settings: { showProgress: shareProgressVisible, showActivity: shareActivityVisible },
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "id" });
+    if (error) {
+      try {
+        const publicMap = normalizeMap({ ...source, image: null, showImage: false, modeDrafts: {} });
+        const snapshot = await encodeSharedSnapshot({ map: publicMap, settings: { showProgress: shareProgressVisible, showActivity: shareActivityVisible }, updated_at: new Date().toISOString() });
+        const url = `${window.location.origin}/?snapshot=${snapshot}`;
+        if (navigator.clipboard) await navigator.clipboard.writeText(url).catch(() => null);
+        setShareMap({ ...shareMap, shareUrl: url, portableShare: true });
+        setShareStatus("copied");
+      } catch {
+        setShareStatus("error");
+      }
+      return;
+    }
+    const url = `${window.location.origin}/?shared=${id}`;
+    if (navigator.clipboard) await navigator.clipboard.writeText(url).catch(() => null);
+    setShareMap({ ...shareMap, shareId: id, shareUrl: url });
+    setShareStatus("copied");
+  }
+
+  async function revokeShare() {
+    if (!shareMap?.shareId || !user) return;
+    setShareStatus("saving");
+    const { error } = await supabase.from(SHARED_MAPS_TABLE).delete().eq("id", shareMap.shareId).eq("owner_id", user.id);
+    setShareStatus(error ? "error" : "revoked");
+    if (!error) setShareMap(null);
+  }
+
+  function exportBackup() {
+    const blob = new Blob([createBackup(maps, { name: accountName, email: accountEmail })], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `map-method-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    setBackupStatus("Копия скачана.");
+  }
+
+  async function importBackup(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const imported = parseBackup(await file.text()).map((map, index) => normalizeMap({
+        ...map,
+        id: maps.some((item) => item.id === map.id) ? createMapId() : map.id,
+        order: maps.length + index,
+      }));
+      const next = [...maps, ...imported];
+      setMaps(next);
+      saveMapsLocally(next);
+      if (user) await Promise.all(imported.map((map) => remoteSave(map)));
+      setBackupStatus(`Добавлено карт: ${imported.length}.`);
+    } catch {
+      setBackupStatus("Не удалось прочитать эту резервную копию.");
+    }
+  }
+
+  async function createDemoMap() {
+    const demo = normalizeMap({
+      id: createMapId(), order: 0, name: "Моя первая карта", description: "Небольшая карта, чтобы попробовать Map Method",
+      category: "Личное", mapType: "free", gridMode: "manual", totalCells: "64", manualRows: "8", manualCols: "8",
+      completed: [18,19,20,21,25,26,27,28,29,30,34,35,36,37,42,43,44,51], colors: [], createdAt: new Date().toISOString(),
+    });
+    setMaps([demo]);
+    saveMapsLocally([demo]);
+    if (user) await remoteSave(demo);
+    localStorage.setItem(`${ONBOARDING_KEY}:${user.id}`, "done");
+    setOnboardingOpen(false);
+    setActiveMapId(demo.id);
+    openMap(demo);
+    setScreen("editor");
+  }
+
+  function finishOnboarding() {
+    if (user?.id) localStorage.setItem(`${ONBOARDING_KEY}:${user.id}`, "done");
+    setOnboardingOpen(false);
+  }
+
+  async function installApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    setInstallPrompt(null);
+  }
+
   return (
     <div className="app">
       {showVictory && (
@@ -6212,8 +6481,18 @@ export default function App() {
               </i>
             ))}
           </div>
-          <strong>Карта завершена!</strong>
-          <span>Отличная работа — рисунок собран.</span>
+          <div className="victory-summary" onPointerDown={(event) => event.stopPropagation()}>
+            <button type="button" className="victory-close" aria-label="Закрыть" onClick={dismissVictory}>×</button>
+            <span className="victory-mark">✓</span>
+            <strong>Карта завершена!</strong>
+            <span>«{activeMap?.name}» собрана полностью.</span>
+            <div>
+              <article><b>{currentStats.total}</b><small>клеток в карте</small></article>
+              <article><b>{activityLog.filter((entry) => entry.cells > 0).length}</b><small>активных дней</small></article>
+              <article><b>{activeMap?.createdAt ? Math.max(1, Math.ceil((Date.now() - Date.parse(activeMap.createdAt)) / 86400000)) : 1}</b><small>дней от старта</small></article>
+            </div>
+            <div className="victory-actions"><button type="button" onClick={() => downloadMap(true)}>Скачать с сеткой</button><button type="button" onClick={() => downloadMap(false)}>Скачать рисунок</button></div>
+          </div>
         </div>
       )}
       {switchingAccountId && (
@@ -6273,6 +6552,8 @@ export default function App() {
               ? "MM / Обращения"
               : screen === "analytics"
               ? "MM / Аналитика"
+              : screen === "shared"
+              ? "MM / Публичная карта"
               : screen ===
                 "account"
               ? `MM / ${t(
@@ -6889,6 +7170,26 @@ export default function App() {
         />
       )}
 
+      {screen === "shared" && (
+        <main className="shared-map-page">
+          {sharedViewStatus === "loading" ? <p className="shared-map-message">Загружаем карту…</p> : sharedViewStatus === "missing" ? (
+            <section className="shared-map-empty"><span>Ссылка недоступна</span><h1>Эта карта больше не опубликована</h1><p>Владелец мог отключить ссылку или заменить её.</p><button type="button" onClick={() => { history.replaceState({}, "", "/"); setScreen("home"); }}>На главную</button></section>
+          ) : sharedView ? (() => {
+            const map = sharedView.map;
+            const dimensions = getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols);
+            const stats = getMapStats(map);
+            const publicMap = sharedView.settings?.showProgress === false ? { ...map, progressCompleted: [] } : map;
+            return <section className="shared-map-card">
+              <div><span className="account-eyebrow">ПУБЛИЧНАЯ КАРТА</span><h1>{map.name}</h1>{map.description && <p>{map.description}</p>}</div>
+              <div className="shared-map-preview"><MapCardGrid map={publicMap} dimensions={dimensions} /></div>
+              {sharedView.settings?.showProgress !== false && <div className="shared-map-progress"><strong><AnimatedPercent value={stats.percent} /></strong><span>{stats.filled} из {stats.total} клеток</span><i><b style={{ width: `${stats.percent}%` }} /></i></div>}
+              {sharedView.settings?.showActivity && map.lastPaintedAt && <small>Последнее изменение: {new Date(map.lastPaintedAt).toLocaleString("ru-RU")}</small>}
+              <button type="button" onClick={() => { history.replaceState({}, "", "/"); setScreen("home"); }}>Создать свою карту</button>
+            </section>;
+          })() : null}
+        </main>
+      )}
+
       {screen === "account" && (
         <section
           className="maps-page"
@@ -7265,6 +7566,24 @@ export default function App() {
               </div>
             </section>
 
+            <section className="account-activity-card">
+              <div className="account-section-title">
+                <div><span className="account-eyebrow">АКТИВНОСТЬ ЗА ГОД</span><h2>Календарь движения</h2></div>
+                <span>{activityCalendar.reduce((sum, day) => sum + day.cells, 0)} клеток за 365 дней</span>
+              </div>
+              <div className="activity-heatmap" aria-label="Календарь активности за год">
+                {activityCalendar.map((day) => {
+                  const level = day.cells ? Math.max(1, Math.ceil(day.cells / activityMax * 4)) : 0;
+                  return <i key={day.key} className={`level-${level}`} title={`${day.date.toLocaleDateString("ru-RU")}: ${day.cells} клеток`} />;
+                })}
+              </div>
+              <div className="streak-grid">
+                <article><span>ТЕКУЩАЯ СЕРИЯ</span><strong>{streaks.current}</strong><small>дней с учётом одного дня отдыха</small></article>
+                <article><span>ЛУЧШАЯ СЕРИЯ</span><strong>{streaks.best}</strong><small>личный рекорд</small></article>
+                <article><span>ДЕНЬ ОТДЫХА</span><strong>{streaks.freeDayAvailable ? "Доступен" : "Использован"}</strong><small>новый появляется после 7 активных дней</small></article>
+              </div>
+            </section>
+
             <section className="account-plan-card">
               <div>
                 <span className="account-eyebrow">ПЛАН НА СЕГОДНЯ</span>
@@ -7287,6 +7606,17 @@ export default function App() {
                 </div>
                 <small>{accountPaintedCells} из {accountTotalCells} клеток</small>
               </div>
+            </section>
+
+            <section className="account-tools-card">
+              <div><span className="account-eyebrow">ДАННЫЕ И ПРИЛОЖЕНИЕ</span><h2>Твои карты под контролем</h2><p>Скачай резервную копию всех карт или верни её на любом устройстве.</p></div>
+              <div className="account-tools-actions">
+                <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
+                <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
+                {installPrompt && <button type="button" onClick={installApp}>Установить Map Method</button>}
+                <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
+              </div>
+              {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
             </section>
 
             <section className="account-achievements">
@@ -7554,13 +7884,21 @@ export default function App() {
               </div>
             )}
             {!!libraryStatus && <p className="library-status" role="status">{libraryStatus}</p>}
+            <div className="library-discovery">
+              <label className="library-search"><span>Поиск</span><input type="search" value={librarySearch} placeholder="Название или категория" onChange={(event) => setLibrarySearch(event.target.value)} /></label>
+              <label><span>Порядок</span><select value={librarySort} onChange={(event) => setLibrarySort(event.target.value)}><option value="popular">Популярные</option><option value="new">Новые</option><option value="name">По названию</option><option value="favorites">Избранные сначала</option></select></label>
+            </div>
+            <div className="library-collections" role="group" aria-label="Коллекции">
+              {libraryCategories.map((category) => <button type="button" key={category} className={libraryCategory === category ? "active" : ""} onClick={() => setLibraryCategory(category)}>{category}</button>)}
+            </div>
             <div className="library-grid">
-              {publicLibrary.map((item) => {
+              {visiblePublicLibrary.map((item) => {
                 const dimensions = getGridDimensions(item.totalCells, 1, item.gridMode, item.manualRows, item.manualCols);
                 return (
                   <article className="library-card" key={item.id}>
+                    <button type="button" className={`library-favorite${libraryFavorites.includes(item.id) ? " active" : ""}`} aria-label={libraryFavorites.includes(item.id) ? "Убрать из избранного" : "Добавить в избранное"} onClick={() => setLibraryFavorites((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}>♥</button>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
-                    <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)}</span></div>
+                    <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)} · использовали {Math.max(Number(item.useCount) || 0, Number(libraryUsage[item.id]) || 0)} раз</span></div>
                     <div className={`library-card-actions${isLibraryOwner ? " owner" : " single"}`}>
                       <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
                       {isLibraryOwner && <button type="button" className="edit-action" onClick={() => editPublicLibraryItem(item)}>Изменить</button>}
@@ -7570,6 +7908,7 @@ export default function App() {
                 );
               })}
             </div>
+            {!visiblePublicLibrary.length && <p className="library-empty">По этому запросу эскизов пока нет.</p>}
           </section>
 
           <section className="library-section">
@@ -7757,7 +8096,7 @@ export default function App() {
                     );
 
                   const { filled: done, total: playableTotal, percent: p } = getMapStats(map);
-                  const plan = dailyTarget(map.deadline, playableTotal, done, todayDate);
+                  const plan = adaptiveDailyTarget(map, todayDate);
                   const dailyProgress = getDailyPlanProgress(map, playableTotal, done, todayDate);
                   const planDoneToday = dailyPlanCompleted(map, playableTotal, done, todayDate);
 
@@ -7814,12 +8153,14 @@ export default function App() {
                                 {map.description}
                               </span>
                             )}
-                            {plan && <span className={`daily-plan${planDoneToday ? " completed" : ""}`}>
+                            {plan && <span className={`daily-plan${planDoneToday ? " completed" : ""}${plan.paused ? " paused" : ""}`}>
                               {planDoneToday && <><b>✓ План на сегодня выполнен</b><small>Отличный темп — можно продолжить или отдохнуть</small></>}
                               <span className="daily-plan-target">
-                                {dailyProgress
-                                  ? `Норма: ${dailyProgress.target} клеток в день · сегодня ${dailyProgress.paintedToday} из ${dailyProgress.target} · осталось ${dailyProgress.days} дн.`
-                                  : `Норма: ${plan}`}
+                                {plan.paused
+                                  ? plan.label
+                                  : dailyProgress
+                                  ? `Норма: ${plan.target} клеток в день · сегодня ${dailyProgress.paintedToday} из ${plan.target} · осталось ${plan.days} дн.`
+                                  : `Норма: ${plan.label}`}
                               </span>
                             </span>}
                             <span className="map-card-meta">
@@ -7894,6 +8235,30 @@ export default function App() {
                               {t(
                                 "edit"
                               )}
+                            </button>
+
+                            <button
+                              className="tool-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setHistoryMapId(map.id);
+                                setHistoryPreviewIndex(Math.max(0, (map.versions?.length || 1) - 1));
+                              }}
+                            >
+                              История
+                            </button>
+
+                            <button
+                              className="tool-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShareMap(map);
+                                setShareProgressVisible(true);
+                                setShareActivityVisible(false);
+                                setShareStatus("");
+                              }}
+                            >
+                              Поделиться
                             </button>
 
                             <button
@@ -7999,6 +8364,13 @@ export default function App() {
                       {t(
                         "edit"
                       )}
+                    </button>
+
+                    <button className="text-action" onClick={() => { setHistoryMapId(activeMap.id); setHistoryPreviewIndex(Math.max(0, (activeMap.versions?.length || 1) - 1)); }}>
+                      История
+                    </button>
+                    <button className="text-action" onClick={() => { setShareMap(activeMap); setShareProgressVisible(true); setShareActivityVisible(false); setShareStatus(""); }}>
+                      Поделиться
                     </button>
 
                     <button
@@ -8821,7 +9193,7 @@ export default function App() {
                 )}
               </div>
 
-              {dailyPlan && <p className="daily-plan" aria-live="polite">{dailyPlan}</p>}
+              {dailyPlan && <p className={`daily-plan${dailyPlan.paused ? " paused" : ""}`} aria-live="polite">{dailyPlan.label}</p>}
               <div className="preview-progress">
                 <strong>
                   <AnimatedPercent value={displayedProgress} />
@@ -8962,6 +9334,16 @@ export default function App() {
                 />
               </div>
               <DeadlinePicker value={newMapDeadline} onChange={setNewMapDeadline} optional />
+            </div>
+
+            <div className="modal-field">
+              <label>Темп</label>
+              <div className="plan-mode-picker">
+                {Object.entries(PLAN_MODES).filter(([key]) => key !== "paused").map(([key, option]) => (
+                  <button type="button" key={key} className={newMapPlanMode === key ? "active" : ""} onClick={() => setNewMapPlanMode(key)}>{option.label}</button>
+                ))}
+              </div>
+              <small className="field-hint">Меняет дневную норму. Её можно настроить позже.</small>
             </div>
 
             {newMapCategory === "__custom__" && (
@@ -9343,6 +9725,56 @@ export default function App() {
         </div>
       )}
 
+      {historyMap && (
+        <div className="modal-overlay feature-modal-overlay" onMouseDown={() => { setHistoryMapId(null); setHistoryPlaying(false); }}>
+          <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="account-eyebrow">ДО 20 ВЕРСИЙ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={() => { setHistoryMapId(null); setHistoryPlaying(false); }}>×</button></div>
+            <p className="feature-modal-intro">Map Method сохраняет по одной автоматической версии в день. Важный этап можно сохранить вручную.</p>
+            <button type="button" className="feature-primary" onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>
+            {historyMap.versions?.length ? (() => {
+              const snapshot = historyMap.versions[Math.min(historyPreviewIndex, historyMap.versions.length - 1)];
+              const preview = normalizeMap({ ...historyMap, ...snapshot });
+              const dimensions = getGridDimensions(preview.totalCells, preview.imageRatio, preview.gridMode, preview.manualRows, preview.manualCols);
+              const current = getMapStats(historyMap);
+              return <>
+                <div className="history-preview"><div className="library-preview"><MapCardGrid map={preview} dimensions={dimensions} /></div><div><strong>{snapshot.label}</strong><span>{new Date(snapshot.createdAt).toLocaleString("ru-RU")}</span><p>{snapshot.filled} из {snapshot.total} клеток · {snapshot.filled - current.filled >= 0 ? "+" : ""}{snapshot.filled - current.filled} к текущей версии</p></div></div>
+                <input className="history-range" type="range" min="0" max={historyMap.versions.length - 1} value={Math.min(historyPreviewIndex, historyMap.versions.length - 1)} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(Number(event.target.value)); }} />
+                <div className="history-actions"><button type="button" onClick={() => { setHistoryPreviewIndex(0); setHistoryPlaying(true); }}>▶ Показать изменения</button><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
+                <div className="history-version-list">{[...historyMap.versions].reverse().map((version, reverseIndex) => { const index = historyMap.versions.length - reverseIndex - 1; return <button type="button" className={index === historyPreviewIndex ? "active" : ""} key={version.id} onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleDateString("ru-RU")} · {version.filled}/{version.total}</small></button>; })}</div>
+              </>;
+            })() : <p className="feature-empty">Версий пока нет. Сохрани первую — дальше ежедневные изменения будут добавляться автоматически.</p>}
+          </div>
+        </div>
+      )}
+
+      {shareMap && (
+        <div className="modal-overlay feature-modal-overlay" onMouseDown={() => setShareMap(null)}>
+          <div className="create-modal share-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="account-eyebrow">ТОЛЬКО ПРОСМОТР</span><h2>Публичная ссылка</h2></div><button type="button" className="modal-close" onClick={() => setShareMap(null)}>×</button></div>
+            <p className="feature-modal-intro">Посетитель увидит снимок карты и не сможет его изменить. Обнови ссылку повторно, чтобы показать свежую версию.</p>
+            <label className="feature-toggle"><input type="checkbox" checked={shareProgressVisible} onChange={(event) => setShareProgressVisible(event.target.checked)} /><span>Показывать прогресс</span></label>
+            <label className="feature-toggle"><input type="checkbox" checked={shareActivityVisible} onChange={(event) => setShareActivityVisible(event.target.checked)} /><span>Показывать дату последнего изменения</span></label>
+            {shareMap.shareUrl && <div className="share-link"><input readOnly value={shareMap.shareUrl} /><button type="button" onClick={() => navigator.clipboard.writeText(shareMap.shareUrl)}>Копировать</button></div>}
+            {shareStatus === "error" && <p className="feature-status error">Не удалось создать ссылку. Попробуй ещё раз.</p>}
+            {shareStatus === "copied" && <p className="feature-status">Ссылка создана и скопирована.</p>}
+            <div className="history-actions"><button type="button" className="feature-primary" disabled={shareStatus === "saving"} onClick={publishShare}>{shareStatus === "saving" ? "Публикуем…" : shareMap.shareUrl ? "Обновить снимок" : "Создать и скопировать ссылку"}</button>{shareMap.shareId && <button type="button" className="danger-action" onClick={revokeShare}>Отключить ссылку</button>}</div>
+          </div>
+        </div>
+      )}
+
+      {onboardingOpen && (
+        <div className="modal-overlay onboarding-overlay">
+          <div className="create-modal onboarding-modal">
+            <div className="onboarding-progress">{[0,1,2].map((step) => <i key={step} className={step <= onboardingStep ? "active" : ""} />)}</div>
+            {onboardingStep === 0 && <><span className="onboarding-icon">□</span><h2>Добро пожаловать в Map Method</h2><p>Здесь большая цель превращается в карту: один выполненный шаг — одна закрашенная клетка.</p></>}
+            {onboardingStep === 1 && <><span className="onboarding-icon">✦</span><h2>Двигайся в своём темпе</h2><p>Укажи срок и выбери спокойный, ровный или интенсивный режим. План будет пересчитываться сам.</p></>}
+            {onboardingStep === 2 && <><span className="onboarding-icon">✓</span><h2>Попробуй на готовой карте</h2><p>Мы создадим небольшую демонстрационную карту. Её можно менять или удалить как обычную.</p></>}
+            <div className="onboarding-actions">{onboardingStep > 0 && <button type="button" onClick={() => setOnboardingStep((step) => step - 1)}>Назад</button>}<button type="button" className="feature-primary" onClick={() => onboardingStep < 2 ? setOnboardingStep((step) => step + 1) : createDemoMap()}>{onboardingStep < 2 ? "Дальше" : "Создать демо-карту"}</button></div>
+            <button type="button" className="onboarding-skip" onClick={finishOnboarding}>Пропустить</button>
+          </div>
+        </div>
+      )}
+
       {isRenameOpen && (
         <div
           className={`modal-overlay${closingModal === "rename" ? " is-closing" : ""}`}
@@ -9417,6 +9849,18 @@ export default function App() {
               </div>
               <DeadlinePicker value={renameDeadline} onChange={setRenameDeadline} />
             </div>
+
+            <div className="modal-field">
+              <label>Темп и отдых</label>
+              <div className="plan-mode-picker">
+                {Object.entries(PLAN_MODES).map(([key, option]) => (
+                  <button type="button" key={key} className={renamePlanMode === key ? "active" : ""} onClick={() => setRenamePlanMode(key)}>{option.label}</button>
+                ))}
+              </div>
+            </div>
+            {renamePlanMode === "paused" && (
+              <div className="modal-field"><label>Пауза до</label><input type="date" value={renamePausedUntil} onChange={(event) => setRenamePausedUntil(event.target.value)} /></div>
+            )}
 
             {renameCategory === "__custom__" && (
               <div className="category-create">
