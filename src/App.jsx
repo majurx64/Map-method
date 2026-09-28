@@ -1,11 +1,12 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "./App.css";
 import { supabase } from "./lib/supabase";
 import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
+import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
-import { PLAN_MODES, adaptiveDailyTarget, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, restoreSnapshot } from "./lib/productFeatures";
+import { PLAN_MODES, adaptiveDailyTarget, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -900,11 +901,13 @@ function cellWord(count) {
 }
 
 function dailyPlanCompleted(map, total, filled, today = new Date()) {
-  return Boolean(map?.deadline) && map.dailyPlanDoneOn === getActivityDate(today);
+  const plan = getDailyPlanProgress(map, total, filled, today);
+  return Boolean(plan && plan.paintedToday >= plan.target);
 }
 
 function getDailyPlanProgress(map, total, filled, today = new Date()) {
-  if (!map?.deadline || !total || map.planMode === "paused" || (map.planPausedUntil && map.planPausedUntil >= getActivityDate(today))) return null;
+  const adaptive = map ? adaptiveDailyTarget(map, today) : null;
+  if (!map?.deadline || !total || adaptive?.paused) return null;
   const [year, month, day] = map.deadline.split("-").map(Number);
   const end = Date.UTC(year, month - 1, day);
   const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
@@ -915,13 +918,14 @@ function getDailyPlanProgress(map, total, filled, today = new Date()) {
     .filter((entry) => entry.date === todayKey)
     .reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
   const filledBeforeToday = Math.max(0, filled - paintedToday);
-  const multiplier = PLAN_MODES[map.planMode]?.multiplier || 1;
+  const multiplier = PLAN_MODES[adaptive?.mode]?.multiplier || 1;
   const target = Math.max(1, Math.ceil(Math.max(0, total - filledBeforeToday) / days * multiplier));
   return target > 0 ? { target, paintedToday, days } : null;
 }
 
 function dailyQuotaMet(map, total, filled, today = new Date()) {
-  if (!map?.deadline || !total || map.planMode === "paused" || (map.planPausedUntil && map.planPausedUntil >= getActivityDate(today))) return false;
+  const adaptive = map ? adaptiveDailyTarget(map, today) : null;
+  if (!map?.deadline || !total || adaptive?.paused) return false;
   const [year, month, day] = map.deadline.split("-").map(Number);
   const end = Date.UTC(year, month - 1, day);
   const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
@@ -930,7 +934,7 @@ function dailyQuotaMet(map, total, filled, today = new Date()) {
   const todayKey = getActivityDate(today);
   const paintedToday = (map.activityLog || []).filter((entry) => entry.date === todayKey).reduce((sum, entry) => sum + Number(entry.cells || 0), 0);
   const filledBeforeToday = Math.max(0, filled - paintedToday);
-  const multiplier = PLAN_MODES[map.planMode]?.multiplier || 1;
+  const multiplier = PLAN_MODES[adaptive?.mode]?.multiplier || 1;
   const target = Math.max(1, Math.ceil(Math.max(0, total - filledBeforeToday) / days * multiplier));
   return target > 0 && paintedToday >= target;
 }
@@ -949,7 +953,7 @@ function normalizeActivityLog(value) {
 
   return [...totals.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-180)
+    .slice(-730)
     .map(([date, cells]) => ({ date, cells }));
 }
 
@@ -1036,11 +1040,12 @@ function normalizeMap(map = {}) {
       : "",
     activityLog: normalizeActivityLog(map.activityLog),
     dailyPlanDoneOn: /^\d{4}-\d{2}-\d{2}$/.test(map.dailyPlanDoneOn || "") ? map.dailyPlanDoneOn : "",
-    createdAt: typeof map.createdAt === "string" && Number.isFinite(Date.parse(map.createdAt)) ? map.createdAt : new Date().toISOString(),
+    createdAt: typeof map.createdAt === "string" && Number.isFinite(Date.parse(map.createdAt)) ? map.createdAt : "",
     completedAt: typeof map.completedAt === "string" && Number.isFinite(Date.parse(map.completedAt)) ? map.completedAt : "",
     planMode: PLAN_MODES[map.planMode] ? map.planMode : "balanced",
     planPausedUntil: /^\d{4}-\d{2}-\d{2}$/.test(map.planPausedUntil || "") ? map.planPausedUntil : "",
     versions: normalizeVersions(map.versions),
+    shareId: typeof map.shareId === "string" && /^[0-9a-f-]{36}$/i.test(map.shareId) ? map.shareId : "",
     privateLibraryItem: Boolean(map.privateLibraryItem),
     modeDrafts: {
       ...(freeDraft ? { free: freeDraft } : {}),
@@ -1099,6 +1104,7 @@ function mapToSupabaseRow(map, userId) {
 function mapFromSupabaseRow(row) {
   return normalizeMap({
     ...row.data,
+    createdAt: row.data?.createdAt || row.created_at || "",
     id: row.id,
     name: row.name,
   });
@@ -1449,6 +1455,7 @@ export default function App() {
   );
 
   const [screen, setScreen] = useState(() => {
+    if (new URLSearchParams(window.location.search).has("shared") || new URLSearchParams(window.location.search).has("snapshot") || new URLSearchParams(window.location.hash.slice(1)).has("snapshot")) return "shared";
     const saved = localStorage.getItem(CURRENT_SCREEN_KEY);
 
     return [
@@ -1459,7 +1466,6 @@ export default function App() {
       "library",
       "feedback-inbox",
       "analytics",
-      "shared",
       "auth",
     ].includes(saved)
       ? saved
@@ -1480,8 +1486,11 @@ export default function App() {
   const [librarySearch, setLibrarySearch] = useState("");
   const [librarySort, setLibrarySort] = useState("popular");
   const [libraryCategory, setLibraryCategory] = useState("Все");
-  const [libraryFavorites, setLibraryFavorites] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(LIBRARY_FAVORITES_KEY) || "[]"); } catch { return []; }
+  const [favoritesByUser, setFavoritesByUser] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LIBRARY_FAVORITES_KEY) || "{}");
+      return saved && !Array.isArray(saved) && typeof saved === "object" ? saved : {};
+    } catch { return {}; }
   });
   const [libraryUsage, setLibraryUsage] = useState(() => {
     try { return JSON.parse(localStorage.getItem(LIBRARY_USAGE_KEY) || "{}"); } catch { return {}; }
@@ -1489,6 +1498,8 @@ export default function App() {
   const [historyMapId, setHistoryMapId] = useState(null);
   const [historyPreviewIndex, setHistoryPreviewIndex] = useState(0);
   const [historyPlaying, setHistoryPlaying] = useState(false);
+  const [featureStatus, setFeatureStatus] = useState("");
+  const featureBusyRef = useRef(false);
   const [shareMap, setShareMap] = useState(null);
   const [shareProgressVisible, setShareProgressVisible] = useState(true);
   const [shareActivityVisible, setShareActivityVisible] = useState(false);
@@ -1496,13 +1507,28 @@ export default function App() {
   const [sharedView, setSharedView] = useState(null);
   const [sharedViewStatus, setSharedViewStatus] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get("shared") || params.get("snapshot") ? "loading" : "";
+    return params.get("shared") || params.get("snapshot") || new URLSearchParams(window.location.hash.slice(1)).get("snapshot") ? "loading" : "";
   });
   const [backupStatus, setBackupStatus] = useState("");
+  const [syncStatus, setSyncStatus] = useState("");
+  const loadedOwnerRef = useRef(null);
+  const latestOwnerRef = useRef(null);
+  useLayoutEffect(() => { latestOwnerRef.current = user?.id || null; }, [user?.id]);
   const backupInputRef = useRef(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setHistoryMapId(null);
+      setHistoryPlaying(false);
+      setShareMap(null);
+      setOnboardingOpen(false);
+      setFeatureStatus("");
+      setBackupStatus("");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [user?.id]);
   const [isEditingAccountName, setIsEditingAccountName] = useState(false);
   const [isClosingAccountName, setIsClosingAccountName] = useState(false);
   const [accountNameDraft, setAccountNameDraft] = useState("");
@@ -2044,7 +2070,11 @@ export default function App() {
     { icon: "♛", title: "Серия побед", text: "Завершить 5 карт", current: accountFinishedMaps, goal: 5 },
   ];
   const libraryUserKey = user?.id || "guest";
-  const personalLibrary = Array.isArray(privateLibrary[libraryUserKey]) ? privateLibrary[libraryUserKey] : [];
+  const personalLibrary = useMemo(() => Array.isArray(privateLibrary[libraryUserKey]) ? privateLibrary[libraryUserKey] : [], [privateLibrary, libraryUserKey]);
+  const libraryFavorites = Array.isArray(favoritesByUser[libraryUserKey]) ? favoritesByUser[libraryUserKey] : [];
+  function setLibraryFavorites(update) {
+    setFavoritesByUser((current) => ({ ...current, [libraryUserKey]: update(Array.isArray(current[libraryUserKey]) ? current[libraryUserKey] : []) }));
+  }
   const libraryCategories = ["Все", ...new Set(publicLibrary.map((item) => item.category || "Другое"))];
   const visiblePublicLibrary = publicLibrary
     .filter((item) => libraryCategory === "Все" || item.category === libraryCategory)
@@ -2055,9 +2085,9 @@ export default function App() {
       if (librarySort === "favorites") return Number(libraryFavorites.includes(b.id)) - Number(libraryFavorites.includes(a.id));
       return Math.max(Number(b.useCount) || 0, Number(libraryUsage[b.id]) || 0) - Math.max(Number(a.useCount) || 0, Number(libraryUsage[a.id]) || 0);
     });
-  const activityCalendar = buildActivityCalendar(maps, 365, todayDate);
+  const activityCalendar = useMemo(() => buildActivityCalendar(maps, 365, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const activityMax = Math.max(1, ...activityCalendar.map((day) => day.cells));
-  const streaks = calculateStreaks(maps, todayDate);
+  const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const historyMap = maps.find((map) => map.id === historyMapId) || null;
 
   useEffect(() => {
@@ -2077,7 +2107,7 @@ export default function App() {
         ...normalizeMap({ ...row.data, id: row.id, name: row.name }),
         publicLibraryOwnerId: row.owner_id,
         replacesBuiltinId: row.data?.replacesBuiltinId || null,
-        useCount: Number(row.use_count) || 0,
+        useCount: Number.isFinite(row.use_count) ? row.use_count : null,
         createdAt: row.created_at || row.data?.createdAt,
       }));
       setPublicLibrary([
@@ -2098,11 +2128,11 @@ export default function App() {
   }, [privateLibrary]);
 
   useEffect(() => {
-    localStorage.setItem(LIBRARY_FAVORITES_KEY, JSON.stringify(libraryFavorites));
-  }, [libraryFavorites]);
+    try { localStorage.setItem(LIBRARY_FAVORITES_KEY, JSON.stringify(favoritesByUser)); } catch { /* optional device preference */ }
+  }, [favoritesByUser]);
 
   useEffect(() => {
-    localStorage.setItem(LIBRARY_USAGE_KEY, JSON.stringify(libraryUsage));
+    try { localStorage.setItem(LIBRARY_USAGE_KEY, JSON.stringify(libraryUsage)); } catch { /* optional device preference */ }
   }, [libraryUsage]);
 
   useEffect(() => {
@@ -2117,7 +2147,7 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("shared");
-    const snapshot = params.get("snapshot");
+    const snapshot = new URLSearchParams(window.location.hash.slice(1)).get("snapshot") || params.get("snapshot");
     if (!token && !snapshot) return;
     let cancelled = false;
     if (snapshot) {
@@ -2131,7 +2161,7 @@ export default function App() {
       });
       return () => { cancelled = true; };
     }
-    supabase.from(SHARED_MAPS_TABLE).select("id,map_data,settings,updated_at").eq("id", token).maybeSingle().then(({ data, error }) => {
+    supabase.rpc("get_shared_map", { share_token: token }).then(({ data, error }) => {
       if (cancelled) return;
       if (error || !data) {
         setSharedViewStatus("missing");
@@ -2146,7 +2176,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user?.id || mapsLoading || !isMapInitialized || maps.length) return;
+    if (!user?.id || mapsLoading || !isMapInitialized || maps.length || screen === "shared" || syncStatus || !navigator.onLine) return;
     const key = `${ONBOARDING_KEY}:${user.id}`;
     if (localStorage.getItem(key)) return;
     const timer = window.setTimeout(() => {
@@ -2154,7 +2184,7 @@ export default function App() {
       setOnboardingOpen(true);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [user?.id, mapsLoading, isMapInitialized, maps.length]);
+  }, [user?.id, mapsLoading, isMapInitialized, maps.length, screen, syncStatus]);
 
   useEffect(() => {
     if (!historyPlaying || !historyMap?.versions?.length) return undefined;
@@ -2311,6 +2341,11 @@ export default function App() {
     const map = normalizeMap({
       ...item,
       id: createMapId(),
+      createdAt: new Date().toISOString(),
+      completedAt: "",
+      versions: [],
+      shareId: "",
+      privateLibraryItem: false,
       order: maps.length,
       name: item.name,
       progressCompleted: [],
@@ -2606,6 +2641,10 @@ export default function App() {
   useEffect(() => {
     const handleEscape = (event) => {
       if (event.key !== "Escape") return;
+      if (historyMapId) { setHistoryMapId(null); setHistoryPlaying(false); return; }
+      if (shareMap) { setShareMap(null); return; }
+      if (showVictory) { dismissVictory(); return; }
+      if (onboardingOpen) { finishOnboarding(); return; }
 
       if (downloadChoice) {
         closeModal("download");
@@ -2689,7 +2728,10 @@ export default function App() {
     if (!isMapInitialized) return;
 
     saveMapsLocally(maps);
-  }, [maps, isMapInitialized]);
+    if (user?.id && loadedOwnerRef.current === user.id) {
+      void cacheAccountMaps(user.id, [...maps, ...personalLibrary]).catch(() => setSyncStatus("Не удалось сохранить офлайн-копию: проверь свободное место на устройстве."));
+    }
+  }, [maps, isMapInitialized, user?.id, personalLibrary]);
 
   useEffect(() => {
     if (!pendingDeletes.length) return;
@@ -2750,11 +2792,6 @@ export default function App() {
     if (complete && !wasGameCompleteRef.current) {
       setVictoryDismissing(false);
       setShowVictory(true);
-      if (activeMap && !activeMap.completedAt) {
-        const finished = normalizeMap({ ...activeMap, completedAt: new Date().toISOString() });
-        setMaps((current) => current.map((map) => map.id === finished.id ? finished : map));
-        if (user) void supabase.from("maps").upsert(mapToSupabaseRow(finished, user.id), { onConflict: "id" });
-      }
     }
     wasGameCompleteRef.current = complete;
   }, [isGameMode, mapType, actualTotal, completed, progressCompleted, activeMapId, isMapInitialized, mapsLoading, activeMap?.completedAt, user?.id]);
@@ -2875,6 +2912,7 @@ export default function App() {
     if (authLoading) return undefined;
 
     async function load() {
+      loadedOwnerRef.current = null;
       setMapsLoading(true);
       setIsMapInitialized(false);
       hydratingRef.current = true;
@@ -2908,7 +2946,7 @@ export default function App() {
       const {
         data,
         error,
-      } = await supabase
+      } = !navigator.onLine ? { data: null, error: new Error("offline") } : await supabase
         .from("maps")
         .select(
           "id,user_id,name,data,created_at,updated_at"
@@ -2926,8 +2964,18 @@ export default function App() {
 
       if (error) {
         console.error(error);
-        loadedMaps = [];
-        loadedActiveId = null;
+        const cache = await readAccountCache(user.id).catch(() => []);
+        const pending = await pendingMapSaves(user.id).catch(() => []);
+        if (cancelled) return;
+        const fallback = localStorage.getItem(LOCAL_MAP_OWNER_KEY) === user.id
+          ? [...initial.maps, ...(privateLibrary[user.id] || [])]
+          : [];
+        const localItems = mergePendingMaps(cache.length ? cache : fallback, pending).map(normalizeMap);
+        loadedMaps = localItems.filter((map) => !map.privateLibraryItem);
+        loadedLibrary = localItems.filter((map) => map.privateLibraryItem);
+        loadedActiveId = loadedMaps.find((map) => map.id === localStorage.getItem(ACTIVE_MAP_KEY))?.id || loadedMaps[0]?.id || null;
+        setPrivateLibrary((current) => ({ ...current, [user.id]: loadedLibrary }));
+        setSyncStatus("Нет связи с сервером. Открыта сохранённая копия; изменения отправятся после восстановления связи.");
       } else if (data?.length) {
         const remoteItems = data.map(mapFromSupabaseRow);
         loadedMaps = remoteItems.filter((map) => !map.privateLibraryItem);
@@ -2979,6 +3027,11 @@ export default function App() {
       }
 
       if (!error) {
+        const pending = await pendingMapSaves(user.id).catch(() => []);
+        if (cancelled) return;
+        const merged = mergePendingMaps([...loadedMaps, ...loadedLibrary], pending).map(normalizeMap);
+        loadedMaps = merged.filter((map) => !map.privateLibraryItem);
+        loadedLibrary = merged.filter((map) => map.privateLibraryItem);
         const localLibrary = Array.isArray(privateLibrary[user.id]) ? privateLibrary[user.id] : [];
         if (!loadedLibrary.length && localLibrary.length) {
           for (const oldItem of localLibrary) {
@@ -3009,7 +3062,7 @@ export default function App() {
       ).toLowerCase();
       const recoveryKey = `${METRO_2035_RECOVERY_KEY}:${user.id}`;
       const existingMetro = loadedMaps.some((map) => map.name.trim().toLowerCase() === "метро 2035");
-      if (recoveryOwner === "majurx64" && !localStorage.getItem(recoveryKey)) {
+      if (!error && recoveryOwner === "majurx64" && !localStorage.getItem(recoveryKey)) {
         if (existingMetro) {
           localStorage.setItem(recoveryKey, "1");
         } else {
@@ -3026,6 +3079,8 @@ export default function App() {
         }
       }
 
+      loadedOwnerRef.current = user.id;
+      loadedActiveId = loadedMaps.find((map) => map.id === loadedActiveId)?.id || loadedMaps[0]?.id || null;
       setMaps(loadedMaps);
       setActiveMapId(loadedActiveId);
 
@@ -3102,7 +3157,10 @@ export default function App() {
       )
         ? prev.map((m) =>
             m.id === activeMapId
-              ? normalizeMap(addDailySnapshot(m, next))
+              ? normalizeMap(addDailySnapshot(m, {
+                  ...next,
+                  completedAt: m.completedAt || (getMapStats(next).total > 0 && getMapStats(next).filled === getMapStats(next).total ? new Date().toISOString() : ""),
+                }))
               : m
           )
         : prev
@@ -3179,13 +3237,27 @@ export default function App() {
   );
 
   const remoteSave = useCallback(
-    (map) => {
+    (map, queuedEntry = null) => {
       if (!user || !map) {
         return Promise.resolve(null);
       }
 
+      const queued = queuedEntry ? Promise.resolve(queuedEntry) : queueMapSave(user.id, normalizeMap(map)).catch(() => {
+        setSyncStatus("Не удалось сохранить офлайн-копию. Скачай резервную копию.");
+        return null;
+      });
       const run = async () => {
+        const pending = await queued;
+        if (queuedEntry) {
+          const entries = await pendingMapSaves(user.id);
+          if (!entries.some((entry) => entry.key === queuedEntry.key && entry.revision === queuedEntry.revision)) return null;
+        }
         if (deletingIdsRef.current.has(map.id)) return null;
+        if (latestOwnerRef.current !== user.id) return new Error("account-changed");
+        if (!navigator.onLine) {
+          setSyncStatus(pending ? "Сохранено на устройстве. Ожидаем подключения." : "Нет связи; скачай резервную копию.");
+          return new Error("offline");
+        }
         try {
           const { error } =
             await supabase
@@ -3201,6 +3273,7 @@ export default function App() {
               );
 
           if (error) {
+            setSyncStatus("Сохранено на устройстве. Сервер пока недоступен.");
             console.error(
               "Ошибка автосохранения:",
               error
@@ -3209,6 +3282,8 @@ export default function App() {
             return error;
           }
 
+          if (pending) await acknowledgeMapSave(pending);
+          setSyncStatus("");
           return null;
         } catch (error) {
           console.error(
@@ -3233,6 +3308,22 @@ export default function App() {
     },
     [user]
   );
+
+  useEffect(() => {
+    if (!user?.id || !isMapInitialized || loadedOwnerRef.current !== user.id) return;
+    let cancelled = false;
+    const flush = async () => {
+      if (!navigator.onLine || cancelled) return;
+      const entries = await pendingMapSaves(user.id).catch(() => []);
+      for (const entry of entries) {
+        if (cancelled || latestOwnerRef.current !== user.id) return;
+        await remoteSave(entry.map, entry);
+      }
+    };
+    void flush();
+    window.addEventListener("online", flush);
+    return () => { cancelled = true; window.removeEventListener("online", flush); };
+  }, [user?.id, isMapInitialized, remoteSave]);
 
   useEffect(() => {
     if (
@@ -4773,7 +4864,7 @@ export default function App() {
       panFrame = heldDirections.size ? window.requestAnimationFrame(pan) : 0;
     };
     const f = (e) => {
-      if (screen !== "editor" || isCreateOpen || isRenameOpen || isDeleteOpen || isAccountOpen || isLanguageOpen || e.target?.isContentEditable) return;
+      if (screen !== "editor" || historyMapId || shareMap || onboardingOpen || showVictory || isCreateOpen || isRenameOpen || isDeleteOpen || isAccountOpen || isLanguageOpen || e.target?.isContentEditable) return;
       if (
         e.target instanceof
           HTMLInputElement ||
@@ -5501,6 +5592,8 @@ export default function App() {
 
     const m =
       normalizeMap(map);
+    activeMapRef.current = m;
+    setShowVictory(false);
 
     gameVictoryBaselineMapRef.current = m.id;
     setActiveMapId(m.id);
@@ -5809,6 +5902,7 @@ export default function App() {
         if (!user) return;
         const { error } = await supabase.from("maps").delete().eq("id", id).eq("user_id", user.id);
         if (error) throw error;
+        await discardPendingMap(user.id, id).catch(() => null);
       };
       const request = remoteSaveQueueRef.current.then(remove, remove);
       remoteSaveQueueRef.current = request.catch(() => null);
@@ -6340,60 +6434,86 @@ export default function App() {
 
   async function persistFeatureMap(map) {
     const normalized = normalizeMap(map);
+    clearTimeout(saveTimerRef.current);
+    if (normalized.id === activeMapId) activeMapRef.current = normalized;
     setMaps((current) => current.map((item) => item.id === normalized.id ? normalized : item));
-    saveMapsLocally(maps.map((item) => item.id === normalized.id ? normalized : item));
-    if (user) await remoteSave(normalized);
+    if (user) {
+      const error = await remoteSave(normalized);
+      setFeatureStatus(error ? "Изменения сохранены на устройстве. Не удалось синхронизировать с аккаунтом." : "Сохранено.");
+    }
     return normalized;
   }
 
   async function saveMapVersion(map, label = "Сохранённая версия") {
+    if (featureBusyRef.current) return;
+    featureBusyRef.current = true;
+    setFeatureStatus("Сохраняем…");
+    try {
     const current = map.id === activeMapId ? buildCurrentMap() || map : map;
     const versioned = normalizeMap({ ...current, versions: [...(current.versions || []), createMapSnapshot(current, label)].slice(-20) });
     await persistFeatureMap(versioned);
     setHistoryMapId(versioned.id);
     setHistoryPreviewIndex(versioned.versions.length - 1);
+    } finally { featureBusyRef.current = false; }
   }
 
   async function restoreMapVersion(map, snapshot) {
-    const withCurrent = { ...map, versions: [...(map.versions || []), createMapSnapshot(map, "Перед восстановлением")].slice(-20) };
+    if (featureBusyRef.current) return;
+    featureBusyRef.current = true;
+    setFeatureStatus("Восстанавливаем…");
+    try {
+    const current = map.id === activeMapId ? buildCurrentMap() || map : map;
+    const withCurrent = { ...current, versions: [...(current.versions || []), createMapSnapshot(current, "Перед восстановлением")].slice(-20) };
     const restored = normalizeMap(restoreSnapshot(withCurrent, snapshot));
-    await persistFeatureMap(restored);
     if (restored.id === activeMapId) openMap(restored);
+    await persistFeatureMap(restored);
     setHistoryMapId(restored.id);
     setHistoryPlaying(false);
     setHistoryPreviewIndex(Math.max(0, restored.versions.length - 1));
+    } finally { featureBusyRef.current = false; }
   }
 
   async function publishShare() {
-    if (!shareMap || !user) return;
+    if (!shareMap || !user || shareStatus === "saving") return;
     setShareStatus("saving");
     const id = shareMap.shareId || crypto.randomUUID();
     const source = shareMap.id === activeMapId ? buildCurrentMap() || shareMap : shareMap;
-    const { error } = await supabase.from(SHARED_MAPS_TABLE).upsert({
+    const settings = { showProgress: shareProgressVisible, showActivity: shareActivityVisible };
+    const safeMap = publicSnapshot(source, settings);
+    const readiness = await supabase.rpc("get_shared_map", { share_token: id });
+    const { error } = readiness.error ? readiness : await supabase.from(SHARED_MAPS_TABLE).upsert({
       id,
       owner_id: user.id,
       map_id: source.id,
-      map_data: normalizeMap(source),
-      settings: { showProgress: shareProgressVisible, showActivity: shareActivityVisible },
+      map_data: safeMap,
+      settings,
       updated_at: new Date().toISOString(),
     }, { onConflict: "id" });
     if (error) {
       try {
-        const publicMap = normalizeMap({ ...source, image: null, showImage: false, modeDrafts: {} });
-        const snapshot = await encodeSharedSnapshot({ map: publicMap, settings: { showProgress: shareProgressVisible, showActivity: shareActivityVisible }, updated_at: new Date().toISOString() });
-        const url = `${window.location.origin}/?snapshot=${snapshot}`;
+        const snapshot = await encodeSharedSnapshot({ map: safeMap, settings, updated_at: new Date().toISOString() });
+        if (snapshot.length > 60000) throw new Error("share-too-large");
+        const url = `${window.location.origin}/#snapshot=${snapshot}`;
         if (navigator.clipboard) await navigator.clipboard.writeText(url).catch(() => null);
         setShareMap({ ...shareMap, shareUrl: url, portableShare: true });
-        setShareStatus("copied");
+        setShareStatus("portable");
       } catch {
         setShareStatus("error");
       }
       return;
     }
     const url = `${window.location.origin}/?shared=${id}`;
+    await persistFeatureMap({ ...source, shareId: id });
     if (navigator.clipboard) await navigator.clipboard.writeText(url).catch(() => null);
-    setShareMap({ ...shareMap, shareId: id, shareUrl: url });
+    setShareMap({ ...shareMap, shareId: id, shareUrl: url, portableShare: false });
     setShareStatus("copied");
+  }
+
+  function openShareDialog(map) {
+    setShareMap({ ...map, shareUrl: map.shareId ? `${window.location.origin}/?shared=${map.shareId}` : "" });
+    setShareProgressVisible(true);
+    setShareActivityVisible(false);
+    setShareStatus("");
   }
 
   async function revokeShare() {
@@ -6401,53 +6521,66 @@ export default function App() {
     setShareStatus("saving");
     const { error } = await supabase.from(SHARED_MAPS_TABLE).delete().eq("id", shareMap.shareId).eq("owner_id", user.id);
     setShareStatus(error ? "error" : "revoked");
-    if (!error) setShareMap(null);
+    if (!error) {
+      const current = shareMap.id === activeMapId ? buildCurrentMap() || shareMap : maps.find((map) => map.id === shareMap.id) || shareMap;
+      await persistFeatureMap({ ...current, shareId: "" });
+      setShareMap(null);
+    }
   }
 
   function exportBackup() {
-    const blob = new Blob([createBackup(maps, { name: accountName, email: accountEmail })], { type: "application/json" });
+    const latest = activeMapId && !publicLibraryEditContext ? buildCurrentMap() : null;
+    const exported = maps.map((map) => map.id === latest?.id ? latest : map);
+    const blob = new Blob([createBackup([...exported, ...personalLibrary.map((item) => ({ ...item, privateLibraryItem: true }))])], { type: "application/json" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = `map-method-backup-${new Date().toISOString().slice(0, 10)}.json`;
     link.click();
-    URL.revokeObjectURL(link.href);
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     setBackupStatus("Копия скачана.");
   }
 
   async function importBackup(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    if (!file || !user || featureBusyRef.current) return;
+    featureBusyRef.current = true;
+    setBackupStatus("Импортируем…");
     try {
+      if (file.size > 50 * 1024 * 1024) throw new Error("backup-too-large");
       const imported = parseBackup(await file.text()).map((map, index) => normalizeMap({
         ...map,
-        id: maps.some((item) => item.id === map.id) ? createMapId() : map.id,
+        id: createMapId(),
+        shareId: "",
         order: maps.length + index,
       }));
-      const next = [...maps, ...imported];
-      setMaps(next);
-      saveMapsLocally(next);
-      if (user) await Promise.all(imported.map((map) => remoteSave(map)));
-      setBackupStatus(`Добавлено карт: ${imported.length}.`);
+      setMaps((current) => [...current, ...imported.filter((map) => !map.privateLibraryItem)]);
+      setPrivateLibrary((current) => ({ ...current, [user.id]: [...(current[user.id] || []), ...imported.filter((map) => map.privateLibraryItem)] }));
+      const errors = await Promise.all(imported.map((map) => remoteSave(map)));
+      setBackupStatus(`Добавлено карт и эскизов: ${imported.length}.${errors.some(Boolean) ? " Есть несинхронизированные данные; сохрани файл копии до восстановления связи." : ""}`);
     } catch {
       setBackupStatus("Не удалось прочитать эту резервную копию.");
-    }
+    } finally { featureBusyRef.current = false; }
   }
 
   async function createDemoMap() {
+    if (!user || featureBusyRef.current) return;
+    featureBusyRef.current = true;
+    try {
     const demo = normalizeMap({
       id: createMapId(), order: 0, name: "Моя первая карта", description: "Небольшая карта, чтобы попробовать Map Method",
       category: "Личное", mapType: "free", gridMode: "manual", totalCells: "64", manualRows: "8", manualCols: "8",
       completed: [18,19,20,21,25,26,27,28,29,30,34,35,36,37,42,43,44,51], colors: [], createdAt: new Date().toISOString(),
+      isGameMode: true,
     });
-    setMaps([demo]);
-    saveMapsLocally([demo]);
+    setMaps((current) => [...current, demo]);
     if (user) await remoteSave(demo);
     localStorage.setItem(`${ONBOARDING_KEY}:${user.id}`, "done");
     setOnboardingOpen(false);
     setActiveMapId(demo.id);
     openMap(demo);
     setScreen("editor");
+    } finally { featureBusyRef.current = false; }
   }
 
   function finishOnboarding() {
@@ -6463,6 +6596,7 @@ export default function App() {
 
   return (
     <div className="app">
+      {syncStatus && <div className="sync-status" role="status">{syncStatus}</div>}
       {showVictory && (
         <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status" onPointerDown={dismissVictory}>
           <div className="victory-confetti" aria-hidden="true">
@@ -6489,7 +6623,7 @@ export default function App() {
             <div>
               <article><b>{currentStats.total}</b><small>клеток в карте</small></article>
               <article><b>{activityLog.filter((entry) => entry.cells > 0).length}</b><small>активных дней</small></article>
-              <article><b>{activeMap?.createdAt ? Math.max(1, Math.ceil((Date.now() - Date.parse(activeMap.createdAt)) / 86400000)) : 1}</b><small>дней от старта</small></article>
+              <article><b>{activeMap?.createdAt ? Math.max(1, Math.ceil((Date.now() - Date.parse(activeMap.createdAt)) / 86400000)) : "—"}</b><small>дней от старта</small></article>
             </div>
             <div className="victory-actions"><button type="button" onClick={() => downloadMap(true)}>Скачать с сеткой</button><button type="button" onClick={() => downloadMap(false)}>Скачать рисунок</button></div>
           </div>
@@ -7898,7 +8032,8 @@ export default function App() {
                   <article className="library-card" key={item.id}>
                     <button type="button" className={`library-favorite${libraryFavorites.includes(item.id) ? " active" : ""}`} aria-label={libraryFavorites.includes(item.id) ? "Убрать из избранного" : "Добавить в избранное"} onClick={() => setLibraryFavorites((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}>♥</button>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
-                    <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)} · использовали {Math.max(Number(item.useCount) || 0, Number(libraryUsage[item.id]) || 0)} раз</span></div>
+                    <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)}</span></div>
+                    <small>{item.useCount !== null && item.useCount !== undefined ? `Создано карт: ${item.useCount}` : `Создано на этом устройстве: ${Number(libraryUsage[item.id]) || 0}`}</small>
                     <div className={`library-card-actions${isLibraryOwner ? " owner" : " single"}`}>
                       <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
                       {isLibraryOwner && <button type="button" className="edit-action" onClick={() => editPublicLibraryItem(item)}>Изменить</button>}
@@ -8159,7 +8294,7 @@ export default function App() {
                                 {plan.paused
                                   ? plan.label
                                   : dailyProgress
-                                  ? `Норма: ${plan.target} клеток в день · сегодня ${dailyProgress.paintedToday} из ${plan.target} · осталось ${plan.days} дн.`
+                                  ? `Норма: ${dailyProgress.target} ${cellWord(dailyProgress.target)} в день · сегодня ${dailyProgress.paintedToday} из ${dailyProgress.target} · осталось ${plan.days} дн.`
                                   : `Норма: ${plan.label}`}
                               </span>
                             </span>}
@@ -8252,7 +8387,7 @@ export default function App() {
                               className="tool-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setShareMap(map);
+                                openShareDialog(map);
                                 setShareProgressVisible(true);
                                 setShareActivityVisible(false);
                                 setShareStatus("");
@@ -8369,7 +8504,7 @@ export default function App() {
                     <button className="text-action" onClick={() => { setHistoryMapId(activeMap.id); setHistoryPreviewIndex(Math.max(0, (activeMap.versions?.length || 1) - 1)); }}>
                       История
                     </button>
-                    <button className="text-action" onClick={() => { setShareMap(activeMap); setShareProgressVisible(true); setShareActivityVisible(false); setShareStatus(""); }}>
+                    <button className="text-action" onClick={() => openShareDialog(activeMap)}>
                       Поделиться
                     </button>
 
@@ -9730,6 +9865,7 @@ export default function App() {
           <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ДО 20 ВЕРСИЙ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={() => { setHistoryMapId(null); setHistoryPlaying(false); }}>×</button></div>
             <p className="feature-modal-intro">Map Method сохраняет по одной автоматической версии в день. Важный этап можно сохранить вручную.</p>
+            {featureStatus && <p className="feature-status" role="status">{featureStatus}</p>}
             <button type="button" className="feature-primary" onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>
             {historyMap.versions?.length ? (() => {
               const snapshot = historyMap.versions[Math.min(historyPreviewIndex, historyMap.versions.length - 1)];
@@ -9756,7 +9892,8 @@ export default function App() {
             <label className="feature-toggle"><input type="checkbox" checked={shareActivityVisible} onChange={(event) => setShareActivityVisible(event.target.checked)} /><span>Показывать дату последнего изменения</span></label>
             {shareMap.shareUrl && <div className="share-link"><input readOnly value={shareMap.shareUrl} /><button type="button" onClick={() => navigator.clipboard.writeText(shareMap.shareUrl)}>Копировать</button></div>}
             {shareStatus === "error" && <p className="feature-status error">Не удалось создать ссылку. Попробуй ещё раз.</p>}
-            {shareStatus === "copied" && <p className="feature-status">Ссылка создана и скопирована.</p>}
+            {shareStatus === "copied" && <p className="feature-status">Ссылка создана. Её можно скопировать из поля выше.</p>}
+            {shareStatus === "portable" && <p className="feature-status">Создана автономная ссылка-снимок. Её нельзя отозвать или обновить: новая публикация создаст другую ссылку.</p>}
             <div className="history-actions"><button type="button" className="feature-primary" disabled={shareStatus === "saving"} onClick={publishShare}>{shareStatus === "saving" ? "Публикуем…" : shareMap.shareUrl ? "Обновить снимок" : "Создать и скопировать ссылку"}</button>{shareMap.shareId && <button type="button" className="danger-action" onClick={revokeShare}>Отключить ссылку</button>}</div>
           </div>
         </div>

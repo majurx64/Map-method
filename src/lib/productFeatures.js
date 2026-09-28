@@ -1,4 +1,4 @@
-import { getMapStats } from "./grid.js";
+import { getMapStats, MAX_CELLS, normalizeImageOffset } from "./grid.js";
 
 const DAY = 86_400_000;
 
@@ -33,7 +33,9 @@ export function calculateStreaks(maps, today = new Date()) {
   let activeDays = 0;
   let freeDayAvailable = false;
   let freeDayUsed = false;
-  calendar.forEach((day) => {
+  calendar.forEach((day, index) => {
+    // Today is still in progress: neither break a streak nor consume its rest day.
+    if (index === calendar.length - 1 && !day.cells) return;
     if (day.cells > 0) {
       run += 1;
       activeDays += 1;
@@ -58,20 +60,25 @@ export function calculateStreaks(maps, today = new Date()) {
 }
 
 export function adaptiveDailyTarget(map, today = new Date()) {
-  const mode = PLAN_MODES[map.planMode] ? map.planMode : "balanced";
-  if (mode === "paused") return { paused: true, label: "План на паузе" };
+  let mode = PLAN_MODES[map.planMode] ? map.planMode : "balanced";
   if (map.planPausedUntil && map.planPausedUntil >= dateKey(today)) {
     return { paused: true, label: `Отдых до ${map.planPausedUntil.split("-").reverse().join(".")}` };
   }
+  if (mode === "paused" && !map.planPausedUntil) return { paused: true, label: "План на паузе" };
+  if (mode === "paused") mode = "balanced";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(map.deadline || "")) return null;
   const stats = getMapStats(map);
   const [year, month, day] = map.deadline.split("-").map(Number);
   const days = Math.floor((Date.UTC(year, month - 1, day) - Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())) / DAY) + 1;
   const remaining = Math.max(0, stats.total - stats.filled);
+  if (!stats.total) return { target: 0, days, label: "Добавьте рисунок для расчёта нормы" };
   if (!remaining) return { target: 0, days: Math.max(0, days), label: "Карта заполнена" };
   if (days <= 0) return { target: remaining, days: 0, label: `Срок прошёл · осталось ${remaining}` };
-  const target = Math.max(1, Math.ceil((remaining / days) * PLAN_MODES[mode].multiplier));
-  return { target, days, mode, label: `${target} в день · осталось ${days} дн.` };
+  const paintedToday = (map.activityLog || []).filter((entry) => entry.date === dateKey(today)).reduce((sum, entry) => sum + Math.max(0, Number(entry.cells) || 0), 0);
+  const startRemaining = Math.min(stats.total, remaining + paintedToday);
+  const target = Math.min(startRemaining, Math.max(1, Math.ceil((startRemaining / days) * PLAN_MODES[mode].multiplier)));
+  const word = target % 100 >= 11 && target % 100 <= 14 ? "клеток" : target % 10 === 1 ? "клетка" : target % 10 >= 2 && target % 10 <= 4 ? "клетки" : "клеток";
+  return { target, paintedToday, days, mode, label: `${target} ${word} в день · осталось ${days} дн.` };
 }
 
 export function dateKey(date = new Date()) {
@@ -92,6 +99,10 @@ export function createMapSnapshot(map, label = "Автоматическая в�
     manualRows: map.manualRows,
     manualCols: map.manualCols,
     imageRatio: map.imageRatio,
+    image: map.image || null,
+    imageOffset: { ...normalizeImageOffset(map.imageOffset), cellsEdited: true },
+    isGameMode: Boolean(map.isGameMode),
+    showImage: map.showImage !== false,
     completed: [...(map.completed || [])],
     progressCompleted: [...(map.progressCompleted || [])],
     colors: [...(map.colors || [])],
@@ -114,9 +125,13 @@ export function normalizeVersions(versions) {
       manualRows: String(version.manualRows || "20"),
       manualCols: String(version.manualCols || "25"),
       imageRatio: Number(version.imageRatio) > 0 ? Number(version.imageRatio) : 1,
-      completed: version.completed.map(Number).filter(Number.isInteger),
-      progressCompleted: (version.progressCompleted || []).map(Number).filter(Number.isInteger),
-      colors: Array.isArray(version.colors) ? version.colors : [],
+      image: typeof version.image === "string" ? version.image : null,
+      imageOffset: { ...normalizeImageOffset(version.imageOffset), cellsEdited: true },
+      isGameMode: Boolean(version.isGameMode),
+      showImage: version.showImage !== false,
+      completed: version.completed.slice(0, MAX_CELLS).map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < MAX_CELLS),
+      progressCompleted: (Array.isArray(version.progressCompleted) ? version.progressCompleted : []).slice(0, MAX_CELLS).map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < MAX_CELLS),
+      colors: Array.isArray(version.colors) ? version.colors.slice(0, MAX_CELLS) : [],
     }];
   });
 }
@@ -124,11 +139,13 @@ export function normalizeVersions(versions) {
 export function addDailySnapshot(previous, next) {
   if (!previous || !next) return next;
   const changed = JSON.stringify(previous.progressCompleted || []) !== JSON.stringify(next.progressCompleted || [])
-    || JSON.stringify(previous.completed || []) !== JSON.stringify(next.completed || []);
+    || JSON.stringify(previous.completed || []) !== JSON.stringify(next.completed || [])
+    || JSON.stringify(previous.colors || []) !== JSON.stringify(next.colors || [])
+    || ["image", "totalCells", "manualRows", "manualCols", "gridMode", "mapType", "imageRatio"].some((key) => previous[key] !== next[key]);
   if (!changed) return next;
   const versions = normalizeVersions(previous.versions);
   const today = dateKey();
-  if (versions.some((version) => version.createdAt.slice(0, 10) === today)) return { ...next, versions };
+  if (versions.some((version) => dateKey(new Date(version.createdAt)) === today)) return { ...next, versions };
   return { ...next, versions: [...versions, createMapSnapshot(previous)].slice(-20) };
 }
 
@@ -141,6 +158,12 @@ export function restoreSnapshot(map, snapshot) {
     manualRows: snapshot.manualRows,
     manualCols: snapshot.manualCols,
     imageRatio: snapshot.imageRatio,
+    image: snapshot.image || null,
+    imageOffset: { ...normalizeImageOffset(snapshot.imageOffset), cellsEdited: true },
+    isGameMode: Boolean(snapshot.isGameMode),
+    showImage: snapshot.showImage !== false,
+    modeDrafts: {},
+    dailyPlanDoneOn: "",
     completed: [...snapshot.completed],
     progressCompleted: [...snapshot.progressCompleted],
     colors: [...snapshot.colors],
@@ -158,9 +181,30 @@ export function createBackup(maps, profile = {}) {
 }
 
 export function parseBackup(text) {
+  if (text.length > 50 * 1024 * 1024) throw new Error("backup-too-large");
   const value = JSON.parse(text);
-  if (value?.format !== "map-method-backup" || !Array.isArray(value.maps)) throw new Error("invalid-backup");
+  if (value?.format !== "map-method-backup" || value.version !== 1 || !Array.isArray(value.maps) || value.maps.length > 1000) throw new Error("invalid-backup");
+  for (const map of value.maps) {
+    if (!map || typeof map !== "object" || Array.isArray(map) || typeof map.name !== "string"
+      || !["image", "free"].includes(map.mapType) || !Number.isInteger(Number(map.totalCells))
+      || Number(map.totalCells) < 1 || Number(map.totalCells) > MAX_CELLS
+      || ["completed", "progressCompleted", "colors"].some((key) => map[key] !== undefined && (!Array.isArray(map[key]) || map[key].length > MAX_CELLS))) {
+      throw new Error("invalid-map");
+    }
+  }
   return value.maps;
+}
+
+// An allowlist is essential: hidden progress must never be included in a link.
+export function publicSnapshot(map, settings) {
+  const result = {};
+  for (const key of ["name", "description", "mapType", "gridMode", "totalCells", "manualRows", "manualCols", "imageRatio", "completed", "colors"]) {
+    if (map[key] !== undefined) result[key] = map[key];
+  }
+  result.progressCompleted = settings.showProgress ? [...(map.progressCompleted || [])] : [];
+  result.isGameMode = Boolean(settings.showProgress);
+  result.lastPaintedAt = settings.showActivity ? map.lastPaintedAt || "" : "";
+  return result;
 }
 
 function bytesToBase64(bytes) {
@@ -184,10 +228,21 @@ export async function encodeSharedSnapshot(value) {
 }
 
 export async function decodeSharedSnapshot(value) {
+  if (String(value).length > 200000) throw new Error("share-too-large");
   const [kind, encoded] = String(value || "").split(".", 2);
   const bytes = base64ToBytes(encoded || "");
   if (kind === "plain") return JSON.parse(new TextDecoder().decode(bytes));
   if (kind !== "gzip" || !("DecompressionStream" in window)) throw new Error("unsupported-share");
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  return JSON.parse(await new Response(stream).text());
+  const reader = stream.getReader();
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { value: chunk, done } = await reader.read();
+    if (done) break;
+    size += chunk.byteLength;
+    if (size > 2 * 1024 * 1024) { await reader.cancel(); throw new Error("share-too-large"); }
+    chunks.push(chunk);
+  }
+  return JSON.parse(await new Blob(chunks).text());
 }
