@@ -1093,6 +1093,7 @@ function mapFromSupabaseRow(row) {
 }
 
 const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null }) {
+  const canvasRef = useRef(null);
   const completedCells = new Set(map.progressCompleted || []);
   const drawingCells = new Set(map.completed || []);
   const densePreview = dimensions.actualTotal >= 2000;
@@ -1146,34 +1147,64 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     };
   };
 
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (cropToDrawing || !canvas) return undefined;
+    const progressCells = new Set(map.progressCompleted || []);
+    const templateCells = new Set(map.completed || []);
+    const draw = () => {
+      const bounds = canvas.getBoundingClientRect();
+      const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+      const width = Math.max(1, Math.round(bounds.width * pixelRatio));
+      const height = Math.max(1, Math.round(bounds.height * pixelRatio));
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      const context = canvas.getContext("2d", { alpha: true });
+      context.clearRect(0, 0, width, height);
+      const cellSize = Math.max(1, Math.floor(Math.min(width / visibleCols, height / visibleRows)));
+      const gridWidth = cellSize * visibleCols;
+      const gridHeight = cellSize * visibleRows;
+      const offsetX = Math.floor((width - gridWidth) / 2);
+      const offsetY = Math.floor((height - gridHeight) / 2);
+      const gap = cellSize >= 6 ? Math.max(1, Math.round(cellSize * (densePreview ? 0.025 : 0.07))) : 0;
+      visibleIndices.forEach((index) => {
+        const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
+        const filled = progressCells.has(index) && !utilityCell;
+        const backgroundDrawingCell = !utilityCell && (map.mapType === "image" || templateCells.has(index));
+        context.fillStyle = filled
+          ? map.colors?.[index] || "#32624f"
+          : backgroundDrawingCell
+            ? map.colors?.[index] || "#aeb5ad"
+            : "#deded8";
+        context.globalAlpha = filled
+          ? 1
+          : backgroundDrawingCell
+            ? densePreview ? 0.38 : 0.52
+            : densePreview ? 0.34 : 0.62;
+        const row = Math.floor(index / dimensions.cols) - startRow;
+        const column = index % dimensions.cols - startCol;
+        context.fillRect(
+          offsetX + column * cellSize + gap,
+          offsetY + row * cellSize + gap,
+          Math.max(1, cellSize - gap * 2),
+          Math.max(1, cellSize - gap * 2)
+        );
+      });
+      context.globalAlpha = 1;
+    };
+    draw();
+    const observer = new ResizeObserver(draw);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices]);
+
   if (!cropToDrawing) {
-    const inset = densePreview ? 0.015 : 0.045;
     return (
-      <svg
-        className={`map-card-grid is-svg-preview${densePreview ? " is-dense" : ""}`}
-        viewBox={`0 0 ${visibleCols} ${visibleRows}`}
-        preserveAspectRatio="xMidYMid meet"
-        shapeRendering="crispEdges"
+      <canvas
+        ref={canvasRef}
+        className={`map-card-grid is-canvas-preview${densePreview ? " is-dense" : ""}`}
         aria-hidden="true"
-      >
-        {visibleIndices.map((index) => {
-          const cell = getCellAppearance(index);
-          const row = Math.floor(index / dimensions.cols) - startRow;
-          const column = index % dimensions.cols - startCol;
-          return (
-            <rect
-              key={index}
-              className={`map-card-cell${cell.filled ? " filled" : ""}`}
-              x={column + inset}
-              y={row + inset}
-              width={1 - inset * 2}
-              height={1 - inset * 2}
-              fill={cell.color}
-              fillOpacity={cell.opacity}
-            />
-          );
-        })}
-      </svg>
+      />
     );
   }
 
