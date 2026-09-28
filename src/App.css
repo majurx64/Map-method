@@ -3601,6 +3601,48 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .victory-close { display:grid; place-items:center; padding:0; font:22px/1 Arial,sans-serif; }
 @keyframes victory-overlay-in { from { opacity:0; } to { opacity:1; } }
 
+/* Paired open/close motion for the account menu. */
+.account-popover.is-closing { pointer-events:none; animation:popover-leave 190ms cubic-bezier(.4,0,1,1) forwards; }
+.account-popover-action:hover { background:#f4efe6 !important; color:#28583d; transform:translateX(2px); }
+.account-popover-action { transition:background-color 180ms ease,color 180ms ease,transform 200ms cubic-bezier(.16,1,.3,1); }
+@keyframes popover-leave { from { opacity:1; transform:translateY(0) scale(1); filter:blur(0); } to { opacity:0; transform:translateY(-7px) scale(.96); filter:blur(3px); } }
+
+/* Activity controls stay centred and never create a horizontal page scrollbar. */
+.history-clear-day { box-sizing:border-box; font-size:0; line-height:1; transform-origin:center; }
+.history-clear-day::before { content:"×"; font:16px/1 Arial,sans-serif; transform:translateY(-1px); }
+.history-clear-day::after { width:130px; max-width:130px; }
+.history-day:first-child .history-clear-day::after { left:0; transform:translate(0,5px) scale(.96); }
+.history-day:first-child .history-clear-day:hover::after,.history-day:first-child .history-clear-day:focus-visible::after { transform:translate(0,0) scale(1); }
+.history-day:last-child .history-clear-day::after { right:0; left:auto; transform:translate(0,5px) scale(.96); }
+.history-day:last-child .history-clear-day:hover::after,.history-day:last-child .history-clear-day:focus-visible::after { transform:translate(0,0) scale(1); }
+
+/* Version playback changes the drawing while the preview frame remains still. */
+.history-preview-map { animation:none; contain:paint; }
+.history-preview-copy { min-width:0; animation:none; }
+.history-dynamic-text { animation:history-text-change 260ms ease both; }
+.history-player { display:grid; grid-template-columns:auto minmax(120px,1fr) auto; align-items:center; gap:10px; margin-top:12px; }
+.history-player > button { min-width:118px; min-height:38px; padding:0 12px; border:1px solid #d5cec3; border-radius:10px; background:#fffefa; color:#405548; cursor:pointer; font-weight:750; transition:background 180ms ease,transform 180ms ease,border-color 180ms ease; }
+.history-player > button:hover { border-color:#8ca293; background:#edf4ec; transform:translateY(-1px); }
+.history-player > span { min-width:42px; color:#727970; font-size:12px; font-variant-numeric:tabular-nums; text-align:right; }
+.history-version-list { overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; }
+.history-version-delete::after { right:calc(100% + 6px); bottom:50%; left:auto; width:112px; max-width:112px; transform:translateY(50%) translateX(5px) scale(.96); white-space:nowrap; }
+.history-version-delete:hover::after,.history-version-delete:focus-visible::after { transform:translateY(50%) translateX(0) scale(1); }
+.history-version-undo { position:relative; left:auto; bottom:auto; z-index:2; width:auto; margin:12px 0 0; animation:history-undo-in 260ms cubic-bezier(.16,1,.3,1) both; }
+@keyframes history-text-change { from { opacity:.25; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
+@keyframes history-undo-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+.preview-progress strong { display:inline-block; min-width:5ch; font-variant-numeric:tabular-nums; }
+.preview-progress span { backface-visibility:hidden; transform:translateZ(0); }
+
+.victory-summary { background:#fffdf9; }
+.victory-close { color:#333; transition:color 180ms ease,background 180ms ease,transform 220ms cubic-bezier(.16,1,.3,1); }
+.victory-close:hover { background:#fff0ed; color:#b54d41; transform:rotate(7deg) scale(1.09); }
+
+@media (max-width:640px) {
+  .history-player { grid-template-columns:1fr auto; }
+  .history-player > button { grid-column:1/-1; }
+}
+
 /* A dedicated chevron avoids optical jumps from stacked transforms. */
 .animated-select-trigger i,.deadline-selects .animated-select-trigger i { top:0 !important; right:11px !important; bottom:0; width:14px !important; height:14px !important; margin:auto 0; border:0 !important; transform:none !important; }
 .animated-select-trigger i::before { display:block; width:6px; height:6px; margin:2px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; content:""; transform:rotate(45deg); transition:transform 240ms cubic-bezier(.16,1,.3,1); }

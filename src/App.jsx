@@ -1110,8 +1110,9 @@ function mapFromSupabaseRow(row) {
   });
 }
 
-const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null }) {
+const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false }) {
   const canvasRef = useRef(null);
+  const previewAnimationFrameRef = useRef(0);
   const completedCells = new Set(map.progressCompleted || []);
   const drawingCells = new Set(map.completed || []);
   const densePreview = dimensions.actualTotal >= 2000;
@@ -1169,11 +1170,15 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     const canvas = canvasRef.current;
     const preview = canvas?.parentElement;
     if (cropToDrawing || !canvas || !preview) return undefined;
+    const previousFrame = animateChanges && canvas.width && canvas.height
+      ? Object.assign(document.createElement("canvas"), { width: canvas.width, height: canvas.height })
+      : null;
+    previousFrame?.getContext("2d")?.drawImage(canvas, 0, 0);
     const progressCells = new Set(map.progressCompleted || []);
     const templateCells = new Set(map.completed || []);
     // Layout dimensions must never include the ancestor's temporary FLIP scale.
     // Observe the canvas content box, not its transformed screen rectangle.
-    const draw = (entries) => {
+    const draw = (entries, transition = 1) => {
       const bounds = entries?.[0]?.contentRect;
       const cssWidth = bounds?.width ?? canvas.clientWidth;
       const cssHeight = bounds?.height ?? canvas.clientHeight;
@@ -1216,17 +1221,36 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
         context.fillRect(left, top, Math.max(0, right - left - gap), Math.max(0, bottom - top - gap));
       });
       context.globalAlpha = 1;
+      if (previousFrame && previousFrame.width === width && previousFrame.height === height && transition < 1) {
+        context.globalAlpha = 1 - transition;
+        context.drawImage(previousFrame, 0, 0);
+        context.globalAlpha = 1;
+      }
     };
-    draw();
-    const observer = new ResizeObserver(draw);
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let transitionProgress = previousFrame && !reducedMotion ? 0 : 1;
+    if (previousFrame && !reducedMotion) {
+      const startedAt = performance.now();
+      const animate = (now) => {
+        const progress = Math.min(1, (now - startedAt) / 300);
+        transitionProgress = 1 - Math.pow(1 - progress, 3);
+        draw(undefined, transitionProgress);
+        if (progress < 1) previewAnimationFrameRef.current = window.requestAnimationFrame(animate);
+      };
+      previewAnimationFrameRef.current = window.requestAnimationFrame(animate);
+    } else {
+      draw();
+    }
+    const observer = new ResizeObserver((entries) => draw(entries, transitionProgress));
     observer.observe(canvas);
-    const redraw = () => draw();
+    const redraw = () => draw(undefined, transitionProgress);
     window.addEventListener("resize", redraw);
     return () => {
+      window.cancelAnimationFrame(previewAnimationFrameRef.current);
       observer.disconnect();
       window.removeEventListener("resize", redraw);
     };
-  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices]);
+  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices, animateChanges]);
 
   if (!cropToDrawing) {
     return (
@@ -1270,6 +1294,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   && previous.dimensions.rows === next.dimensions.rows
   && previous.dimensions.actualTotal === next.dimensions.actualTotal
   && previous.cropToDrawing === next.cropToDrawing
+  && previous.animateChanges === next.animateChanges
   && previous.previewBounds?.width === next.previewBounds?.width
   && previous.previewBounds?.height === next.previewBounds?.height);
 
@@ -1498,7 +1523,7 @@ export default function App() {
   const [historyMapId, setHistoryMapId] = useState(null);
   const [historyPreviewIndex, setHistoryPreviewIndex] = useState(0);
   const [historyPlaying, setHistoryPlaying] = useState(false);
-  const [historyViewMode, setHistoryViewMode] = useState("days");
+  const [historyViewMode, setHistoryViewMode] = useState("changes");
   const [historyClosing, setHistoryClosing] = useState(false);
   const [deletingVersionId, setDeletingVersionId] = useState("");
   const [restoredVersionId, setRestoredVersionId] = useState("");
@@ -1803,6 +1828,7 @@ export default function App() {
     isAccountOpen,
     setIsAccountOpen,
   ] = useState(false);
+  const [isAccountClosing, setIsAccountClosing] = useState(false);
   const [isLanguageOpen, setIsLanguageOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [feedbackKind, setFeedbackKind] = useState("Предложение");
@@ -1866,6 +1892,7 @@ export default function App() {
   const accountRef = useRef(null);
   const languageRef = useRef(null);
   const accountHoverCloseRef = useRef(null);
+  const accountCloseAnimationRef = useRef(null);
   const accountNameEditorRef = useRef(null);
   const accountNameInputRef = useRef(null);
   const accountNameCloseTimerRef = useRef(null);
@@ -2712,7 +2739,7 @@ export default function App() {
       }
 
       if (isAccountOpen) {
-        setIsAccountOpen(false);
+        closeAccountMenu();
         return;
       }
       if (isLanguageOpen) {
@@ -3433,7 +3460,7 @@ export default function App() {
         accountRef.current &&
         !accountRef.current.contains(e.target)
       ) {
-        setIsAccountOpen(false);
+        closeAccountMenu();
       }
       if (
         languageRef.current &&
@@ -3550,7 +3577,7 @@ export default function App() {
   }, [screen, isLibraryOwner, analyticsPeriod]);
 
   async function handleSignOut() {
-    setIsAccountOpen(false);
+    closeAccountMenu();
 
     const currentMap = buildCurrentMap();
     if (currentMap) await remoteSave(currentMap);
@@ -3592,7 +3619,7 @@ export default function App() {
   }
 
   async function handleSwitchAccount() {
-    setIsAccountOpen(false);
+    closeAccountMenu();
     const currentMap = buildCurrentMap();
     if (currentMap) await remoteSave(currentMap);
     setScreen("auth");
@@ -3602,7 +3629,7 @@ export default function App() {
   async function switchToSavedAccount(account) {
     const currentMap = buildCurrentMap();
     if (currentMap) remoteSave(currentMap);
-    setIsAccountOpen(false);
+    closeAccountMenu();
     setIsAccountSwitcherOpen(false);
     setSwitchingAccountId(account.id);
     const { error } = await supabase.auth.setSession({
@@ -3831,7 +3858,7 @@ export default function App() {
   }
 
   async function openFeedbackInbox() {
-    setIsAccountOpen(false);
+    closeAccountMenu();
     setScreen("feedback-inbox");
     const unreadIds = feedbackMessages.filter((message) => !message.is_read).map((message) => message.id);
     if (!unreadIds.length) return;
@@ -3989,6 +4016,8 @@ export default function App() {
       return;
     }
 
+    gameFillTimersRef.current.forEach(window.clearTimeout);
+    gameFillTimersRef.current = [];
     const a =
       undoStackRef.current.pop();
 
@@ -4003,6 +4032,8 @@ export default function App() {
       return;
     }
 
+    gameFillTimersRef.current.forEach(window.clearTimeout);
+    gameFillTimersRef.current = [];
     const a =
       redoStackRef.current.pop();
 
@@ -5312,15 +5343,22 @@ export default function App() {
     gameFillTimersRef.current.forEach(window.clearTimeout);
     gameFillTimersRef.current = [];
     const before = new Set(progressCompletedRef.current);
+    const after = new Set(before);
+    added.forEach((index) => after.add(index));
+    if (added.length) {
+      pushHistory(before, after, [], [], "progress");
+      redoStackRef.current = [];
+    }
+    const animatedProgress = new Set(before);
     const steps = Math.min(12, added.length);
     const batchSize = Math.max(1, Math.ceil(added.length / Math.max(1, steps)));
     for (let start = 0; start < added.length; start += batchSize) {
       const batch = added.slice(start, start + batchSize);
       const timer = window.setTimeout(() => {
-        batch.forEach((index) => before.add(index));
+        batch.forEach((index) => animatedProgress.add(index));
         animateCells(batch);
-        progressCompletedRef.current = new Set(before);
-        setProgressCompleted([...before]);
+        progressCompletedRef.current = new Set(animatedProgress);
+        setProgressCompleted([...animatedProgress]);
         if (start + batchSize >= added.length) recordPaintedCells(added.length);
       }, Math.floor(start / batchSize) * 38);
       gameFillTimersRef.current.push(timer);
@@ -6486,10 +6524,28 @@ export default function App() {
     }, 180);
   }
 
+  function openAccountMenu() {
+    window.clearTimeout(accountHoverCloseRef.current);
+    window.clearTimeout(accountCloseAnimationRef.current);
+    setIsAccountClosing(false);
+    setIsLanguageOpen(false);
+    setIsAccountOpen(true);
+  }
+
+  function closeAccountMenu() {
+    if (!isAccountOpen || isAccountClosing) return;
+    setIsAccountClosing(true);
+    window.clearTimeout(accountCloseAnimationRef.current);
+    accountCloseAnimationRef.current = window.setTimeout(() => {
+      setIsAccountOpen(false);
+      setIsAccountClosing(false);
+    }, 190);
+  }
+
   function openHistoryModal(map) {
     window.clearTimeout(historyCloseTimerRef.current);
     setHistoryClosing(false);
-    setHistoryViewMode("days");
+    setHistoryViewMode("changes");
     setHistoryMapId(map.id);
     setHistoryPreviewIndex(Math.max(0, (map.versions?.length || 1) - 1));
     setHistoryPlaying(false);
@@ -6770,12 +6826,8 @@ export default function App() {
   return (
     <div className="app">
       {syncStatus && <div className="sync-status" role="status">{syncStatus}</div>}
-      {versionUndoNotice && (() => {
-        const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
-        return <div className="delete-undo-bar version-undo-bar" role="status"><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
-      })()}
       {showVictory && (
-        <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status">
+        <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status" onPointerDown={dismissVictory}>
           <div className="victory-confetti" aria-hidden="true">
             {Array.from({ length: 28 }, (_, index) => (
               <i
@@ -6802,7 +6854,7 @@ export default function App() {
               <article><b>{activityLog.filter((entry) => entry.cells > 0).length}</b><small>активных дней</small></article>
               <article><b>{activeMap?.createdAt ? Math.max(1, Math.ceil((Date.now() - Date.parse(activeMap.createdAt)) / 86400000)) : "—"}</b><small>дней от старта</small></article>
             </div>
-            <div className="victory-actions"><button type="button" onClick={() => downloadMap(true)}>Скачать с сеткой</button><button type="button" onClick={() => downloadMap(false)}>Скачать рисунок</button></div>
+            <div className="victory-actions"><button type="button" onClick={() => downloadMap(true)}>Скачать с сеткой клеток</button><button type="button" onClick={() => downloadMap(false)}>Скачать без сетки клеток</button></div>
           </div>
         </div>
       )}
@@ -6884,7 +6936,7 @@ export default function App() {
             </button>
           )}
           <div ref={languageRef} className={`language-menu${isLanguageOpen ? " is-open" : ""}`}>
-            <button type="button" className="language-select" onClick={() => { setIsAccountOpen(false); setIsLanguageOpen((open) => !open); }}>
+            <button type="button" className="language-select" onClick={() => { closeAccountMenu(); setIsLanguageOpen((open) => !open); }}>
               {LANGUAGE_OPTIONS.find(([code]) => code === language)?.[1] || "Русский"} <span className="menu-chevron" aria-hidden="true" />
             </button>
             {isLanguageOpen && (
@@ -6921,15 +6973,11 @@ export default function App() {
           {user && (
             <div
               ref={accountRef}
-              className={`account-menu${isAccountOpen ? " is-open" : ""}`}
-              onMouseEnter={() => {
-                window.clearTimeout(accountHoverCloseRef.current);
-                setIsLanguageOpen(false);
-                setIsAccountOpen(true);
-              }}
+              className={`account-menu${isAccountOpen && !isAccountClosing ? " is-open" : ""}${isAccountClosing ? " is-closing" : ""}`}
+              onMouseEnter={openAccountMenu}
               onMouseLeave={() => {
                 window.clearTimeout(accountHoverCloseRef.current);
-                accountHoverCloseRef.current = window.setTimeout(() => setIsAccountOpen(false), 140);
+                accountHoverCloseRef.current = window.setTimeout(closeAccountMenu, 110);
               }}
               style={{
                 position:
@@ -6942,8 +6990,8 @@ export default function App() {
                 type="button"
                 className="account-trigger"
                 onClick={() => {
-                  setIsLanguageOpen(false);
-                  setIsAccountOpen((v) => !v);
+                  if (isAccountOpen && !isAccountClosing) closeAccountMenu();
+                  else openAccountMenu();
                 }}
                 style={{
                   display: "flex",
@@ -7021,9 +7069,9 @@ export default function App() {
                 <span className="menu-chevron" aria-hidden="true" />
               </button>
 
-              {isAccountOpen && (
+              {(isAccountOpen || isAccountClosing) && (
                 <div
-                  className="account-popover"
+                  className={`account-popover${isAccountClosing ? " is-closing" : ""}`}
                   style={{
                     position:
                       "absolute",
@@ -7092,9 +7140,7 @@ export default function App() {
                     type="button"
                     className="account-popover-action"
                     onClick={() => {
-                      setIsAccountOpen(
-                        false
-                      );
+                      closeAccountMenu();
                       setScreen(
                         "account"
                       );
@@ -7128,7 +7174,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => {
-                      setIsAccountOpen(false);
+                      closeAccountMenu();
                       setScreen("library");
                     }}
                     className="account-popover-action"
@@ -7140,9 +7186,7 @@ export default function App() {
                     type="button"
                     className="account-popover-action"
                     onClick={() => {
-                      setIsAccountOpen(
-                        false
-                      );
+                      closeAccountMenu();
                       setScreen(
                         "maps"
                       );
@@ -7237,7 +7281,7 @@ export default function App() {
                         ✉ Обращения
                         {unreadFeedbackCount > 0 && <span>{unreadFeedbackCount > 99 ? "99+" : unreadFeedbackCount}</span>}
                       </button>
-                      <button type="button" className="account-popover-action" onClick={() => { setIsAccountOpen(false); setScreen("analytics"); }}>
+                      <button type="button" className="account-popover-action" onClick={() => { closeAccountMenu(); setScreen("analytics"); }}>
                         ◫ Аналитика сайта
                       </button>
                     </>
@@ -7247,7 +7291,7 @@ export default function App() {
                     type="button"
                     className="account-popover-action feedback-menu-action"
                     onClick={() => {
-                      setIsAccountOpen(false);
+                      closeAccountMenu();
                       setFeedbackEmail(user?.email || "");
                       setFeedbackFiles([]);
                       setFeedbackStatus("");
@@ -7880,7 +7924,7 @@ export default function App() {
                   const relativeHeight = item.cells ? 16 + Math.sqrt(item.cells / accountHistoryMax) * 84 : 3;
                   const date = new Date(`${item.key}T12:00:00`);
                   return (
-                  <div className="history-day" key={item.key} title={`${item.label}: ${item.cells} клеток`}>
+                  <div className="history-day" key={item.key}>
                     <i style={{ height: `${relativeHeight}%` }} />
                     <strong>{item.cells || "—"}</strong>
                     <span>{item.label}</span>
@@ -10042,11 +10086,15 @@ export default function App() {
             <div className="modal-header"><div><span className="account-eyebrow">ДО 20 ВЕРСИЙ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
             <p className="feature-modal-intro">Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням.</p>
             <div className="history-view-switch" role="group" aria-label="Отображение истории">
-              <button type="button" className={historyViewMode === "days" ? "active" : ""} onClick={() => changeHistoryViewMode("days")}>По дням</button>
               <button type="button" className={historyViewMode === "changes" ? "active" : ""} onClick={() => changeHistoryViewMode("changes")}>Все изменения</button>
+              <button type="button" className={historyViewMode === "days" ? "active" : ""} onClick={() => changeHistoryViewMode("days")}>По дням</button>
             </div>
             {featureStatus && <p className="feature-status" role="status">{featureStatus}</p>}
             <button type="button" className="feature-primary" onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>
+            {versionUndoNotice && (() => {
+              const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
+              return <div className="delete-undo-bar version-undo-bar history-version-undo" role="status"><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
+            })()}
             {historyVersionEntries.length ? (() => {
               const selectedEntry = historyVersionEntries.find((entry) => entry.index === historyPreviewIndex) || historyVersionEntries.at(-1);
               const snapshot = selectedEntry.version;
@@ -10055,9 +10103,19 @@ export default function App() {
               const current = getMapStats(historyMap);
               const visiblePosition = Math.max(0, historyVersionEntries.findIndex((entry) => entry.index === selectedEntry.index));
               return <>
-                <div className="history-preview"><div className="library-preview history-preview-map" key={snapshot.id}><MapCardGrid map={preview} dimensions={dimensions} /></div><div key={`copy-${snapshot.id}`} className="history-preview-copy"><strong>{snapshot.label}</strong><span>{new Date(snapshot.createdAt).toLocaleString("ru-RU")}</span><p>{snapshot.filled} из {snapshot.total} клеток · {snapshot.filled - current.filled >= 0 ? "+" : ""}{snapshot.filled - current.filled} к текущей версии</p></div></div>
-                <input className="history-range" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(historyVersionEntries[Number(event.target.value)].index); }} />
-                <div className="history-actions"><button type="button" onClick={() => { setHistoryPreviewIndex(historyVersionEntries[0].index); setHistoryPlaying(true); }}>▶ Показать изменения</button><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
+                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><span className="history-dynamic-text" key={`date-${snapshot.id}`}>{new Date(snapshot.createdAt).toLocaleString("ru-RU")}</span><p className="history-dynamic-text" key={`stats-${snapshot.id}`}>{snapshot.filled} из {snapshot.total} клеток · {snapshot.filled - current.filled >= 0 ? "+" : ""}{snapshot.filled - current.filled} к текущей версии</p></div></div>
+                <div className="history-player">
+                  <button type="button" onClick={() => {
+                    if (historyPlaying) setHistoryPlaying(false);
+                    else {
+                      if (visiblePosition >= historyVersionEntries.length - 1) setHistoryPreviewIndex(historyVersionEntries[0].index);
+                      setHistoryPlaying(true);
+                    }
+                  }}>{historyPlaying ? "■ Остановить" : visiblePosition >= historyVersionEntries.length - 1 ? "▶ С начала" : "▶ Продолжить"}</button>
+                  <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(historyVersionEntries[Number(event.target.value)].index); }} />
+                  <span>{visiblePosition + 1} / {historyVersionEntries.length}</span>
+                </div>
+                <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
                 <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button><button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}>×</button></div>)}</div>
               </>;
             })() : <p className="feature-empty">Версий пока нет. Внеси изменение в карту или сохрани важный этап вручную.</p>}
