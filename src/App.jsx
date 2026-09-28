@@ -6,7 +6,7 @@ import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
-import { PLAN_MODES, adaptiveDailyTarget, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
+import { PLAN_MODES, adaptiveDailyTarget, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -1499,6 +1499,8 @@ export default function App() {
   const [historyPreviewIndex, setHistoryPreviewIndex] = useState(0);
   const [historyPlaying, setHistoryPlaying] = useState(false);
   const [featureStatus, setFeatureStatus] = useState("");
+  const [activityClearStatus, setActivityClearStatus] = useState("");
+  const [activityClearingDate, setActivityClearingDate] = useState("");
   const featureBusyRef = useRef(false);
   const [shareMap, setShareMap] = useState(null);
   const [shareProgressVisible, setShareProgressVisible] = useState(true);
@@ -2085,8 +2087,6 @@ export default function App() {
       if (librarySort === "favorites") return Number(libraryFavorites.includes(b.id)) - Number(libraryFavorites.includes(a.id));
       return Math.max(Number(b.useCount) || 0, Number(libraryUsage[b.id]) || 0) - Math.max(Number(a.useCount) || 0, Number(libraryUsage[a.id]) || 0);
     });
-  const activityCalendar = useMemo(() => buildActivityCalendar(maps, 365, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
-  const activityMax = Math.max(1, ...activityCalendar.map((day) => day.cells));
   const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const historyMap = maps.find((map) => map.id === historyMapId) || null;
 
@@ -6444,6 +6444,41 @@ export default function App() {
     return normalized;
   }
 
+  async function clearActivityDay(item) {
+    if (!item?.cells || activityClearingDate) return;
+    const readableDate = item.date.toLocaleDateString("ru-RU");
+    if (!window.confirm(`Очистить активность за ${readableDate}? Будут удалены ${item.cells} ${cellWord(item.cells)} из истории.`)) return;
+
+    setActivityClearingDate(item.key);
+    setActivityClearStatus("Очищаем день…");
+    const changedMaps = maps
+      .filter((map) => (map.activityLog || []).some((entry) => entry.date === item.key))
+      .map((map) => normalizeMap({
+        ...map,
+        activityLog: (map.activityLog || []).filter((entry) => entry.date !== item.key),
+        dailyPlanDoneOn: map.dailyPlanDoneOn === item.key ? "" : map.dailyPlanDoneOn,
+      }));
+    const changedById = new Map(changedMaps.map((map) => [map.id, map]));
+    setMaps((current) => current.map((map) => changedById.get(map.id) || map));
+
+    const activeNext = changedById.get(activeMapId);
+    if (activeNext) {
+      activeMapRef.current = activeNext;
+      activityLogRef.current = activeNext.activityLog;
+      setActivityLog(activeNext.activityLog);
+    }
+
+    try {
+      const results = user ? await Promise.allSettled(changedMaps.map((map) => remoteSave(map))) : [];
+      const syncFailed = results.some((result) => result.status === "rejected" || result.value);
+      setActivityClearStatus(syncFailed
+        ? "День очищен на устройстве. Синхронизация продолжится после восстановления связи."
+        : `Активность за ${readableDate} очищена.`);
+    } finally {
+      setActivityClearingDate("");
+    }
+  }
+
   async function saveMapVersion(map, label = "Сохранённая версия") {
     if (featureBusyRef.current) return;
     featureBusyRef.current = true;
@@ -7683,32 +7718,31 @@ export default function App() {
               </div>
             </section>
 
-            <section className="account-history-card">
+            <section className="account-history-card account-movement-card">
               <div>
-                <span className="account-eyebrow">ИСТОРИЯ ДВИЖЕНИЯ</span>
-                <h2>Твоя неделя на карте</h2>
-                <p>Каждая колонка — клетки, которые ты отметил в этот день.</p>
+                <span className="account-eyebrow">АКТИВНОСТЬ</span>
+                <h2>История движения</h2>
+                <p>Последние семь дней. Большие значения показаны по мягкой шкале, чтобы активность каждого дня оставалась заметной.</p>
               </div>
               <div className="history-chart">
-                {accountHistory.map((item) => (
+                {accountHistory.map((item) => {
+                  const relativeHeight = item.cells ? 16 + Math.sqrt(item.cells / accountHistoryMax) * 84 : 3;
+                  const date = new Date(`${item.key}T12:00:00`);
+                  return (
                   <div className="history-day" key={item.key} title={`${item.label}: ${item.cells} клеток`}>
-                    <i style={{ height: `${Math.max(item.cells ? 12 : 3, (item.cells / accountHistoryMax) * 100)}%` }} />
+                    <i style={{ height: `${relativeHeight}%` }} />
                     <strong>{item.cells || "—"}</strong>
                     <span>{item.label}</span>
+                    <button
+                      type="button"
+                      className="history-clear-day"
+                      disabled={!item.cells || Boolean(activityClearingDate)}
+                      aria-label={`Очистить активность за ${date.toLocaleDateString("ru-RU")}`}
+                      title={item.cells ? "Очистить этот день" : "В этот день активности нет"}
+                      onClick={() => clearActivityDay({ ...item, date })}
+                    >×</button>
                   </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="account-activity-card">
-              <div className="account-section-title">
-                <div><span className="account-eyebrow">АКТИВНОСТЬ ЗА ГОД</span><h2>Календарь движения</h2></div>
-                <span>{activityCalendar.reduce((sum, day) => sum + day.cells, 0)} клеток за 365 дней</span>
-              </div>
-              <div className="activity-heatmap" aria-label="Календарь активности за год">
-                {activityCalendar.map((day) => {
-                  const level = day.cells ? Math.max(1, Math.ceil(day.cells / activityMax * 4)) : 0;
-                  return <i key={day.key} className={`level-${level}`} title={`${day.date.toLocaleDateString("ru-RU")}: ${day.cells} клеток`} />;
+                  );
                 })}
               </div>
               <div className="streak-grid">
@@ -7716,6 +7750,7 @@ export default function App() {
                 <article><span>ЛУЧШАЯ СЕРИЯ</span><strong>{streaks.best}</strong><small>личный рекорд</small></article>
                 <article><span>ДЕНЬ ОТДЫХА</span><strong>{streaks.freeDayAvailable ? "Доступен" : "Использован"}</strong><small>новый появляется после 7 активных дней</small></article>
               </div>
+              {activityClearStatus && <p className="activity-clear-status">{activityClearStatus}</p>}
             </section>
 
             <section className="account-plan-card">
