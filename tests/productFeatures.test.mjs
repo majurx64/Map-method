@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adaptiveDailyTarget, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot, encodeSharedSnapshot, decodeSharedSnapshot } from '../src/lib/productFeatures.js';
+import { adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot, encodeSharedSnapshot, decodeSharedSnapshot } from '../src/lib/productFeatures.js';
 import { mergePendingMaps } from '../src/lib/offlineMaps.js';
 
 const today = new Date(2026, 8, 28, 12);
@@ -54,6 +54,14 @@ test('Daily snapshots are capped and not duplicated on another edit today', () =
   const next = addDailySnapshot(map, { ...map, colors: ['#fff'] });
   assert.equal(addDailySnapshot(next, { ...next, colors: ['#000'] }).versions.length, 1);
   assert.equal(normalizeVersions(Array.from({ length: 30 }, () => createMapSnapshot(map))).length, 20);
+});
+test('Change history keeps separate settled edits without duplicating the same state', () => {
+  const first = addChangeSnapshot(map);
+  const duplicate = addChangeSnapshot(first);
+  const second = addChangeSnapshot({ ...duplicate, completed: [1] });
+  assert.equal(first.versions.length, 1);
+  assert.equal(duplicate.versions.length, 1);
+  assert.equal(second.versions.length, 2);
 });
 test('Malformed history arrays cannot crash normalisation', () => {
   assert.deepEqual(normalizeVersions([{ ...createMapSnapshot(map), progressCompleted: {} }])[0].progressCompleted, []);

@@ -149,6 +149,30 @@ export function addDailySnapshot(previous, next) {
   return { ...next, versions: [...versions, createMapSnapshot(previous)].slice(-20) };
 }
 
+function snapshotMatchesMap(snapshot, map) {
+  if (!snapshot || !map) return false;
+  return snapshot.mapType === map.mapType
+    && snapshot.gridMode === map.gridMode
+    && String(snapshot.totalCells) === String(map.totalCells)
+    && String(snapshot.manualRows) === String(map.manualRows)
+    && String(snapshot.manualCols) === String(map.manualCols)
+    && snapshot.imageRatio === map.imageRatio
+    && snapshot.image === (map.image || null)
+    && JSON.stringify(snapshot.imageOffset) === JSON.stringify({ ...normalizeImageOffset(map.imageOffset), cellsEdited: true })
+    && snapshot.isGameMode === Boolean(map.isGameMode)
+    && snapshot.showImage === (map.showImage !== false)
+    && JSON.stringify(snapshot.completed) === JSON.stringify(map.completed || [])
+    && JSON.stringify(snapshot.progressCompleted) === JSON.stringify(map.progressCompleted || [])
+    && JSON.stringify(snapshot.colors) === JSON.stringify(map.colors || []);
+}
+
+export function addChangeSnapshot(map) {
+  if (!map) return map;
+  const versions = normalizeVersions(map.versions);
+  if (snapshotMatchesMap(versions.at(-1), map)) return { ...map, versions };
+  return { ...map, versions: [...versions, createMapSnapshot(map, "Изменение")].slice(-20) };
+}
+
 export function restoreSnapshot(map, snapshot) {
   return {
     ...map,

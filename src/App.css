@@ -3556,3 +3556,52 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 @media (max-width:700px) {
   .plan-mode-picker { grid-template-columns:repeat(2,1fr); }.streak-grid { grid-template-columns:1fr; }.account-tools-card { grid-template-columns:1fr; }.account-tools-actions { justify-content:flex-start; }.library-discovery { grid-template-columns:1fr; }.history-preview { grid-template-columns:1fr; }.history-preview .library-preview { width:100%; }.shared-map-card { padding:19px; }.shared-map-preview { min-height:280px; }.victory-summary > div:not(.victory-actions) { grid-template-columns:1fr; }.activity-heatmap { grid-auto-columns:9px; grid-template-rows:repeat(7,9px); }.activity-heatmap i { width:9px; height:9px; }
 }
+
+/* Activity hints use the same light popover language as the rest of the site. */
+.history-clear-day { position:relative; display:grid; place-items:center; font-family:Arial,sans-serif; }
+.account-menu.is-open::after { position:absolute; top:100%; right:0; width:100%; height:9px; content:""; }
+.history-clear-day::after,.rest-day-card::after,.history-version-delete::after { position:absolute; z-index:30; left:50%; bottom:calc(100% + 8px); width:max-content; max-width:230px; padding:7px 9px; border:1px solid #d8d2c8; border-radius:8px; background:#fffdf9; color:#4e574f; box-shadow:0 9px 24px rgba(45,51,44,.13); content:attr(data-tooltip); font-size:11px; font-weight:650; line-height:1.35; opacity:0; pointer-events:none; text-align:center; transform:translate(-50%,5px) scale(.96); transition:opacity 180ms ease,transform 220ms cubic-bezier(.16,1,.3,1); white-space:normal; }
+.history-clear-day:hover::after,.history-clear-day:focus-visible::after,.rest-day-card:hover::after,.rest-day-card:focus-visible::after,.history-version-delete:hover::after,.history-version-delete:focus-visible::after { opacity:1; transform:translate(-50%,0) scale(1); }
+.rest-day-card { position:relative; outline:none; }
+.rest-day-card::after { bottom:auto; top:calc(100% + 8px); }
+
+/* Version history: grouped views, contained scrolling and reversible deletion. */
+.history-modal { overscroll-behavior:contain; scrollbar-gutter:stable; }
+.history-view-switch { display:inline-flex; gap:4px; margin:0 0 14px; padding:4px; border:1px solid #d9d2c7; border-radius:10px; background:#f4f1eb; }
+.history-view-switch button { min-height:34px; padding:0 12px; border:0; border-radius:7px; background:transparent; color:#626a62; cursor:pointer; font-weight:750; transition:background 180ms ease,color 180ms ease,transform 180ms ease; }
+.history-view-switch button:hover { transform:translateY(-1px); }
+.history-view-switch button.active { background:#32624f; color:#fff; box-shadow:0 4px 10px rgba(50,98,79,.18); }
+.history-preview-map { animation:history-preview-swap 340ms cubic-bezier(.16,1,.3,1) both; }
+.history-preview-copy { animation:history-copy-swap 280ms ease both; }
+.history-range { cursor:pointer; transition:filter 220ms ease; }
+.history-range:active { filter:saturate(1.2); }
+.history-version-list { overscroll-behavior:contain; overflow-anchor:none; animation:history-list-swap 280ms cubic-bezier(.16,1,.3,1) both; }
+.history-version-row { display:grid; grid-template-columns:minmax(0,1fr) 38px; align-items:stretch; overflow:visible; border:1px solid transparent; border-radius:10px; background:#f7f5f0; transition:background 220ms ease,border-color 220ms ease,transform 260ms cubic-bezier(.16,1,.3,1),opacity 220ms ease; }
+.history-version-row.active { border-color:#7c9b83; background:#eaf2e8; }
+.history-version-row .history-version-select { min-width:0; padding:10px 12px; border:0; border-radius:9px; background:transparent; }
+.history-version-row .history-version-delete { position:relative; display:grid; width:30px; height:30px; align-self:center; place-items:center; padding:0; border:1px solid transparent; border-radius:8px; background:transparent; color:#a35a50; cursor:pointer; font:18px/1 Arial,sans-serif; transition:background 180ms ease,border-color 180ms ease,transform 180ms ease; }
+.history-version-row .history-version-delete:hover { border-color:#dfc1bb; background:#fff1ee; transform:scale(1.06); }
+.history-version-row.is-deleting { pointer-events:none; animation:history-version-remove 220ms ease forwards; }
+.history-version-row.is-restored { animation:history-version-restore 620ms cubic-bezier(.16,1,.3,1) both; }
+.history-overlay.is-closing { animation:history-overlay-close 190ms ease forwards; }
+.history-overlay.is-closing .history-modal { animation:history-modal-close 190ms cubic-bezier(.4,0,1,1) forwards; }
+.version-undo-bar small { display:block; margin-top:4px; color:#747b73; font-size:11px; }
+@keyframes history-preview-swap { from { opacity:.25; transform:translateX(10px) scale(.985); filter:blur(2px); } to { opacity:1; transform:translateX(0) scale(1); filter:blur(0); } }
+@keyframes history-copy-swap { from { opacity:0; transform:translateY(5px); } }
+@keyframes history-list-swap { from { opacity:0; transform:translateY(7px); } }
+@keyframes history-version-remove { to { opacity:0; transform:translateX(18px) scale(.97); } }
+@keyframes history-version-restore { from { opacity:0; transform:translateY(14px) scale(.97); } 60% { background:#dfeedd; } }
+@keyframes history-overlay-close { to { opacity:0; backdrop-filter:blur(0); } }
+@keyframes history-modal-close { to { opacity:0; transform:translateY(18px) scale(.96); filter:blur(3px); } }
+
+/* Completion stays centred and visible until its close button is pressed. */
+.victory-overlay { place-content:normal; place-items:center; overflow:hidden; animation:victory-overlay-in 240ms ease both; }
+.victory-confetti { position:absolute; z-index:1; inset:0; width:100%; height:100%; pointer-events:none; }
+.victory-summary { margin:0; }
+.victory-close { display:grid; place-items:center; padding:0; font:22px/1 Arial,sans-serif; }
+@keyframes victory-overlay-in { from { opacity:0; } to { opacity:1; } }
+
+/* A dedicated chevron avoids optical jumps from stacked transforms. */
+.animated-select-trigger i,.deadline-selects .animated-select-trigger i { top:0 !important; right:11px !important; bottom:0; width:14px !important; height:14px !important; margin:auto 0; border:0 !important; transform:none !important; }
+.animated-select-trigger i::before { display:block; width:6px; height:6px; margin:2px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; content:""; transform:rotate(45deg); transition:transform 240ms cubic-bezier(.16,1,.3,1); }
+.animated-select.is-open .animated-select-trigger i::before { transform:rotate(225deg); }

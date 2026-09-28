@@ -6,7 +6,7 @@ import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
-import { PLAN_MODES, adaptiveDailyTarget, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
+import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -1498,6 +1498,11 @@ export default function App() {
   const [historyMapId, setHistoryMapId] = useState(null);
   const [historyPreviewIndex, setHistoryPreviewIndex] = useState(0);
   const [historyPlaying, setHistoryPlaying] = useState(false);
+  const [historyViewMode, setHistoryViewMode] = useState("days");
+  const [historyClosing, setHistoryClosing] = useState(false);
+  const [deletingVersionId, setDeletingVersionId] = useState("");
+  const [restoredVersionId, setRestoredVersionId] = useState("");
+  const [versionUndoNotice, setVersionUndoNotice] = useState(null);
   const [featureStatus, setFeatureStatus] = useState("");
   const [activityClearStatus, setActivityClearStatus] = useState("");
   const [activityClearingDate, setActivityClearingDate] = useState("");
@@ -1860,6 +1865,7 @@ export default function App() {
   const viewportRef = useRef(null);
   const accountRef = useRef(null);
   const languageRef = useRef(null);
+  const accountHoverCloseRef = useRef(null);
   const accountNameEditorRef = useRef(null);
   const accountNameInputRef = useRef(null);
   const accountNameCloseTimerRef = useRef(null);
@@ -1916,6 +1922,9 @@ export default function App() {
   const hydrationReleaseTimerRef = useRef(null);
   const historyReadyRef = useRef(false);
   const historyNavigationRef = useRef(false);
+  const historyCloseTimerRef = useRef(null);
+  const versionUndoTimerRef = useRef(null);
+  const deletedVersionsRef = useRef([]);
   const preservedScrollRef = useRef(null);
   const mapCellsHoldRef = useRef({ delay: null, interval: null });
   const gameFillTimersRef = useRef([]);
@@ -2089,6 +2098,13 @@ export default function App() {
     });
   const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const historyMap = maps.find((map) => map.id === historyMapId) || null;
+  const historyVersionEntries = useMemo(() => {
+    const entries = (historyMap?.versions || []).map((version, index) => ({ version, index }));
+    if (historyViewMode === "changes") return entries;
+    const latestByDay = new Map();
+    entries.forEach((entry) => latestByDay.set(getActivityDate(new Date(entry.version.createdAt)), entry));
+    return [...latestByDay.values()];
+  }, [historyMap?.versions, historyViewMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2187,18 +2203,35 @@ export default function App() {
   }, [user?.id, mapsLoading, isMapInitialized, maps.length, screen, syncStatus]);
 
   useEffect(() => {
-    if (!historyPlaying || !historyMap?.versions?.length) return undefined;
+    if (!historyPlaying || !historyVersionEntries.length) return undefined;
     const timer = window.setInterval(() => {
       setHistoryPreviewIndex((index) => {
-        if (index >= historyMap.versions.length - 1) {
+        const position = historyVersionEntries.findIndex((entry) => entry.index === index);
+        if (position < 0 || position >= historyVersionEntries.length - 1) {
           setHistoryPlaying(false);
           return index;
         }
-        return index + 1;
+        return historyVersionEntries[position + 1].index;
       });
     }, 850);
     return () => window.clearInterval(timer);
-  }, [historyPlaying, historyMapId, historyMap?.versions?.length]);
+  }, [historyPlaying, historyMapId, historyVersionEntries]);
+
+  useEffect(() => {
+    if (!historyMapId) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const previousPaddingRight = document.body.style.paddingRight;
+    const previousRootOverflow = document.documentElement.style.overflow;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.paddingRight = previousPaddingRight;
+      document.documentElement.style.overflow = previousRootOverflow;
+    };
+  }, [historyMapId]);
 
   async function saveMapToLibrary(map) {
     const dimensions = getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols);
@@ -2641,9 +2674,9 @@ export default function App() {
   useEffect(() => {
     const handleEscape = (event) => {
       if (event.key !== "Escape") return;
-      if (historyMapId) { setHistoryMapId(null); setHistoryPlaying(false); return; }
+      if (historyMapId) { closeHistoryModal(); return; }
       if (shareMap) { setShareMap(null); return; }
-      if (showVictory) { dismissVictory(); return; }
+      if (showVictory) return;
       if (onboardingOpen) { finishOnboarding(); return; }
 
       if (downloadChoice) {
@@ -2709,6 +2742,22 @@ export default function App() {
   });
 
   useEffect(() => {
+    const handleDeletedVersionUndo = (event) => {
+      if (!historyMapId || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.code !== "KeyZ" || !deletedVersionsRef.current.length) return;
+      const targetIsField = event.target instanceof HTMLInputElement
+        || event.target instanceof HTMLTextAreaElement
+        || event.target instanceof HTMLSelectElement
+        || event.target?.isContentEditable;
+      if (targetIsField) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void undoDeletedVersion();
+    };
+    window.addEventListener("keydown", handleDeletedVersionUndo, true);
+    return () => window.removeEventListener("keydown", handleDeletedVersionUndo, true);
+  });
+
+  useEffect(() => {
     const handleDeletedMapUndo = (event) => {
       if (screen !== "maps" || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.code !== "KeyZ") return;
       const targetIsField = event.target instanceof HTMLInputElement
@@ -2734,10 +2783,10 @@ export default function App() {
   }, [maps, isMapInitialized, user?.id, personalLibrary]);
 
   useEffect(() => {
-    if (!pendingDeletes.length) return;
+    if (!pendingDeletes.length && !versionUndoNotice) return;
     const timer = window.setInterval(() => setDeleteCountdownNow(Date.now()), 100);
     return () => window.clearInterval(timer);
-  }, [pendingDeletes.length]);
+  }, [pendingDeletes.length, versionUndoNotice]);
 
   useEffect(() => {
     drawColorRef.current = drawColor;
@@ -3339,9 +3388,12 @@ export default function App() {
     clearTimeout(saveTimerRef.current);
 
     saveTimerRef.current = setTimeout(() => {
-      const map = buildCurrentMap();
+      const current = buildCurrentMap();
+      const map = current ? normalizeMap(addChangeSnapshot(current)) : null;
 
       if (map) {
+        activeMapRef.current = map;
+        setMaps((stored) => stored.map((item) => item.id === map.id ? map : item));
         remoteSave(map);
       }
     }, 700);
@@ -5390,10 +5442,12 @@ export default function App() {
       saveTimerRef.current
     );
 
-    const map =
-      buildCurrentMap();
+    const currentMap = buildCurrentMap();
+    const map = currentMap ? normalizeMap(addChangeSnapshot(currentMap)) : null;
 
     if (!map) return;
+
+    activeMapRef.current = map;
 
     setMaps((p) =>
       p.map((m) =>
@@ -6432,6 +6486,39 @@ export default function App() {
     }, 180);
   }
 
+  function openHistoryModal(map) {
+    window.clearTimeout(historyCloseTimerRef.current);
+    setHistoryClosing(false);
+    setHistoryViewMode("days");
+    setHistoryMapId(map.id);
+    setHistoryPreviewIndex(Math.max(0, (map.versions?.length || 1) - 1));
+    setHistoryPlaying(false);
+    setFeatureStatus("");
+  }
+
+  function closeHistoryModal() {
+    if (!historyMapId || historyClosing) return;
+    setHistoryPlaying(false);
+    setHistoryClosing(true);
+    window.clearTimeout(historyCloseTimerRef.current);
+    historyCloseTimerRef.current = window.setTimeout(() => {
+      setHistoryMapId(null);
+      setHistoryClosing(false);
+      setDeletingVersionId("");
+    }, 190);
+  }
+
+  function changeHistoryViewMode(mode) {
+    setHistoryPlaying(false);
+    setHistoryViewMode(mode);
+    const entries = (historyMap?.versions || []).map((version, index) => ({ version, index }));
+    const visible = mode === "changes" ? entries : [...entries.reduce((days, entry) => {
+      days.set(getActivityDate(new Date(entry.version.createdAt)), entry);
+      return days;
+    }, new Map()).values()];
+    setHistoryPreviewIndex(visible.at(-1)?.index || 0);
+  }
+
   async function persistFeatureMap(map) {
     const normalized = normalizeMap(map);
     clearTimeout(saveTimerRef.current);
@@ -6439,9 +6526,60 @@ export default function App() {
     setMaps((current) => current.map((item) => item.id === normalized.id ? normalized : item));
     if (user) {
       const error = await remoteSave(normalized);
-      setFeatureStatus(error ? "Изменения сохранены на устройстве. Не удалось синхронизировать с аккаунтом." : "Сохранено.");
+      setFeatureStatus(error ? "Изменения сохранены на устройстве. Не удалось синхронизировать с аккаунтом." : "");
+    } else {
+      setFeatureStatus("");
     }
     return normalized;
+  }
+
+  async function deleteMapVersion(map, version) {
+    if (!map || !version || deletingVersionId) return;
+    setHistoryPlaying(false);
+    setDeletingVersionId(version.id);
+    window.setTimeout(async () => {
+      const current = maps.find((item) => item.id === map.id) || map;
+      const index = (current.versions || []).findIndex((item) => item.id === version.id);
+      if (index < 0) {
+        setDeletingVersionId("");
+        return;
+      }
+      const nextVersions = current.versions.filter((item) => item.id !== version.id);
+      deletedVersionsRef.current = [{ mapId: current.id, version, index }, ...deletedVersionsRef.current].slice(0, 20);
+      await persistFeatureMap({ ...current, versions: nextVersions });
+      setHistoryPreviewIndex(nextVersions.length ? Math.min(index, nextVersions.length - 1) : 0);
+      setDeletingVersionId("");
+      const notice = { mapId: current.id, versionId: version.id, label: version.label, deadline: Date.now() + 5000 };
+      setVersionUndoNotice(notice);
+      setDeleteCountdownNow(Date.now());
+      window.clearTimeout(versionUndoTimerRef.current);
+      versionUndoTimerRef.current = window.setTimeout(() => setVersionUndoNotice((currentNotice) => currentNotice?.versionId === version.id ? null : currentNotice), 5000);
+    }, 210);
+  }
+
+  async function undoDeletedVersion() {
+    const deleted = deletedVersionsRef.current.shift();
+    if (!deleted) return;
+    const map = maps.find((item) => item.id === deleted.mapId);
+    if (!map) {
+      setFeatureStatus("Карта для этой версии больше не найдена.");
+      return;
+    }
+    const versions = [...(map.versions || [])];
+    if (!versions.some((version) => version.id === deleted.version.id)) {
+      versions.splice(Math.min(deleted.index, versions.length), 0, deleted.version);
+    }
+    while (versions.length > 20) {
+      const restoredIndex = versions.findIndex((version) => version.id === deleted.version.id);
+      versions.splice(restoredIndex === versions.length - 1 ? 0 : versions.length - 1, 1);
+    }
+    const restored = await persistFeatureMap({ ...map, versions });
+    if (historyMapId !== restored.id) openHistoryModal(restored);
+    setHistoryPreviewIndex(restored.versions.findIndex((version) => version.id === deleted.version.id));
+    setRestoredVersionId(deleted.version.id);
+    setVersionUndoNotice(null);
+    window.clearTimeout(versionUndoTimerRef.current);
+    window.setTimeout(() => setRestoredVersionId(""), 650);
   }
 
   async function clearActivityDay(item) {
@@ -6632,8 +6770,12 @@ export default function App() {
   return (
     <div className="app">
       {syncStatus && <div className="sync-status" role="status">{syncStatus}</div>}
+      {versionUndoNotice && (() => {
+        const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
+        return <div className="delete-undo-bar version-undo-bar" role="status"><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
+      })()}
       {showVictory && (
-        <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status" onPointerDown={dismissVictory}>
+        <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status">
           <div className="victory-confetti" aria-hidden="true">
             {Array.from({ length: 28 }, (_, index) => (
               <i
@@ -6780,6 +6922,15 @@ export default function App() {
             <div
               ref={accountRef}
               className={`account-menu${isAccountOpen ? " is-open" : ""}`}
+              onMouseEnter={() => {
+                window.clearTimeout(accountHoverCloseRef.current);
+                setIsLanguageOpen(false);
+                setIsAccountOpen(true);
+              }}
+              onMouseLeave={() => {
+                window.clearTimeout(accountHoverCloseRef.current);
+                accountHoverCloseRef.current = window.setTimeout(() => setIsAccountOpen(false), 140);
+              }}
               style={{
                 position:
                   "relative",
@@ -7738,7 +7889,7 @@ export default function App() {
                       className="history-clear-day"
                       disabled={!item.cells || Boolean(activityClearingDate)}
                       aria-label={`Очистить активность за ${date.toLocaleDateString("ru-RU")}`}
-                      title={item.cells ? "Очистить этот день" : "В этот день активности нет"}
+                      data-tooltip={item.cells ? "Очистить этот день" : "В этот день активности нет"}
                       onClick={() => clearActivityDay({ ...item, date })}
                     >×</button>
                   </div>
@@ -7748,7 +7899,7 @@ export default function App() {
               <div className="streak-grid">
                 <article><span>ТЕКУЩАЯ СЕРИЯ</span><strong>{streaks.current}</strong><small>дней с учётом одного дня отдыха</small></article>
                 <article><span>ЛУЧШАЯ СЕРИЯ</span><strong>{streaks.best}</strong><small>личный рекорд</small></article>
-                <article><span>ДЕНЬ ОТДЫХА</span><strong>{streaks.freeDayAvailable ? "Доступен" : "Использован"}</strong><small>новый появляется после 7 активных дней</small></article>
+                <article className="rest-day-card" tabIndex={0} data-tooltip="После 7 активных дней один пропуск не сбросит серию. День отдыха расходуется автоматически."><span>ДЕНЬ ОТДЫХА</span><strong>{streaks.freeDayAvailable ? "Доступен" : "Использован"}</strong><small>новый появляется после 7 активных дней</small></article>
               </div>
               {activityClearStatus && <p className="activity-clear-status">{activityClearStatus}</p>}
             </section>
@@ -8336,6 +8487,7 @@ export default function App() {
                             <span className="map-card-meta">
                               <span>{map.category || "Личное"}</span>
                               {map.deadline && <span>Срок до {map.deadline.split("-").reverse().join(".")}</span>}
+                              {map.createdAt && <span>Создана {new Date(map.createdAt).toLocaleDateString("ru-RU")}</span>}
                             </span>
                             {map.lastPaintedAt && (
                               <span className="map-card-updated">
@@ -8411,8 +8563,7 @@ export default function App() {
                               className="tool-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setHistoryMapId(map.id);
-                                setHistoryPreviewIndex(Math.max(0, (map.versions?.length || 1) - 1));
+                                openHistoryModal(map);
                               }}
                             >
                               История
@@ -8536,7 +8687,7 @@ export default function App() {
                       )}
                     </button>
 
-                    <button className="text-action" onClick={() => { setHistoryMapId(activeMap.id); setHistoryPreviewIndex(Math.max(0, (activeMap.versions?.length || 1) - 1)); }}>
+                    <button className="text-action" onClick={() => openHistoryModal(activeMap)}>
                       История
                     </button>
                     <button className="text-action" onClick={() => openShareDialog(activeMap)}>
@@ -9506,16 +9657,6 @@ export default function App() {
               <DeadlinePicker value={newMapDeadline} onChange={setNewMapDeadline} optional />
             </div>
 
-            <div className="modal-field">
-              <label>Темп</label>
-              <div className="plan-mode-picker">
-                {Object.entries(PLAN_MODES).filter(([key]) => key !== "paused").map(([key, option]) => (
-                  <button type="button" key={key} className={newMapPlanMode === key ? "active" : ""} onClick={() => setNewMapPlanMode(key)}>{option.label}</button>
-                ))}
-              </div>
-              <small className="field-hint">Меняет дневную норму. Её можно настроить позже.</small>
-            </div>
-
             {newMapCategory === "__custom__" && (
               <div className="category-create">
                 <input autoFocus value={newCategoryDraft} placeholder="Например, Финансы" onChange={(event) => setNewCategoryDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addCustomCategory("create"); } }} />
@@ -9896,24 +10037,30 @@ export default function App() {
       )}
 
       {historyMap && (
-        <div className="modal-overlay feature-modal-overlay" onMouseDown={() => { setHistoryMapId(null); setHistoryPlaying(false); }}>
-          <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><span className="account-eyebrow">ДО 20 ВЕРСИЙ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={() => { setHistoryMapId(null); setHistoryPlaying(false); }}>×</button></div>
-            <p className="feature-modal-intro">Map Method сохраняет по одной автоматической версии в день. Важный этап можно сохранить вручную.</p>
+        <div className={`modal-overlay feature-modal-overlay history-overlay${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
+          <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="account-eyebrow">ДО 20 ВЕРСИЙ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
+            <p className="feature-modal-intro">Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням.</p>
+            <div className="history-view-switch" role="group" aria-label="Отображение истории">
+              <button type="button" className={historyViewMode === "days" ? "active" : ""} onClick={() => changeHistoryViewMode("days")}>По дням</button>
+              <button type="button" className={historyViewMode === "changes" ? "active" : ""} onClick={() => changeHistoryViewMode("changes")}>Все изменения</button>
+            </div>
             {featureStatus && <p className="feature-status" role="status">{featureStatus}</p>}
             <button type="button" className="feature-primary" onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>
-            {historyMap.versions?.length ? (() => {
-              const snapshot = historyMap.versions[Math.min(historyPreviewIndex, historyMap.versions.length - 1)];
+            {historyVersionEntries.length ? (() => {
+              const selectedEntry = historyVersionEntries.find((entry) => entry.index === historyPreviewIndex) || historyVersionEntries.at(-1);
+              const snapshot = selectedEntry.version;
               const preview = normalizeMap({ ...historyMap, ...snapshot });
               const dimensions = getGridDimensions(preview.totalCells, preview.imageRatio, preview.gridMode, preview.manualRows, preview.manualCols);
               const current = getMapStats(historyMap);
+              const visiblePosition = Math.max(0, historyVersionEntries.findIndex((entry) => entry.index === selectedEntry.index));
               return <>
-                <div className="history-preview"><div className="library-preview"><MapCardGrid map={preview} dimensions={dimensions} /></div><div><strong>{snapshot.label}</strong><span>{new Date(snapshot.createdAt).toLocaleString("ru-RU")}</span><p>{snapshot.filled} из {snapshot.total} клеток · {snapshot.filled - current.filled >= 0 ? "+" : ""}{snapshot.filled - current.filled} к текущей версии</p></div></div>
-                <input className="history-range" type="range" min="0" max={historyMap.versions.length - 1} value={Math.min(historyPreviewIndex, historyMap.versions.length - 1)} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(Number(event.target.value)); }} />
-                <div className="history-actions"><button type="button" onClick={() => { setHistoryPreviewIndex(0); setHistoryPlaying(true); }}>▶ Показать изменения</button><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
-                <div className="history-version-list">{[...historyMap.versions].reverse().map((version, reverseIndex) => { const index = historyMap.versions.length - reverseIndex - 1; return <button type="button" className={index === historyPreviewIndex ? "active" : ""} key={version.id} onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleDateString("ru-RU")} · {version.filled}/{version.total}</small></button>; })}</div>
+                <div className="history-preview"><div className="library-preview history-preview-map" key={snapshot.id}><MapCardGrid map={preview} dimensions={dimensions} /></div><div key={`copy-${snapshot.id}`} className="history-preview-copy"><strong>{snapshot.label}</strong><span>{new Date(snapshot.createdAt).toLocaleString("ru-RU")}</span><p>{snapshot.filled} из {snapshot.total} клеток · {snapshot.filled - current.filled >= 0 ? "+" : ""}{snapshot.filled - current.filled} к текущей версии</p></div></div>
+                <input className="history-range" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(historyVersionEntries[Number(event.target.value)].index); }} />
+                <div className="history-actions"><button type="button" onClick={() => { setHistoryPreviewIndex(historyVersionEntries[0].index); setHistoryPlaying(true); }}>▶ Показать изменения</button><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
+                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button><button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}>×</button></div>)}</div>
               </>;
-            })() : <p className="feature-empty">Версий пока нет. Сохрани первую — дальше ежедневные изменения будут добавляться автоматически.</p>}
+            })() : <p className="feature-empty">Версий пока нет. Внеси изменение в карту или сохрани важный этап вручную.</p>}
           </div>
         </div>
       )}
@@ -10021,18 +10168,6 @@ export default function App() {
               </div>
               <DeadlinePicker value={renameDeadline} onChange={setRenameDeadline} />
             </div>
-
-            <div className="modal-field">
-              <label>Темп и отдых</label>
-              <div className="plan-mode-picker">
-                {Object.entries(PLAN_MODES).map(([key, option]) => (
-                  <button type="button" key={key} className={renamePlanMode === key ? "active" : ""} onClick={() => setRenamePlanMode(key)}>{option.label}</button>
-                ))}
-              </div>
-            </div>
-            {renamePlanMode === "paused" && (
-              <div className="modal-field"><label>Пауза до</label><input type="date" value={renamePausedUntil} onChange={(event) => setRenamePausedUntil(event.target.value)} /></div>
-            )}
 
             {renameCategory === "__custom__" && (
               <div className="category-create">
