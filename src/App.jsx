@@ -4021,17 +4021,24 @@ export default function App() {
     gameFillTimersRef.current = [];
     window.cancelAnimationFrame(gameFillAnimationRef.current);
     gameFillAnimationRef.current = null;
+    if (cellAnimationsRef.current.size) {
+      cellAnimationsRef.current.clear();
+      setCellAnimationTick((tick) => tick + 1);
+    }
   }
 
-  function runProgressSequence(sequence, targetCompleted, onComplete) {
+  function runProgressSequence(sequence, targetCompleted, onComplete, reverse = false) {
     stopProgressSequence();
     const current = new Set(progressCompletedRef.current);
     const target = new Set(targetCompleted);
     const sequenceSet = new Set(sequence);
     const remaining = [...new Set([...current, ...target])]
       .filter((index) => current.has(index) !== target.has(index) && !sequenceSet.has(index));
+    const changedSequence = sequence
+      .filter((index) => current.has(index) !== target.has(index));
+    if (reverse) changedSequence.reverse();
     const ordered = [
-      ...sequence.filter((index) => current.has(index) !== target.has(index)),
+      ...changedSequence,
       ...remaining,
     ];
 
@@ -4078,7 +4085,7 @@ export default function App() {
     gameFillAnimationRef.current = window.requestAnimationFrame(advance);
   }
 
-  function setSnapshot(s, target = "drawing", sequence = []) {
+  function setSnapshot(s, target = "drawing", sequence = [], reverseSequence = false) {
     setSelection(null);
     if (target === "grid") {
       gridRestoreRef.current = null;
@@ -4096,7 +4103,7 @@ export default function App() {
       return;
     }
     if (target === "progress" && sequence.length) {
-      runProgressSequence(sequence, s.completed);
+      runProgressSequence(sequence, s.completed, undefined, reverseSequence);
       return;
     }
     if (s.progressCompleted) {
@@ -4152,7 +4159,7 @@ export default function App() {
     if (!a) return;
 
     redoStackRef.current.push(a);
-    setSnapshot(a.before, a.target, [...(a.sequence || [])].reverse());
+    setSnapshot(a.before, a.target, a.sequence || [], true);
   }
 
   function redo() {
