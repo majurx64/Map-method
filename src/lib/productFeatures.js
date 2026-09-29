@@ -85,7 +85,7 @@ export function dateKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-export function createMapSnapshot(map, label = "Автоматическая версия") {
+export function createMapSnapshot(map, label = "Автоматическая версия", cellSequence = []) {
   const stats = getMapStats(map);
   return {
     id: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`,
@@ -106,6 +106,10 @@ export function createMapSnapshot(map, label = "Автоматическая в�
     completed: [...(map.completed || [])],
     progressCompleted: [...(map.progressCompleted || [])],
     colors: [...(map.colors || [])],
+    cellSequence: (Array.isArray(cellSequence) ? cellSequence : [])
+      .slice(0, MAX_CELLS * 4)
+      .map(Number)
+      .filter((entry) => Number.isInteger(entry) && entry >= -MAX_CELLS && entry < MAX_CELLS),
   };
 }
 
@@ -132,6 +136,10 @@ export function normalizeVersions(versions) {
       completed: version.completed.slice(0, MAX_CELLS).map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < MAX_CELLS),
       progressCompleted: (Array.isArray(version.progressCompleted) ? version.progressCompleted : []).slice(0, MAX_CELLS).map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < MAX_CELLS),
       colors: Array.isArray(version.colors) ? version.colors.slice(0, MAX_CELLS) : [],
+      cellSequence: (Array.isArray(version.cellSequence) ? version.cellSequence : [])
+        .slice(0, MAX_CELLS * 4)
+        .map(Number)
+        .filter((entry) => Number.isInteger(entry) && entry >= -MAX_CELLS && entry < MAX_CELLS),
     }];
   });
 }
@@ -166,11 +174,11 @@ function snapshotMatchesMap(snapshot, map) {
     && JSON.stringify(snapshot.colors) === JSON.stringify(map.colors || []);
 }
 
-export function addChangeSnapshot(map) {
+export function addChangeSnapshot(map, cellSequence = []) {
   if (!map) return map;
   const versions = normalizeVersions(map.versions);
   if (snapshotMatchesMap(versions.at(-1), map)) return { ...map, versions };
-  return { ...map, versions: [...versions, createMapSnapshot(map, "Изменение")] };
+  return { ...map, versions: [...versions, createMapSnapshot(map, "Изменение", cellSequence)] };
 }
 
 export function restoreSnapshot(map, snapshot) {

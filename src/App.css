@@ -3723,7 +3723,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .history-version-list { height:auto; min-height:0; max-height:190px; }
 .history-version-undo { position:relative; bottom:auto; }
 
-.history-speed { display:flex; grid-column:1/-1; justify-content:flex-end; gap:4px; margin-top:-3px; }
+.history-speed { display:flex; grid-column:1/-1; flex-wrap:wrap; justify-content:flex-end; gap:4px; margin-top:-3px; }
 .history-speed button { min-width:38px; min-height:27px; padding:0 7px; border:1px solid #d8d1c7; border-radius:7px; background:#fffdf9; color:#687168; cursor:pointer; font-size:11px; font-weight:750; transition:background 180ms ease,color 180ms ease,border-color 180ms ease,transform 180ms ease; }
 .history-speed button:hover { border-color:#9caf9f; transform:translateY(-1px); }
 .history-speed button.active { border-color:#32624f; background:#32624f; color:#fff; }
@@ -3735,15 +3735,20 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .history-preview-mode button.active { color:#fff; }
 
 @media (min-width:701px) and (min-height:820px) {
-  .history-modal { max-height:calc(100vh - 32px); overflow:hidden; padding:24px 28px; }
+  .history-overlay { padding-top:12px; padding-bottom:12px; }
+  .history-modal { width:min(800px,100%); max-height:calc(100vh - 24px); overflow:hidden; padding:24px 28px; }
   .history-modal .modal-header { margin-bottom:16px; padding-bottom:12px; }
   .history-modal .feature-modal-intro { margin-bottom:10px; }
   .history-modal .history-view-switch { margin-bottom:10px; }
   .history-modal .history-preview { margin:12px 0; }
   .history-modal .history-preview .library-preview { height:170px; }
-  .history-modal .history-version-list { max-height:160px; }
-  .history-modal:has(.history-version-undo) .history-version-list { max-height:80px; }
+  .history-modal .history-version-list { height:190px; max-height:190px; }
 }
+
+.history-version-undo { position:fixed; z-index:2300; right:auto; bottom:18px; left:50%; width:min(700px,calc(100% - 28px)); margin:0; animation:history-undo-float-in 420ms cubic-bezier(.16,1,.3,1) both; }
+.history-version-undo.is-closing { pointer-events:none; animation:history-undo-float-out 360ms cubic-bezier(.4,0,1,1) forwards; }
+@keyframes history-undo-float-in { from { opacity:0; transform:translate(-50%,18px) scale(.975); filter:blur(3px); } to { opacity:1; transform:translate(-50%,0) scale(1); filter:blur(0); } }
+@keyframes history-undo-float-out { from { opacity:1; transform:translate(-50%,0) scale(1); filter:blur(0); } to { opacity:0; transform:translate(-50%,14px) scale(.98); filter:blur(3px); } }
 
 @media (max-width:640px) {
   .history-overlay { padding-top:12px; padding-bottom:12px; }

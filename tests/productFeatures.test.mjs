@@ -58,10 +58,11 @@ test('Daily snapshots are retained and not duplicated on another edit today', ()
 test('Change history keeps separate settled edits without duplicating the same state', () => {
   const first = addChangeSnapshot(map);
   const duplicate = addChangeSnapshot(first);
-  const second = addChangeSnapshot({ ...duplicate, completed: [1] });
+  const second = addChangeSnapshot({ ...duplicate, completed: [1] }, [4, 2, 1]);
   assert.equal(first.versions.length, 1);
   assert.equal(duplicate.versions.length, 1);
   assert.equal(second.versions.length, 2);
+  assert.deepEqual(second.versions.at(-1).cellSequence, [4, 2, 1]);
 });
 test('Malformed history arrays cannot crash normalisation', () => {
   assert.deepEqual(normalizeVersions([{ ...createMapSnapshot(map), progressCompleted: {} }])[0].progressCompleted, []);

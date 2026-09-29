@@ -1045,6 +1045,10 @@ function normalizeMap(map = {}) {
     planMode: PLAN_MODES[map.planMode] ? map.planMode : "balanced",
     planPausedUntil: /^\d{4}-\d{2}-\d{2}$/.test(map.planPausedUntil || "") ? map.planPausedUntil : "",
     versions: normalizeVersions(map.versions),
+    cellSequence: (Array.isArray(map.cellSequence) ? map.cellSequence : [])
+      .slice(0, MAX_CELLS * 4)
+      .map(Number)
+      .filter((entry) => Number.isInteger(entry) && entry >= -MAX_CELLS && entry < MAX_CELLS),
     shareId: typeof map.shareId === "string" && /^[0-9a-f-]{36}$/i.test(map.shareId) ? map.shareId : "",
     privateLibraryItem: Boolean(map.privateLibraryItem),
     modeDrafts: {
@@ -1110,7 +1114,7 @@ function mapFromSupabaseRow(row) {
   });
 }
 
-const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false, animationKey = "", showTemplate = true }) {
+const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false, animationKey = "", showTemplate = true, playbackActive = false, playbackSpeedRef = null }) {
   const canvasRef = useRef(null);
   const previewAnimationFrameRef = useRef(0);
   const previousPreviewMapRef = useRef(map);
@@ -1181,6 +1185,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     const previousTemplateCells = new Set(previousMap.completed || []);
     const progressCells = new Set(map.progressCompleted || []);
     const templateCells = new Set(map.completed || []);
+    const playbackSequence = playbackActive && Array.isArray(map.cellSequence) ? map.cellSequence : [];
     const animateWholeFrame = previousPreviewModeRef.current !== showTemplate;
     const changedIndices = animateChanges && !animateWholeFrame
       ? visibleIndices.filter((index) => {
@@ -1200,7 +1205,9 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     previousPreviewModeRef.current = showTemplate;
     // Layout dimensions must never include the ancestor's temporary FLIP scale.
     // Observe the canvas content box, not its transformed screen rectangle.
-    const draw = (entries, transition = 1) => {
+    let displayedProgressCells = progressCells;
+    let displayedTemplateCells = templateCells;
+    const draw = (entries, transition = 1, activeProgressCells = displayedProgressCells, activeTemplateCells = displayedTemplateCells) => {
       const bounds = entries?.[0]?.contentRect;
       const cssWidth = bounds?.width ?? canvas.clientWidth;
       const cssHeight = bounds?.height ?? canvas.clientHeight;
@@ -1220,8 +1227,8 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       const gap = !densePreview && cellSize >= 6 ? 1 : 0;
       visibleIndices.forEach((index) => {
         const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
-        const filled = progressCells.has(index) && !utilityCell;
-        const backgroundDrawingCell = showTemplate && !utilityCell && (map.mapType === "image" || templateCells.has(index));
+        const filled = activeProgressCells.has(index) && !utilityCell;
+        const backgroundDrawingCell = showTemplate && !utilityCell && (map.mapType === "image" || activeTemplateCells.has(index));
         context.fillStyle = filled
           ? map.colors?.[index] || "#32624f"
           : backgroundDrawingCell
@@ -1267,7 +1274,43 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
     };
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let transitionProgress = previousFrame && !reducedMotion ? 0 : 1;
-    if (previousFrame && !reducedMotion) {
+    if (previousFrame && !reducedMotion && playbackSequence.length && !animateWholeFrame) {
+      const workingProgress = new Set(previousProgressCells);
+      const workingTemplate = new Set(previousTemplateCells);
+      const sequenceTarget = map.isGameMode ? workingProgress : workingTemplate;
+      let sequenceCursor = 0;
+      let sequenceProgress = 0;
+      let previousTime = 0;
+      displayedProgressCells = workingProgress;
+      displayedTemplateCells = workingTemplate;
+      draw(undefined, 1, workingProgress, workingTemplate);
+
+      const animateSequence = (now) => {
+        const lastTime = previousTime || now;
+        previousTime = now;
+        sequenceProgress = Math.min(
+          1,
+          sequenceProgress + (now - lastTime) / (800 / Math.max(0.25, playbackSpeedRef?.current || 1))
+        );
+        const nextCursor = Math.min(playbackSequence.length, Math.floor(sequenceProgress * playbackSequence.length));
+        while (sequenceCursor < nextCursor) {
+          const encoded = playbackSequence[sequenceCursor];
+          const index = encoded >= 0 ? encoded : -encoded - 1;
+          if (encoded >= 0) sequenceTarget.add(index);
+          else sequenceTarget.delete(index);
+          sequenceCursor += 1;
+        }
+        draw(undefined, 1, workingProgress, workingTemplate);
+        if (sequenceProgress < 1) {
+          previewAnimationFrameRef.current = window.requestAnimationFrame(animateSequence);
+        } else {
+          displayedProgressCells = progressCells;
+          displayedTemplateCells = templateCells;
+          draw();
+        }
+      };
+      previewAnimationFrameRef.current = window.requestAnimationFrame(animateSequence);
+    } else if (previousFrame && !reducedMotion) {
       const startedAt = performance.now();
       const animate = (now) => {
         const progress = Math.min(1, (now - startedAt) / 300);
@@ -1288,7 +1331,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       observer.disconnect();
       window.removeEventListener("resize", redraw);
     };
-  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices, animateChanges, animationKey, showTemplate]);
+  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices, animateChanges, animationKey, showTemplate, playbackActive, playbackSpeedRef]);
 
   if (!cropToDrawing) {
     return (
@@ -1334,6 +1377,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   && previous.cropToDrawing === next.cropToDrawing
   && previous.animateChanges === next.animateChanges
   && previous.showTemplate === next.showTemplate
+  && previous.playbackActive === next.playbackActive
   && previous.previewBounds?.width === next.previewBounds?.width
   && previous.previewBounds?.height === next.previewBounds?.height);
 
@@ -1600,6 +1644,7 @@ export default function App() {
   const [deletingVersionId, setDeletingVersionId] = useState("");
   const [restoredVersionId, setRestoredVersionId] = useState("");
   const [versionUndoNotice, setVersionUndoNotice] = useState(null);
+  const [versionUndoClosing, setVersionUndoClosing] = useState(false);
   const [featureStatus, setFeatureStatus] = useState("");
   const [activityClearStatus, setActivityClearStatus] = useState("");
   const [activityClearingDate, setActivityClearingDate] = useState("");
@@ -2012,6 +2057,7 @@ export default function App() {
 
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
+  const pendingVersionSequenceRef = useRef([]);
   const gridRestoreRef = useRef(null);
 
   const hydratingRef = useRef(true);
@@ -2023,6 +2069,7 @@ export default function App() {
   const historyNavigationRef = useRef(false);
   const historyCloseTimerRef = useRef(null);
   const versionUndoTimerRef = useRef(null);
+  const versionUndoCloseTimerRef = useRef(null);
   const historyPlaybackFrameRef = useRef(null);
   const historyPlaybackPositionRef = useRef(0);
   const historyPlaybackLastFrameRef = useRef(0);
@@ -2313,7 +2360,7 @@ export default function App() {
       historyVersionEntries.length - 1,
       Math.max(0, historyPlaybackPositionRef.current)
     );
-    let renderedPosition = Math.floor(visiblePosition);
+    let renderedPosition = Math.ceil(visiblePosition - 0.0001);
     historyPlaybackLastFrameRef.current = 0;
 
     const renderFrame = (now) => {
@@ -2329,7 +2376,10 @@ export default function App() {
         historyTimelineFillRef.current.style.width = `${visiblePosition / (historyVersionEntries.length - 1) * 100}%`;
       }
 
-      const nextRenderedPosition = Math.floor(visiblePosition + 0.0001);
+      const nextRenderedPosition = Math.min(
+        historyVersionEntries.length - 1,
+        Math.ceil(visiblePosition - 0.0001)
+      );
       if (nextRenderedPosition !== renderedPosition) {
         renderedPosition = nextRenderedPosition;
         setHistoryPreviewIndex(historyVersionEntries[renderedPosition].index);
@@ -3526,7 +3576,8 @@ export default function App() {
 
     saveTimerRef.current = setTimeout(() => {
       const current = buildCurrentMap();
-      const map = current ? normalizeMap(addChangeSnapshot(current)) : null;
+      const map = current ? normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current)) : null;
+      pendingVersionSequenceRef.current = [];
 
       if (map) {
         activeMapRef.current = map;
@@ -4031,6 +4082,19 @@ export default function App() {
     redoStackRef.current = [];
   }
 
+  function recordVersionCellChanges(changes, mode = "draw") {
+    if (!changes?.length) return;
+    const encoded = changes.map((cell) => {
+      const index = typeof cell === "number" ? cell : cell.index;
+      const cellMode = typeof cell === "number" ? mode : cell.mode;
+      return cellMode === "erase" ? -(index + 1) : index;
+    });
+    pendingVersionSequenceRef.current = [
+      ...pendingVersionSequenceRef.current,
+      ...encoded,
+    ].slice(-(MAX_CELLS * 4));
+  }
+
   function pushHistory(
     before,
     after,
@@ -4118,6 +4182,7 @@ export default function App() {
         cursor += 1;
       }
       animateCells(animations);
+      recordVersionCellChanges(animations);
       progressCompletedRef.current = new Set(working);
       setProgressCompleted([...working]);
 
@@ -4174,6 +4239,7 @@ export default function App() {
         mode: current.has(index) ? "erase" : "draw",
       }));
     animateCells(changed);
+    recordVersionCellChanges(changed);
 
     if (target === "progress") {
       progressCompletedRef.current = next;
@@ -4355,6 +4421,7 @@ export default function App() {
       }
 
       animateCells(changed, mode);
+      recordVersionCellChanges(changed, mode);
       progressCompletedRef.current = next;
       setProgressCompleted([...next]);
       recordPaintedCells(mode === "draw" ? changed.length : -changed.length);
@@ -4393,6 +4460,7 @@ export default function App() {
     }
 
     animateCells(changed, mode);
+    recordVersionCellChanges(changed, mode);
     completedRef.current = nextSet;
     setCompleted([...nextSet]);
     recordPaintedCells(mode === "draw" ? changed.length : -changed.length);
@@ -4755,6 +4823,7 @@ export default function App() {
     if (isGameMode) {
       const before = new Set(progressCompletedRef.current);
       if (!before.size && !progressExtraRef.current) return;
+      recordVersionCellChanges([...before], "erase");
       progressCompletedRef.current = new Set();
       setProgressCompleted([]);
       progressExtraRef.current = 0;
@@ -5649,7 +5718,8 @@ export default function App() {
     );
 
     const currentMap = buildCurrentMap();
-    const map = currentMap ? normalizeMap(addChangeSnapshot(currentMap)) : null;
+    const map = currentMap ? normalizeMap(addChangeSnapshot(currentMap, pendingVersionSequenceRef.current)) : null;
+    pendingVersionSequenceRef.current = [];
 
     if (!map) return;
 
@@ -6780,10 +6850,18 @@ export default function App() {
       setHistoryPreviewIndex(nextVersions.length ? Math.min(index, nextVersions.length - 1) : 0);
       setDeletingVersionId("");
       const notice = { mapId: current.id, versionId: version.id, label: version.label, deadline: Date.now() + 5000 };
+      setVersionUndoClosing(false);
       setVersionUndoNotice(notice);
       setDeleteCountdownNow(Date.now());
       window.clearTimeout(versionUndoTimerRef.current);
-      versionUndoTimerRef.current = window.setTimeout(() => setVersionUndoNotice((currentNotice) => currentNotice?.versionId === version.id ? null : currentNotice), 5000);
+      window.clearTimeout(versionUndoCloseTimerRef.current);
+      versionUndoTimerRef.current = window.setTimeout(() => {
+        setVersionUndoClosing(true);
+        versionUndoCloseTimerRef.current = window.setTimeout(() => {
+          setVersionUndoNotice((currentNotice) => currentNotice?.versionId === version.id ? null : currentNotice);
+          setVersionUndoClosing(false);
+        }, 360);
+      }, 5000);
     }, 210);
   }
 
@@ -6803,8 +6881,13 @@ export default function App() {
     if (historyMapId !== restored.id) openHistoryModal(restored);
     setHistoryPreviewIndex(restored.versions.findIndex((version) => version.id === deleted.version.id));
     setRestoredVersionId(deleted.version.id);
-    setVersionUndoNotice(null);
     window.clearTimeout(versionUndoTimerRef.current);
+    window.clearTimeout(versionUndoCloseTimerRef.current);
+    setVersionUndoClosing(true);
+    versionUndoCloseTimerRef.current = window.setTimeout(() => {
+      setVersionUndoNotice(null);
+      setVersionUndoClosing(false);
+    }, 360);
     window.setTimeout(() => setRestoredVersionId(""), 650);
   }
 
@@ -10270,7 +10353,7 @@ export default function App() {
               const current = getMapStats(historyMap);
               const visiblePosition = Math.max(0, historyVersionEntries.findIndex((entry) => entry.index === selectedEntry.index));
               return <>
-                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges animationKey={snapshot.id} showTemplate={historyPreviewMode === "template"} /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><CrossfadeText value={new Date(snapshot.createdAt).toLocaleString("ru-RU")} /><CrossfadeText as="p" value={`${snapshot.filled} из ${snapshot.total} клеток · ${snapshot.filled - current.filled >= 0 ? "+" : ""}${snapshot.filled - current.filled} к текущей версии`} /><div className={`history-preview-mode is-${historyPreviewMode}`} role="group" aria-label="Вид воспроизведения"><button type="button" className={historyPreviewMode === "template" ? "active" : ""} onClick={() => setHistoryPreviewMode("template")}>С фоном</button><button type="button" className={historyPreviewMode === "cells" ? "active" : ""} onClick={() => setHistoryPreviewMode("cells")}>Только клетки</button></div></div></div>
+                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges animationKey={snapshot.id} showTemplate={historyPreviewMode === "template"} playbackActive={historyPlaying && visiblePosition > 0} playbackSpeedRef={historyPlaybackSpeedRef} /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><CrossfadeText value={new Date(snapshot.createdAt).toLocaleString("ru-RU")} /><CrossfadeText as="p" value={`${snapshot.filled} из ${snapshot.total} клеток · ${snapshot.filled - current.filled >= 0 ? "+" : ""}${snapshot.filled - current.filled} к текущей версии`} /><div className={`history-preview-mode is-${historyPreviewMode}`} role="group" aria-label="Вид воспроизведения"><button type="button" className={historyPreviewMode === "template" ? "active" : ""} onClick={() => setHistoryPreviewMode("template")}>С фоном</button><button type="button" className={historyPreviewMode === "cells" ? "active" : ""} onClick={() => setHistoryPreviewMode("cells")}>Только клетки</button></div></div></div>
                 <div className="history-player">
                   <button type="button" onClick={() => {
                     if (historyPlaying) setHistoryPlaying(false);
@@ -10287,18 +10370,18 @@ export default function App() {
                   </div>
                   <span>{visiblePosition + 1} / {historyVersionEntries.length}</span>
                   <div className="history-speed" role="group" aria-label="Скорость воспроизведения">
-                    {[0.5, 1, 1.5, 2].map((speed) => <button type="button" key={speed} className={historyPlaybackSpeed === speed ? "active" : ""} onClick={() => changeHistoryPlaybackSpeed(speed)}>{String(speed).replace(".", ",")}×</button>)}
+                    {[0.5, 1, 1.5, 2, 4, 8, 16].map((speed) => <button type="button" key={speed} className={historyPlaybackSpeed === speed ? "active" : ""} onClick={() => changeHistoryPlaybackSpeed(speed)}>{String(speed).replace(".", ",")}×</button>)}
                   </div>
                 </div>
                 <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
                 <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button><button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button></div>)}</div>
               </>;
             })() : <p className="feature-empty">Версий пока нет. Внеси изменение в карту или сохрани важный этап вручную.</p>}
-            {versionUndoNotice && (() => {
-              const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
-              return <div className="delete-undo-bar version-undo-bar history-version-undo" role="status"><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
-            })()}
           </div>
+          {versionUndoNotice && (() => {
+            const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
+            return <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoClosing ? " is-closing" : ""}`} role="status" onMouseDown={(event) => event.stopPropagation()}><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
+          })()}
         </div>
       )}
 
