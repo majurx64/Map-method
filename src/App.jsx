@@ -4152,7 +4152,7 @@ export default function App() {
     if (!a) return;
 
     redoStackRef.current.push(a);
-    setSnapshot(a.before, a.target, a.sequence);
+    setSnapshot(a.before, a.target, [...(a.sequence || [])].reverse());
   }
 
   function redo() {
