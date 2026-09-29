@@ -1974,13 +1974,16 @@ export default function App() {
   const historyNavigationRef = useRef(false);
   const historyCloseTimerRef = useRef(null);
   const versionUndoTimerRef = useRef(null);
-  const historyPlaybackCycleRef = useRef({ startedAt: 0, duration: 0 });
+  const historyPlaybackFrameRef = useRef(null);
+  const historyPlaybackPositionRef = useRef(0);
+  const historyPlaybackLastFrameRef = useRef(0);
+  const historyPlaybackSpeedRef = useRef(1);
   const historyTimelineFillRef = useRef(null);
-  const historySpeedAnimationTimerRef = useRef(null);
   const deletedVersionsRef = useRef([]);
   const preservedScrollRef = useRef(null);
   const mapCellsHoldRef = useRef({ delay: null, interval: null });
   const gameFillTimersRef = useRef([]);
+  const gameFillAnimationRef = useRef(null);
 
   const requestedTotal = Math.max(
     1,
@@ -2256,31 +2259,48 @@ export default function App() {
   }, [user?.id, mapsLoading, isMapInitialized, maps.length, screen, syncStatus]);
 
   useEffect(() => {
-    if (!historyPlaying || !historyVersionEntries.length) return undefined;
-    const duration = 850 / historyPlaybackSpeed;
-    const now = performance.now();
-    const previousCycle = historyPlaybackCycleRef.current;
-    const completedRatio = previousCycle.duration
-      ? Math.min(1, Math.max(0, (now - previousCycle.startedAt) / previousCycle.duration))
-      : 0;
-    const firstDelay = Math.max(16, duration * (1 - completedRatio));
-    historyPlaybackCycleRef.current = { startedAt: now - completedRatio * duration, duration };
-    let timer = 0;
-    const advance = () => {
-      setHistoryPreviewIndex((index) => {
-        const position = historyVersionEntries.findIndex((entry) => entry.index === index);
-        if (position < 0 || position >= historyVersionEntries.length - 1) {
-          setHistoryPlaying(false);
-          return index;
-        }
-        return historyVersionEntries[position + 1].index;
-      });
-      historyPlaybackCycleRef.current = { startedAt: performance.now(), duration };
-      timer = window.setTimeout(advance, duration);
+    if (!historyPlaying || historyVersionEntries.length < 2) return undefined;
+    let visiblePosition = Math.min(
+      historyVersionEntries.length - 1,
+      Math.max(0, historyPlaybackPositionRef.current)
+    );
+    let renderedPosition = Math.floor(visiblePosition);
+    historyPlaybackLastFrameRef.current = 0;
+
+    const renderFrame = (now) => {
+      const previousFrame = historyPlaybackLastFrameRef.current || now;
+      historyPlaybackLastFrameRef.current = now;
+      visiblePosition = Math.min(
+        historyVersionEntries.length - 1,
+        visiblePosition + (now - previousFrame) / (850 / historyPlaybackSpeedRef.current)
+      );
+      historyPlaybackPositionRef.current = visiblePosition;
+
+      if (historyTimelineFillRef.current) {
+        historyTimelineFillRef.current.style.width = `${visiblePosition / (historyVersionEntries.length - 1) * 100}%`;
+      }
+
+      const nextRenderedPosition = Math.floor(visiblePosition + 0.0001);
+      if (nextRenderedPosition !== renderedPosition) {
+        renderedPosition = nextRenderedPosition;
+        setHistoryPreviewIndex(historyVersionEntries[renderedPosition].index);
+      }
+
+      if (visiblePosition >= historyVersionEntries.length - 1) {
+        setHistoryPlaying(false);
+        return;
+      }
+      historyPlaybackFrameRef.current = window.requestAnimationFrame(renderFrame);
     };
-    timer = window.setTimeout(advance, firstDelay);
-    return () => window.clearTimeout(timer);
-  }, [historyPlaying, historyMapId, historyVersionEntries, historyPlaybackSpeed]);
+
+    historyPlaybackFrameRef.current = window.requestAnimationFrame(renderFrame);
+    return () => {
+      window.cancelAnimationFrame(historyPlaybackFrameRef.current);
+      historyPlaybackFrameRef.current = null;
+      historyPlaybackLastFrameRef.current = 0;
+      if (historyTimelineFillRef.current) historyTimelineFillRef.current.style.width = "";
+    };
+  }, [historyPlaying, historyMapId, historyVersionEntries]);
 
   useEffect(() => {
     if (!historyMapId) return undefined;
@@ -2590,7 +2610,10 @@ export default function App() {
   }, []);
 
   useEffect(() => () => stopMapCellsHold(), []);
-  useEffect(() => () => gameFillTimersRef.current.forEach(window.clearTimeout), []);
+  useEffect(() => () => {
+    gameFillTimersRef.current.forEach(window.clearTimeout);
+    window.cancelAnimationFrame(gameFillAnimationRef.current);
+  }, []);
 
   useEffect(() => {
     if (!historyReadyRef.current) {
@@ -3993,6 +4016,68 @@ export default function App() {
     }
   }
 
+  function stopProgressSequence() {
+    gameFillTimersRef.current.forEach(window.clearTimeout);
+    gameFillTimersRef.current = [];
+    window.cancelAnimationFrame(gameFillAnimationRef.current);
+    gameFillAnimationRef.current = null;
+  }
+
+  function runProgressSequence(sequence, targetCompleted, onComplete) {
+    stopProgressSequence();
+    const current = new Set(progressCompletedRef.current);
+    const target = new Set(targetCompleted);
+    const sequenceSet = new Set(sequence);
+    const remaining = [...new Set([...current, ...target])]
+      .filter((index) => current.has(index) !== target.has(index) && !sequenceSet.has(index));
+    const ordered = [
+      ...sequence.filter((index) => current.has(index) !== target.has(index)),
+      ...remaining,
+    ];
+
+    if (!ordered.length) {
+      progressCompletedRef.current = target;
+      setProgressCompleted([...target]);
+      onComplete?.();
+      return;
+    }
+
+    const working = new Set(current);
+    const cadence = Math.max(8, Math.min(38, 1800 / ordered.length));
+    const startedAt = performance.now();
+    let cursor = 0;
+
+    const advance = (now) => {
+      const nextCursor = Math.min(
+        ordered.length,
+        Math.max(cursor + 1, Math.floor((now - startedAt) / cadence) + 1)
+      );
+      const animations = [];
+      while (cursor < nextCursor) {
+        const index = ordered[cursor];
+        const mode = target.has(index) ? "draw" : "erase";
+        if (mode === "draw") working.add(index);
+        else working.delete(index);
+        animations.push({ index, mode });
+        cursor += 1;
+      }
+      animateCells(animations);
+      progressCompletedRef.current = new Set(working);
+      setProgressCompleted([...working]);
+
+      if (cursor < ordered.length) {
+        gameFillAnimationRef.current = window.requestAnimationFrame(advance);
+        return;
+      }
+      gameFillAnimationRef.current = null;
+      progressCompletedRef.current = target;
+      setProgressCompleted([...target]);
+      onComplete?.();
+    };
+
+    gameFillAnimationRef.current = window.requestAnimationFrame(advance);
+  }
+
   function setSnapshot(s, target = "drawing", sequence = []) {
     setSelection(null);
     if (target === "grid") {
@@ -4011,30 +4096,7 @@ export default function App() {
       return;
     }
     if (target === "progress" && sequence.length) {
-      const current = new Set(progressCompletedRef.current);
-      const next = new Set(s.completed);
-      const sequenceSet = new Set(sequence);
-      const remaining = [...new Set([...current, ...next])]
-        .filter((index) => current.has(index) !== next.has(index) && !sequenceSet.has(index));
-      const ordered = [...sequence.filter((index) => current.has(index) !== next.has(index)), ...remaining];
-      const working = new Set(current);
-      const steps = Math.min(12, ordered.length);
-      const batchSize = Math.max(1, Math.ceil(ordered.length / Math.max(1, steps)));
-      for (let start = 0; start < ordered.length; start += batchSize) {
-        const batch = ordered.slice(start, start + batchSize);
-        const timer = window.setTimeout(() => {
-          const animations = batch.map((index) => {
-            const mode = next.has(index) ? "draw" : "erase";
-            if (mode === "draw") working.add(index);
-            else working.delete(index);
-            return { index, mode };
-          });
-          animateCells(animations);
-          progressCompletedRef.current = new Set(working);
-          setProgressCompleted([...working]);
-        }, Math.floor(start / batchSize) * 38);
-        gameFillTimersRef.current.push(timer);
-      }
+      runProgressSequence(sequence, s.completed);
       return;
     }
     if (s.progressCompleted) {
@@ -4083,8 +4145,7 @@ export default function App() {
       return;
     }
 
-    gameFillTimersRef.current.forEach(window.clearTimeout);
-    gameFillTimersRef.current = [];
+    stopProgressSequence();
     const a =
       undoStackRef.current.pop();
 
@@ -4099,8 +4160,7 @@ export default function App() {
       return;
     }
 
-    gameFillTimersRef.current.forEach(window.clearTimeout);
-    gameFillTimersRef.current = [];
+    stopProgressSequence();
     const a =
       redoStackRef.current.pop();
 
@@ -5406,8 +5466,7 @@ export default function App() {
       ? [...available].sort(() => Math.random() - 0.5)
       : available.sort((a, b) => a - b);
     const added = cells.slice(0, Math.min(count, available.length));
-    gameFillTimersRef.current.forEach(window.clearTimeout);
-    gameFillTimersRef.current = [];
+    stopProgressSequence();
     const before = new Set(progressCompletedRef.current);
     const after = new Set(before);
     added.forEach((index) => after.add(index));
@@ -5415,20 +5474,7 @@ export default function App() {
       pushHistory(before, after, [], [], "progress", added);
       redoStackRef.current = [];
     }
-    const animatedProgress = new Set(before);
-    const steps = Math.min(12, added.length);
-    const batchSize = Math.max(1, Math.ceil(added.length / Math.max(1, steps)));
-    for (let start = 0; start < added.length; start += batchSize) {
-      const batch = added.slice(start, start + batchSize);
-      const timer = window.setTimeout(() => {
-        batch.forEach((index) => animatedProgress.add(index));
-        animateCells(batch);
-        progressCompletedRef.current = new Set(animatedProgress);
-        setProgressCompleted([...animatedProgress]);
-        if (start + batchSize >= added.length) recordPaintedCells(added.length);
-      }, Math.floor(start / batchSize) * 38);
-      gameFillTimersRef.current.push(timer);
-    }
+    if (added.length) runProgressSequence(added, after, () => recordPaintedCells(added.length));
     setIsGameFillOpen(false);
   }
 
@@ -6642,26 +6688,7 @@ export default function App() {
   }
 
   function changeHistoryPlaybackSpeed(speed) {
-    const fill = historyTimelineFillRef.current;
-    if (historyPlaying && fill?.parentElement) {
-      const trackWidth = fill.parentElement.getBoundingClientRect().width;
-      const currentWidth = fill.getBoundingClientRect().width;
-      const currentPercent = trackWidth ? currentWidth / trackWidth * 100 : 0;
-      const targetPercent = Number.parseFloat(getComputedStyle(fill.closest(".history-timeline")).getPropertyValue("--history-progress")) || 0;
-      const stepPercent = historyVersionEntries.length > 1 ? 100 / (historyVersionEntries.length - 1) : 100;
-      const remainingRatio = Math.min(1, Math.abs(targetPercent - currentPercent) / stepPercent);
-      const remainingDuration = Math.max(16, 820 / speed * remainingRatio);
-      window.clearTimeout(historySpeedAnimationTimerRef.current);
-      fill.style.transition = "none";
-      fill.style.width = `${currentPercent}%`;
-      void fill.offsetWidth;
-      fill.style.transition = `width ${remainingDuration}ms linear`;
-      fill.style.width = "var(--history-progress)";
-      historySpeedAnimationTimerRef.current = window.setTimeout(() => {
-        fill.style.transition = "";
-        fill.style.width = "";
-      }, remainingDuration);
-    }
+    historyPlaybackSpeedRef.current = speed;
     setHistoryPlaybackSpeed(speed);
   }
 
@@ -10191,14 +10218,15 @@ export default function App() {
                   <button type="button" onClick={() => {
                     if (historyPlaying) setHistoryPlaying(false);
                     else {
-                      if (visiblePosition >= historyVersionEntries.length - 1) setHistoryPreviewIndex(historyVersionEntries[0].index);
-                      historyPlaybackCycleRef.current = { startedAt: 0, duration: 0 };
+                      const startPosition = visiblePosition >= historyVersionEntries.length - 1 ? 0 : visiblePosition;
+                      if (startPosition === 0) setHistoryPreviewIndex(historyVersionEntries[0].index);
+                      historyPlaybackPositionRef.current = startPosition;
                       setHistoryPlaying(true);
                     }
                   }}>{historyPlaying ? "■ Остановить" : visiblePosition >= historyVersionEntries.length - 1 ? "▶ С начала" : "▶ Продолжить"}</button>
-                  <div className={`history-timeline${historyPlaying ? " is-playing" : ""}`} style={{ "--history-progress": `${historyVersionEntries.length > 1 ? visiblePosition / (historyVersionEntries.length - 1) * 100 : 100}%`, "--history-step-duration": `${820 / historyPlaybackSpeed}ms` }}>
+                  <div className={`history-timeline${historyPlaying ? " is-playing" : ""}`} style={{ "--history-progress": `${historyVersionEntries.length > 1 ? visiblePosition / (historyVersionEntries.length - 1) * 100 : 100}%` }}>
                     <i><b ref={historyTimelineFillRef} /></i>
-                    <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(historyVersionEntries[Number(event.target.value)].index); }} />
+                    <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { const position = Number(event.target.value); setHistoryPlaying(false); historyPlaybackPositionRef.current = position; setHistoryPreviewIndex(historyVersionEntries[position].index); }} />
                   </div>
                   <span>{visiblePosition + 1} / {historyVersionEntries.length}</span>
                   <div className="history-speed" role="group" aria-label="Скорость воспроизведения">
