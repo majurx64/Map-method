@@ -1974,6 +1974,9 @@ export default function App() {
   const historyNavigationRef = useRef(false);
   const historyCloseTimerRef = useRef(null);
   const versionUndoTimerRef = useRef(null);
+  const historyPlaybackCycleRef = useRef({ startedAt: 0, duration: 0 });
+  const historyTimelineFillRef = useRef(null);
+  const historySpeedAnimationTimerRef = useRef(null);
   const deletedVersionsRef = useRef([]);
   const preservedScrollRef = useRef(null);
   const mapCellsHoldRef = useRef({ delay: null, interval: null });
@@ -2254,7 +2257,16 @@ export default function App() {
 
   useEffect(() => {
     if (!historyPlaying || !historyVersionEntries.length) return undefined;
-    const timer = window.setInterval(() => {
+    const duration = 850 / historyPlaybackSpeed;
+    const now = performance.now();
+    const previousCycle = historyPlaybackCycleRef.current;
+    const completedRatio = previousCycle.duration
+      ? Math.min(1, Math.max(0, (now - previousCycle.startedAt) / previousCycle.duration))
+      : 0;
+    const firstDelay = Math.max(16, duration * (1 - completedRatio));
+    historyPlaybackCycleRef.current = { startedAt: now - completedRatio * duration, duration };
+    let timer = 0;
+    const advance = () => {
       setHistoryPreviewIndex((index) => {
         const position = historyVersionEntries.findIndex((entry) => entry.index === index);
         if (position < 0 || position >= historyVersionEntries.length - 1) {
@@ -2263,8 +2275,11 @@ export default function App() {
         }
         return historyVersionEntries[position + 1].index;
       });
-    }, 850 / historyPlaybackSpeed);
-    return () => window.clearInterval(timer);
+      historyPlaybackCycleRef.current = { startedAt: performance.now(), duration };
+      timer = window.setTimeout(advance, duration);
+    };
+    timer = window.setTimeout(advance, firstDelay);
+    return () => window.clearTimeout(timer);
   }, [historyPlaying, historyMapId, historyVersionEntries, historyPlaybackSpeed]);
 
   useEffect(() => {
@@ -3949,7 +3964,8 @@ export default function App() {
     after,
     beforeColors,
     afterColors,
-    target = "drawing"
+    target = "drawing",
+    sequence = []
   ) {
     const b = {
       completed: [...before],
@@ -3967,6 +3983,7 @@ export default function App() {
       before: b,
       after: a,
       target,
+      sequence: [...sequence],
     });
 
     if (
@@ -3976,7 +3993,7 @@ export default function App() {
     }
   }
 
-  function setSnapshot(s, target = "drawing") {
+  function setSnapshot(s, target = "drawing", sequence = []) {
     setSelection(null);
     if (target === "grid") {
       gridRestoreRef.current = null;
@@ -3991,6 +4008,33 @@ export default function App() {
       setProgressCompleted([...s.progressCompleted]);
       setColors([...s.colors]);
       if (s.imageOffset) setImageOffset(s.imageOffset);
+      return;
+    }
+    if (target === "progress" && sequence.length) {
+      const current = new Set(progressCompletedRef.current);
+      const next = new Set(s.completed);
+      const sequenceSet = new Set(sequence);
+      const remaining = [...new Set([...current, ...next])]
+        .filter((index) => current.has(index) !== next.has(index) && !sequenceSet.has(index));
+      const ordered = [...sequence.filter((index) => current.has(index) !== next.has(index)), ...remaining];
+      const working = new Set(current);
+      const steps = Math.min(12, ordered.length);
+      const batchSize = Math.max(1, Math.ceil(ordered.length / Math.max(1, steps)));
+      for (let start = 0; start < ordered.length; start += batchSize) {
+        const batch = ordered.slice(start, start + batchSize);
+        const timer = window.setTimeout(() => {
+          const animations = batch.map((index) => {
+            const mode = next.has(index) ? "draw" : "erase";
+            if (mode === "draw") working.add(index);
+            else working.delete(index);
+            return { index, mode };
+          });
+          animateCells(animations);
+          progressCompletedRef.current = new Set(working);
+          setProgressCompleted([...working]);
+        }, Math.floor(start / batchSize) * 38);
+        gameFillTimersRef.current.push(timer);
+      }
       return;
     }
     if (s.progressCompleted) {
@@ -4047,7 +4091,7 @@ export default function App() {
     if (!a) return;
 
     redoStackRef.current.push(a);
-    setSnapshot(a.before, a.target);
+    setSnapshot(a.before, a.target, a.sequence);
   }
 
   function redo() {
@@ -4063,7 +4107,7 @@ export default function App() {
     if (!a) return;
 
     undoStackRef.current.push(a);
-    setSnapshot(a.after, a.target);
+    setSnapshot(a.after, a.target, a.sequence);
   }
 
   function getCellFromPointerEvent(e) {
@@ -5368,7 +5412,7 @@ export default function App() {
     const after = new Set(before);
     added.forEach((index) => after.add(index));
     if (added.length) {
-      pushHistory(before, after, [], [], "progress");
+      pushHistory(before, after, [], [], "progress", added);
       redoStackRef.current = [];
     }
     const animatedProgress = new Set(before);
@@ -6595,6 +6639,30 @@ export default function App() {
       return days;
     }, new Map()).values()];
     setHistoryPreviewIndex(visible.at(-1)?.index || 0);
+  }
+
+  function changeHistoryPlaybackSpeed(speed) {
+    const fill = historyTimelineFillRef.current;
+    if (historyPlaying && fill?.parentElement) {
+      const trackWidth = fill.parentElement.getBoundingClientRect().width;
+      const currentWidth = fill.getBoundingClientRect().width;
+      const currentPercent = trackWidth ? currentWidth / trackWidth * 100 : 0;
+      const targetPercent = Number.parseFloat(getComputedStyle(fill.closest(".history-timeline")).getPropertyValue("--history-progress")) || 0;
+      const stepPercent = historyVersionEntries.length > 1 ? 100 / (historyVersionEntries.length - 1) : 100;
+      const remainingRatio = Math.min(1, Math.abs(targetPercent - currentPercent) / stepPercent);
+      const remainingDuration = Math.max(16, 820 / speed * remainingRatio);
+      window.clearTimeout(historySpeedAnimationTimerRef.current);
+      fill.style.transition = "none";
+      fill.style.width = `${currentPercent}%`;
+      void fill.offsetWidth;
+      fill.style.transition = `width ${remainingDuration}ms linear`;
+      fill.style.width = "var(--history-progress)";
+      historySpeedAnimationTimerRef.current = window.setTimeout(() => {
+        fill.style.transition = "";
+        fill.style.width = "";
+      }, remainingDuration);
+    }
+    setHistoryPlaybackSpeed(speed);
   }
 
   async function persistFeatureMap(map) {
@@ -10124,16 +10192,17 @@ export default function App() {
                     if (historyPlaying) setHistoryPlaying(false);
                     else {
                       if (visiblePosition >= historyVersionEntries.length - 1) setHistoryPreviewIndex(historyVersionEntries[0].index);
+                      historyPlaybackCycleRef.current = { startedAt: 0, duration: 0 };
                       setHistoryPlaying(true);
                     }
                   }}>{historyPlaying ? "■ Остановить" : visiblePosition >= historyVersionEntries.length - 1 ? "▶ С начала" : "▶ Продолжить"}</button>
                   <div className={`history-timeline${historyPlaying ? " is-playing" : ""}`} style={{ "--history-progress": `${historyVersionEntries.length > 1 ? visiblePosition / (historyVersionEntries.length - 1) * 100 : 100}%`, "--history-step-duration": `${820 / historyPlaybackSpeed}ms` }}>
-                    <i><b /></i>
+                    <i><b ref={historyTimelineFillRef} /></i>
                     <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(historyVersionEntries[Number(event.target.value)].index); }} />
                   </div>
                   <span>{visiblePosition + 1} / {historyVersionEntries.length}</span>
                   <div className="history-speed" role="group" aria-label="Скорость воспроизведения">
-                    {[0.5, 1, 1.5, 2].map((speed) => <button type="button" key={speed} className={historyPlaybackSpeed === speed ? "active" : ""} onClick={() => setHistoryPlaybackSpeed(speed)}>{String(speed).replace(".", ",")}×</button>)}
+                    {[0.5, 1, 1.5, 2].map((speed) => <button type="button" key={speed} className={historyPlaybackSpeed === speed ? "active" : ""} onClick={() => changeHistoryPlaybackSpeed(speed)}>{String(speed).replace(".", ",")}×</button>)}
                   </div>
                 </div>
                 <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
