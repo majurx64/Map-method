@@ -1110,7 +1110,7 @@ function mapFromSupabaseRow(row) {
   });
 }
 
-const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false }) {
+const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false, animationKey = "" }) {
   const canvasRef = useRef(null);
   const previewAnimationFrameRef = useRef(0);
   const completedCells = new Set(map.progressCompleted || []);
@@ -1250,7 +1250,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       observer.disconnect();
       window.removeEventListener("resize", redraw);
     };
-  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices, animateChanges]);
+  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices, animateChanges, animationKey]);
 
   if (!cropToDrawing) {
     return (
@@ -1289,7 +1289,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       })}
     </div>
   );
-}, (previous, next) => previous.map === next.map
+}, (previous, next) => (previous.animationKey || next.animationKey ? previous.animationKey === next.animationKey : previous.map === next.map)
   && previous.dimensions.cols === next.dimensions.cols
   && previous.dimensions.rows === next.dimensions.rows
   && previous.dimensions.actualTotal === next.dimensions.actualTotal
@@ -1465,6 +1465,28 @@ const AnimatedPercent = memo(function AnimatedPercent({ value }) {
 
   const rounded = Math.round(current * 10) / 10;
   return <>{Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%</>;
+});
+
+const CrossfadeText = memo(function CrossfadeText({ value, as: Tag = "span" }) {
+  const previousValueRef = useRef(value);
+  const clearTimerRef = useRef(null);
+  const [previousValue, setPreviousValue] = useState(null);
+
+  useLayoutEffect(() => {
+    if (previousValueRef.current === value) return undefined;
+    setPreviousValue(previousValueRef.current);
+    previousValueRef.current = value;
+    window.clearTimeout(clearTimerRef.current);
+    clearTimerRef.current = window.setTimeout(() => setPreviousValue(null), 520);
+    return () => window.clearTimeout(clearTimerRef.current);
+  }, [value]);
+
+  return (
+    <Tag className="history-crossfade-text">
+      <span className="history-text-current">{value}</span>
+      {previousValue !== null && <span className="history-text-previous" aria-hidden="true">{previousValue}</span>}
+    </Tag>
+  );
 });
 
 export default function App() {
@@ -4710,15 +4732,25 @@ export default function App() {
       if (elapsed < 260) hasActiveAnimations = true;
 
       const isErasing = animation?.mode === "erase" && elapsed < 260;
+      const isAppearing = animation?.mode === "draw" && elapsed < 260;
 
-      // Базовый цвет появляется сразу — быстрый штрих не даёт пустых клеток.
-      ctx.fillStyle = fill;
-      ctx.fillRect(
-        x,
-        y,
-        cw + physicalPixel,
-        ch + physicalPixel
-      );
+      if (isAppearing) {
+        const inactiveFill = mapType === "free" && isGameMode && drawingActive ? "#deded8" : "#eeeeee";
+        ctx.fillStyle = inactiveFill;
+        ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
+        ctx.globalAlpha = 1 - Math.pow(1 - animationProgress, 3);
+        ctx.fillStyle = fill;
+        ctx.fillRect(
+          x + (cw * (1 - scale)) / 2,
+          y + (ch * (1 - scale)) / 2,
+          cw * scale + physicalPixel,
+          ch * scale + physicalPixel
+        );
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.fillStyle = fill;
+        ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
+      }
 
       // Поверх основы остаётся мягкий «пульс», поэтому анимация не исчезает.
       if (!isErasing && elapsed < 260) {
@@ -6521,7 +6553,7 @@ export default function App() {
     window.setTimeout(() => {
       setShowVictory(false);
       setVictoryDismissing(false);
-    }, 180);
+    }, 360);
   }
 
   function openAccountMenu() {
@@ -8329,7 +8361,7 @@ export default function App() {
                       aria-label={`${columns} ${columns === 1 ? "карточка" : "карточки"} в ряду`}
                       onClick={() => changeMapColumns(columns)}
                     >
-                      {columns}
+                      <span key={mapColumns === columns ? `selected-${columns}` : `idle-${columns}`}>{columns}</span>
                     </button>
                   ))}
                 </div>
@@ -10002,7 +10034,7 @@ export default function App() {
                               setFeedbackRemovingFile("");
                             }, 400);
                           }}
-                        >×</button>
+                    ><span className="history-clear-icon" aria-hidden="true" /></button>
                       </div>
                     );
                   })}
@@ -10091,10 +10123,6 @@ export default function App() {
             </div>
             {featureStatus && <p className="feature-status" role="status">{featureStatus}</p>}
             <button type="button" className="feature-primary" onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>
-            {versionUndoNotice && (() => {
-              const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
-              return <div className="delete-undo-bar version-undo-bar history-version-undo" role="status"><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
-            })()}
             {historyVersionEntries.length ? (() => {
               const selectedEntry = historyVersionEntries.find((entry) => entry.index === historyPreviewIndex) || historyVersionEntries.at(-1);
               const snapshot = selectedEntry.version;
@@ -10103,7 +10131,7 @@ export default function App() {
               const current = getMapStats(historyMap);
               const visiblePosition = Math.max(0, historyVersionEntries.findIndex((entry) => entry.index === selectedEntry.index));
               return <>
-                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><span className="history-dynamic-text" key={`date-${snapshot.id}`}>{new Date(snapshot.createdAt).toLocaleString("ru-RU")}</span><p className="history-dynamic-text" key={`stats-${snapshot.id}`}>{snapshot.filled} из {snapshot.total} клеток · {snapshot.filled - current.filled >= 0 ? "+" : ""}{snapshot.filled - current.filled} к текущей версии</p></div></div>
+                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges animationKey={snapshot.id} /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><CrossfadeText value={new Date(snapshot.createdAt).toLocaleString("ru-RU")} /><CrossfadeText as="p" value={`${snapshot.filled} из ${snapshot.total} клеток · ${snapshot.filled - current.filled >= 0 ? "+" : ""}${snapshot.filled - current.filled} к текущей версии`} /></div></div>
                 <div className="history-player">
                   <button type="button" onClick={() => {
                     if (historyPlaying) setHistoryPlaying(false);
@@ -10112,13 +10140,20 @@ export default function App() {
                       setHistoryPlaying(true);
                     }
                   }}>{historyPlaying ? "■ Остановить" : visiblePosition >= historyVersionEntries.length - 1 ? "▶ С начала" : "▶ Продолжить"}</button>
-                  <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(historyVersionEntries[Number(event.target.value)].index); }} />
+                  <div className={`history-timeline${historyPlaying ? " is-playing" : ""}`} style={{ "--history-progress": `${historyVersionEntries.length > 1 ? visiblePosition / (historyVersionEntries.length - 1) * 100 : 100}%` }}>
+                    <i><b /></i>
+                    <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(historyVersionEntries[Number(event.target.value)].index); }} />
+                  </div>
                   <span>{visiblePosition + 1} / {historyVersionEntries.length}</span>
                 </div>
                 <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
-                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button><button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}>×</button></div>)}</div>
+                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button><button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><span className="history-version-delete-icon" aria-hidden="true" /></button></div>)}</div>
               </>;
             })() : <p className="feature-empty">Версий пока нет. Внеси изменение в карту или сохрани важный этап вручную.</p>}
+            {versionUndoNotice && (() => {
+              const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
+              return <div className="delete-undo-bar version-undo-bar history-version-undo" role="status"><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
+            })()}
           </div>
         </div>
       )}
