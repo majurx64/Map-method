@@ -13,7 +13,18 @@ if (window.location.hostname === 'map-method-chi.vercel.app' && !directCheck) {
 }
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => null))
+  let refreshingForUpdate = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshingForUpdate) return
+    refreshingForUpdate = true
+    window.location.reload()
+  })
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js', { updateViaCache: 'none' })
+      .then((registration) => registration.update())
+      .catch(() => null)
+  })
 }
 
 createRoot(document.getElementById('root')).render(
