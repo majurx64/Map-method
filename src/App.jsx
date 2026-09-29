@@ -2257,6 +2257,11 @@ export default function App() {
     entries.forEach((entry) => latestByDay.set(getActivityDate(new Date(entry.version.createdAt)), entry));
     return [...latestByDay.values()];
   }, [historyMap?.versions, historyViewMode]);
+  const historyPlaybackEntries = useMemo(() => {
+    if (historyPreviewMode !== "cells") return historyVersionEntries;
+    const gameStart = historyVersionEntries.findIndex(({ version }) => version.isGameMode);
+    return gameStart >= 0 ? historyVersionEntries.slice(gameStart) : historyVersionEntries;
+  }, [historyPreviewMode, historyVersionEntries]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2355,9 +2360,9 @@ export default function App() {
   }, [user?.id, mapsLoading, isMapInitialized, maps.length, screen, syncStatus]);
 
   useEffect(() => {
-    if (!historyPlaying || historyVersionEntries.length < 2) return undefined;
+    if (!historyPlaying || historyPlaybackEntries.length < 2) return undefined;
     let visiblePosition = Math.min(
-      historyVersionEntries.length - 1,
+      historyPlaybackEntries.length - 1,
       Math.max(0, historyPlaybackPositionRef.current)
     );
     let renderedPosition = Math.ceil(visiblePosition - 0.0001);
@@ -2367,25 +2372,25 @@ export default function App() {
       const previousFrame = historyPlaybackLastFrameRef.current || now;
       historyPlaybackLastFrameRef.current = now;
       visiblePosition = Math.min(
-        historyVersionEntries.length - 1,
+        historyPlaybackEntries.length - 1,
         visiblePosition + (now - previousFrame) / (850 / historyPlaybackSpeedRef.current)
       );
       historyPlaybackPositionRef.current = visiblePosition;
 
       if (historyTimelineFillRef.current) {
-        historyTimelineFillRef.current.style.width = `${visiblePosition / (historyVersionEntries.length - 1) * 100}%`;
+        historyTimelineFillRef.current.style.width = `${visiblePosition / (historyPlaybackEntries.length - 1) * 100}%`;
       }
 
       const nextRenderedPosition = Math.min(
-        historyVersionEntries.length - 1,
+        historyPlaybackEntries.length - 1,
         Math.ceil(visiblePosition - 0.0001)
       );
       if (nextRenderedPosition !== renderedPosition) {
         renderedPosition = nextRenderedPosition;
-        setHistoryPreviewIndex(historyVersionEntries[renderedPosition].index);
+        setHistoryPreviewIndex(historyPlaybackEntries[renderedPosition].index);
       }
 
-      if (visiblePosition >= historyVersionEntries.length - 1) {
+      if (visiblePosition >= historyPlaybackEntries.length - 1) {
         setHistoryPlaying(false);
         return;
       }
@@ -2399,7 +2404,7 @@ export default function App() {
       historyPlaybackLastFrameRef.current = 0;
       if (historyTimelineFillRef.current) historyTimelineFillRef.current.style.width = "";
     };
-  }, [historyPlaying, historyMapId, historyVersionEntries]);
+  }, [historyPlaying, historyMapId, historyPlaybackEntries]);
 
   useEffect(() => {
     if (!historyMapId) return undefined;
@@ -4631,6 +4636,8 @@ export default function App() {
         setSelectionReady(false);
         artworkDragRef.current = {
           pointerId: e.pointerId, x: e.clientX, y: e.clientY, rect: canvasRef.current.getBoundingClientRect(), area: selection,
+          clientX: e.clientX, clientY: e.clientY,
+          scrollLeft: viewportRef.current.scrollLeft, scrollTop: viewportRef.current.scrollTop,
           completed: [...completedRef.current], progressCompleted: [...progressCompletedRef.current],
           colors: [...colorsRef.current], imageOffset: { ...imageOffset }, dx: 0, dy: 0,
         };
@@ -4659,6 +4666,33 @@ export default function App() {
     );
   }
 
+  function updateArtworkDrag(drag, clientX, clientY) {
+    const viewport = viewportRef.current;
+    if (!drag || !viewport) return;
+    drag.clientX = clientX;
+    drag.clientY = clientY;
+    const pointerX = clientX - drag.x + viewport.scrollLeft - drag.scrollLeft;
+    const pointerY = clientY - drag.y + viewport.scrollTop - drag.scrollTop;
+    const result = moveSelection(drag, drag.area, { cols, rows, actualTotal }, Math.round(pointerX / drag.rect.width * cols), Math.round(pointerY / drag.rect.height * rows), mapType === "image");
+    if (!result || (result.dx === drag.dx && result.dy === drag.dy)) return;
+    drag.dx = result.dx; drag.dy = result.dy;
+    setCompletedDirectly(result.completed);
+    progressCompletedRef.current = new Set(result.progressCompleted);
+    setProgressCompleted(result.progressCompleted);
+    colorsRef.current = result.colors;
+    setColors(result.colors);
+    if (mapType === "image") {
+      imageProcessingRef.current += 1;
+      setImageOffset({ ...drag.imageOffset, cellsEdited: true });
+    }
+    setSelection(result.area);
+  }
+
+  function handleEditorViewportScroll() {
+    const drag = artworkDragRef.current;
+    if (drag) updateArtworkDrag(drag, drag.clientX, drag.clientY);
+  }
+
   function handlePointerMove(e) {
     const pan = panGestureRef.current;
     if (pan?.pointerId === e.pointerId) {
@@ -4676,19 +4710,7 @@ export default function App() {
     }
     const drag = artworkDragRef.current;
     if (drag?.pointerId === e.pointerId) {
-      const result = moveSelection(drag, drag.area, { cols, rows, actualTotal }, Math.round((e.clientX - drag.x) / drag.rect.width * cols), Math.round((e.clientY - drag.y) / drag.rect.height * rows), mapType === "image");
-      if (!result || (result.dx === drag.dx && result.dy === drag.dy)) return;
-      drag.dx = result.dx; drag.dy = result.dy;
-      setCompletedDirectly(result.completed);
-      progressCompletedRef.current = new Set(result.progressCompleted);
-      setProgressCompleted(result.progressCompleted);
-      colorsRef.current = result.colors;
-      setColors(result.colors);
-      if (mapType === "image") {
-        imageProcessingRef.current += 1;
-        setImageOffset({ ...drag.imageOffset, cellsEdited: true });
-      }
-      setSelection(result.area);
+      updateArtworkDrag(drag, e.clientX, e.clientY);
       return;
     }
     if (!isDrawingRef.current)
@@ -6819,6 +6841,21 @@ export default function App() {
     setHistoryPlaybackSpeed(speed);
   }
 
+  function changeHistoryPreviewMode(mode) {
+    if (mode === historyPreviewMode) return;
+    const nextEntries = mode === "cells"
+      ? (() => {
+          const gameStart = historyVersionEntries.findIndex(({ version }) => version.isGameMode);
+          return gameStart >= 0 ? historyVersionEntries.slice(gameStart) : historyVersionEntries;
+        })()
+      : historyVersionEntries;
+    const currentPosition = nextEntries.findIndex((entry) => entry.index === historyPreviewIndex);
+    const nextPosition = Math.max(0, currentPosition);
+    historyPlaybackPositionRef.current = nextPosition;
+    if (nextEntries[nextPosition]) setHistoryPreviewIndex(nextEntries[nextPosition].index);
+    setHistoryPreviewMode(mode);
+  }
+
   async function persistFeatureMap(map) {
     const normalized = normalizeMap(map);
     clearTimeout(saveTimerRef.current);
@@ -7071,9 +7108,12 @@ export default function App() {
   }
 
   async function installApp() {
-    if (!installPrompt) return;
-    await installPrompt.prompt();
-    setInstallPrompt(null);
+    if (installPrompt) {
+      await installPrompt.prompt();
+      setInstallPrompt(null);
+      return;
+    }
+    window.open(`${window.location.origin}/`, "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -8230,7 +8270,7 @@ export default function App() {
               <div className="account-tools-actions">
                 <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
                 <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
-                {installPrompt && <button type="button" onClick={installApp}>Установить Map Method</button>}
+                <button type="button" onClick={installApp}>{installPrompt ? "Установить Map Method" : "Открыть Map Method"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
@@ -9703,6 +9743,7 @@ export default function App() {
                 ref={
                   viewportRef
                 }
+                onScroll={handleEditorViewportScroll}
               >
                 <div
                   className="grid-zoom-stage"
@@ -10351,24 +10392,24 @@ export default function App() {
               const preview = normalizeMap({ ...historyMap, ...snapshot });
               const dimensions = getGridDimensions(preview.totalCells, preview.imageRatio, preview.gridMode, preview.manualRows, preview.manualCols);
               const current = getMapStats(historyMap);
-              const visiblePosition = Math.max(0, historyVersionEntries.findIndex((entry) => entry.index === selectedEntry.index));
+              const visiblePosition = Math.max(0, historyPlaybackEntries.findIndex((entry) => entry.index === selectedEntry.index));
               return <>
-                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges animationKey={snapshot.id} showTemplate={historyPreviewMode === "template"} playbackActive={historyPlaying && visiblePosition > 0} playbackSpeedRef={historyPlaybackSpeedRef} /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><CrossfadeText value={new Date(snapshot.createdAt).toLocaleString("ru-RU")} /><CrossfadeText as="p" value={`${snapshot.filled} из ${snapshot.total} клеток · ${snapshot.filled - current.filled >= 0 ? "+" : ""}${snapshot.filled - current.filled} к текущей версии`} /><div className={`history-preview-mode is-${historyPreviewMode}`} role="group" aria-label="Вид воспроизведения"><button type="button" className={historyPreviewMode === "template" ? "active" : ""} onClick={() => setHistoryPreviewMode("template")}>С фоном</button><button type="button" className={historyPreviewMode === "cells" ? "active" : ""} onClick={() => setHistoryPreviewMode("cells")}>Только клетки</button></div></div></div>
+                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges animationKey={snapshot.id} showTemplate={historyPreviewMode === "template"} playbackActive={historyPlaying && visiblePosition > 0} playbackSpeedRef={historyPlaybackSpeedRef} /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><CrossfadeText value={new Date(snapshot.createdAt).toLocaleString("ru-RU")} /><CrossfadeText as="p" value={`${snapshot.filled} из ${snapshot.total} клеток · ${snapshot.filled - current.filled >= 0 ? "+" : ""}${snapshot.filled - current.filled} к текущей версии`} /><div className={`history-preview-mode is-${historyPreviewMode}`} role="group" aria-label="Вид воспроизведения"><button type="button" className={historyPreviewMode === "template" ? "active" : ""} onClick={() => changeHistoryPreviewMode("template")}>С фоном</button><button type="button" className={historyPreviewMode === "cells" ? "active" : ""} onClick={() => changeHistoryPreviewMode("cells")}>Только клетки</button></div></div></div>
                 <div className="history-player">
                   <button type="button" onClick={() => {
                     if (historyPlaying) setHistoryPlaying(false);
                     else {
-                      const startPosition = visiblePosition >= historyVersionEntries.length - 1 ? 0 : visiblePosition;
-                      if (startPosition === 0) setHistoryPreviewIndex(historyVersionEntries[0].index);
+                      const startPosition = visiblePosition >= historyPlaybackEntries.length - 1 ? 0 : visiblePosition;
+                      if (startPosition === 0) setHistoryPreviewIndex(historyPlaybackEntries[0].index);
                       historyPlaybackPositionRef.current = startPosition;
                       setHistoryPlaying(true);
                     }
-                  }}>{historyPlaying ? "■ Остановить" : visiblePosition >= historyVersionEntries.length - 1 ? "▶ С начала" : "▶ Продолжить"}</button>
-                  <div className={`history-timeline${historyPlaying ? " is-playing" : ""}`} style={{ "--history-progress": `${historyVersionEntries.length > 1 ? visiblePosition / (historyVersionEntries.length - 1) * 100 : 100}%` }}>
+                  }}>{historyPlaying ? "■ Остановить" : visiblePosition >= historyPlaybackEntries.length - 1 ? "▶ С начала" : "▶ Продолжить"}</button>
+                  <div className={`history-timeline${historyPlaying ? " is-playing" : ""}`} style={{ "--history-progress": `${historyPlaybackEntries.length > 1 ? visiblePosition / (historyPlaybackEntries.length - 1) * 100 : 100}%` }}>
                     <i><b ref={historyTimelineFillRef} /></i>
-                    <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { const position = Number(event.target.value); setHistoryPlaying(false); historyPlaybackPositionRef.current = position; setHistoryPreviewIndex(historyVersionEntries[position].index); }} />
+                    <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyPlaybackEntries.length - 1} value={visiblePosition} onChange={(event) => { const position = Number(event.target.value); setHistoryPlaying(false); historyPlaybackPositionRef.current = position; setHistoryPreviewIndex(historyPlaybackEntries[position].index); }} />
                   </div>
-                  <span>{visiblePosition + 1} / {historyVersionEntries.length}</span>
+                  <span>{visiblePosition + 1} / {historyPlaybackEntries.length}</span>
                   <div className="history-speed" role="group" aria-label="Скорость воспроизведения">
                     {[0.5, 1, 1.5, 2, 4, 8, 16].map((speed) => <button type="button" key={speed} className={historyPlaybackSpeed === speed ? "active" : ""} onClick={() => changeHistoryPlaybackSpeed(speed)}>{String(speed).replace(".", ",")}×</button>)}
                   </div>

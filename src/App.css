@@ -3745,7 +3745,13 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   .history-modal .history-version-list { height:190px; max-height:190px; }
 }
 
-.history-version-undo { position:fixed; z-index:2300; right:auto; bottom:18px; left:50%; width:min(700px,calc(100% - 28px)); margin:0; animation:history-undo-float-in 420ms cubic-bezier(.16,1,.3,1) both; }
+.history-version-undo { position:fixed; z-index:2300; right:auto; bottom:24px; left:50%; width:min(840px,calc(100% - 32px)); margin:0; padding:18px 20px 15px; border-radius:16px; animation:history-undo-float-in 420ms cubic-bezier(.16,1,.3,1) both; }
+.history-version-undo .delete-undo-copy { gap:16px; }
+.history-version-undo .delete-undo-copy span { font-size:16px; }
+.history-version-undo .delete-undo-copy strong { font-size:16px; }
+.history-version-undo .delete-undo-copy button { min-height:40px; padding:0 17px; border-radius:10px; font-size:15px; }
+.history-version-undo > small { display:block; margin-top:6px; font-size:13px; }
+.history-version-undo > i { height:5px; margin-top:12px; }
 .history-version-undo.is-closing { pointer-events:none; animation:history-undo-float-out 360ms cubic-bezier(.4,0,1,1) forwards; }
 @keyframes history-undo-float-in { from { opacity:0; transform:translate(-50%,18px) scale(.975); filter:blur(3px); } to { opacity:1; transform:translate(-50%,0) scale(1); filter:blur(0); } }
 @keyframes history-undo-float-out { from { opacity:1; transform:translate(-50%,0) scale(1); filter:blur(0); } to { opacity:0; transform:translate(-50%,14px) scale(.98); filter:blur(3px); } }
