@@ -50,10 +50,10 @@ test('A recolour and a resize each create a daily snapshot', () => {
   assert.equal(addDailySnapshot(map, { ...map, colors: ['#fff'] }).versions.length, 1);
   assert.equal(addDailySnapshot(map, { ...map, totalCells: '90' }).versions.length, 1);
 });
-test('Daily snapshots are capped and not duplicated on another edit today', () => {
+test('Daily snapshots are retained and not duplicated on another edit today', () => {
   const next = addDailySnapshot(map, { ...map, colors: ['#fff'] });
   assert.equal(addDailySnapshot(next, { ...next, colors: ['#000'] }).versions.length, 1);
-  assert.equal(normalizeVersions(Array.from({ length: 30 }, () => createMapSnapshot(map))).length, 20);
+  assert.equal(normalizeVersions(Array.from({ length: 30 }, () => createMapSnapshot(map))).length, 30);
 });
 test('Change history keeps separate settled edits without duplicating the same state', () => {
   const first = addChangeSnapshot(map);

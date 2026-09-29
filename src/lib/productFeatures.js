@@ -111,7 +111,7 @@ export function createMapSnapshot(map, label = "Автоматическая в�
 
 export function normalizeVersions(versions) {
   if (!Array.isArray(versions)) return [];
-  return versions.slice(-20).flatMap((version) => {
+  return versions.flatMap((version) => {
     if (!version || typeof version !== "object" || !Array.isArray(version.completed)) return [];
     return [{
       id: String(version.id || `${Date.now()}-${Math.random()}`),
@@ -146,7 +146,7 @@ export function addDailySnapshot(previous, next) {
   const versions = normalizeVersions(previous.versions);
   const today = dateKey();
   if (versions.some((version) => dateKey(new Date(version.createdAt)) === today)) return { ...next, versions };
-  return { ...next, versions: [...versions, createMapSnapshot(previous)].slice(-20) };
+  return { ...next, versions: [...versions, createMapSnapshot(previous)] };
 }
 
 function snapshotMatchesMap(snapshot, map) {
@@ -170,7 +170,7 @@ export function addChangeSnapshot(map) {
   if (!map) return map;
   const versions = normalizeVersions(map.versions);
   if (snapshotMatchesMap(versions.at(-1), map)) return { ...map, versions };
-  return { ...map, versions: [...versions, createMapSnapshot(map, "Изменение")].slice(-20) };
+  return { ...map, versions: [...versions, createMapSnapshot(map, "Изменение")] };
 }
 
 export function restoreSnapshot(map, snapshot) {

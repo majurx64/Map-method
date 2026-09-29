@@ -1545,6 +1545,7 @@ export default function App() {
   const [historyMapId, setHistoryMapId] = useState(null);
   const [historyPreviewIndex, setHistoryPreviewIndex] = useState(0);
   const [historyPlaying, setHistoryPlaying] = useState(false);
+  const [historyPlaybackSpeed, setHistoryPlaybackSpeed] = useState(1);
   const [historyViewMode, setHistoryViewMode] = useState("changes");
   const [historyClosing, setHistoryClosing] = useState(false);
   const [deletingVersionId, setDeletingVersionId] = useState("");
@@ -2262,9 +2263,9 @@ export default function App() {
         }
         return historyVersionEntries[position + 1].index;
       });
-    }, 850);
+    }, 850 / historyPlaybackSpeed);
     return () => window.clearInterval(timer);
-  }, [historyPlaying, historyMapId, historyVersionEntries]);
+  }, [historyPlaying, historyMapId, historyVersionEntries, historyPlaybackSpeed]);
 
   useEffect(() => {
     if (!historyMapId) return undefined;
@@ -4738,14 +4739,9 @@ export default function App() {
         const inactiveFill = mapType === "free" && isGameMode && drawingActive ? "#deded8" : "#eeeeee";
         ctx.fillStyle = inactiveFill;
         ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
-        ctx.globalAlpha = 1 - Math.pow(1 - animationProgress, 3);
+        ctx.globalAlpha = animationProgress;
         ctx.fillStyle = fill;
-        ctx.fillRect(
-          x + (cw * (1 - scale)) / 2,
-          y + (ch * (1 - scale)) / 2,
-          cw * scale + physicalPixel,
-          ch * scale + physicalPixel
-        );
+        ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
         ctx.globalAlpha = 1;
       } else {
         ctx.fillStyle = fill;
@@ -4753,7 +4749,7 @@ export default function App() {
       }
 
       // Поверх основы остаётся мягкий «пульс», поэтому анимация не исчезает.
-      if (!isErasing && elapsed < 260) {
+      if (!isErasing && !isAppearing && elapsed < 260) {
         ctx.globalAlpha = 0.2 * (1 - animationProgress);
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(
@@ -4789,15 +4785,9 @@ export default function App() {
       // При стирании фон появляется сразу под курсором, а прежний цвет
       // плавно сжимается поверх него — анимация есть, отставания нет.
       if (isErasing) {
-        const eraseScale = 1 - animationProgress * 0.35;
         ctx.globalAlpha = 1 - animationProgress;
         ctx.fillStyle = animation.color || fill;
-        ctx.fillRect(
-          x + (cw * (1 - eraseScale)) / 2,
-          y + (ch * (1 - eraseScale)) / 2,
-          cw * eraseScale + physicalPixel,
-          ch * eraseScale + physicalPixel
-        );
+        ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
         ctx.globalAlpha = 1;
       }
     }
@@ -6657,10 +6647,6 @@ export default function App() {
     if (!versions.some((version) => version.id === deleted.version.id)) {
       versions.splice(Math.min(deleted.index, versions.length), 0, deleted.version);
     }
-    while (versions.length > 20) {
-      const restoredIndex = versions.findIndex((version) => version.id === deleted.version.id);
-      versions.splice(restoredIndex === versions.length - 1 ? 0 : versions.length - 1, 1);
-    }
     const restored = await persistFeatureMap({ ...map, versions });
     if (historyMapId !== restored.id) openHistoryModal(restored);
     setHistoryPreviewIndex(restored.versions.findIndex((version) => version.id === deleted.version.id));
@@ -6711,7 +6697,7 @@ export default function App() {
     setFeatureStatus("Сохраняем…");
     try {
     const current = map.id === activeMapId ? buildCurrentMap() || map : map;
-    const versioned = normalizeMap({ ...current, versions: [...(current.versions || []), createMapSnapshot(current, label)].slice(-20) });
+    const versioned = normalizeMap({ ...current, versions: [...(current.versions || []), createMapSnapshot(current, label)] });
     await persistFeatureMap(versioned);
     setHistoryMapId(versioned.id);
     setHistoryPreviewIndex(versioned.versions.length - 1);
@@ -6724,7 +6710,7 @@ export default function App() {
     setFeatureStatus("Восстанавливаем…");
     try {
     const current = map.id === activeMapId ? buildCurrentMap() || map : map;
-    const withCurrent = { ...current, versions: [...(current.versions || []), createMapSnapshot(current, "Перед восстановлением")].slice(-20) };
+    const withCurrent = { ...current, versions: [...(current.versions || []), createMapSnapshot(current, "Перед восстановлением")] };
     const restored = normalizeMap(restoreSnapshot(withCurrent, snapshot));
     if (restored.id === activeMapId) openMap(restored);
     await persistFeatureMap(restored);
@@ -7967,7 +7953,7 @@ export default function App() {
                       aria-label={`Очистить активность за ${date.toLocaleDateString("ru-RU")}`}
                       data-tooltip={item.cells ? "Очистить этот день" : "В этот день активности нет"}
                       onClick={() => clearActivityDay({ ...item, date })}
-                    >×</button>
+                    ><svg className="history-clear-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>
                   </div>
                   );
                 })}
@@ -8352,18 +8338,19 @@ export default function App() {
               {!!maps.length && (
                 <div className="maps-view-switch" role="group" aria-label="Количество карточек в ряду">
                   <span>Карточек в строке</span>
-                  {[1, 2, 3, 4].map((columns) => (
-                    <button
-                      type="button"
-                      key={columns}
-                      className={mapColumns === columns ? "active" : ""}
-                      aria-pressed={mapColumns === columns}
-                      aria-label={`${columns} ${columns === 1 ? "карточка" : "карточки"} в ряду`}
-                      onClick={() => changeMapColumns(columns)}
-                    >
-                      <span key={mapColumns === columns ? `selected-${columns}` : `idle-${columns}`}>{columns}</span>
-                    </button>
-                  ))}
+                  <div className="maps-view-options" style={{ "--map-column-index": mapColumns - 1 }}>
+                    <i aria-hidden="true" />
+                    {[1, 2, 3, 4].map((columns) => (
+                      <button
+                        type="button"
+                        key={columns}
+                        className={mapColumns === columns ? "active" : ""}
+                        aria-pressed={mapColumns === columns}
+                        aria-label={`${columns} ${columns === 1 ? "карточка" : "карточки"} в ряду`}
+                        onClick={() => changeMapColumns(columns)}
+                      >{columns}</button>
+                    ))}
+                  </div>
                 </div>
               )}
               <button
@@ -10034,7 +10021,7 @@ export default function App() {
                               setFeedbackRemovingFile("");
                             }, 400);
                           }}
-                    ><span className="history-clear-icon" aria-hidden="true" /></button>
+                    >×</button>
                       </div>
                     );
                   })}
@@ -10115,9 +10102,9 @@ export default function App() {
       {historyMap && (
         <div className={`modal-overlay feature-modal-overlay history-overlay${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
           <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><span className="account-eyebrow">ДО 20 ВЕРСИЙ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
+            <div className="modal-header"><div><span className="account-eyebrow">ВСЕ ВЕРСИИ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
             <p className="feature-modal-intro">Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням.</p>
-            <div className="history-view-switch" role="group" aria-label="Отображение истории">
+            <div className={`history-view-switch is-${historyViewMode}`} role="group" aria-label="Отображение истории">
               <button type="button" className={historyViewMode === "changes" ? "active" : ""} onClick={() => changeHistoryViewMode("changes")}>Все изменения</button>
               <button type="button" className={historyViewMode === "days" ? "active" : ""} onClick={() => changeHistoryViewMode("days")}>По дням</button>
             </div>
@@ -10140,14 +10127,17 @@ export default function App() {
                       setHistoryPlaying(true);
                     }
                   }}>{historyPlaying ? "■ Остановить" : visiblePosition >= historyVersionEntries.length - 1 ? "▶ С начала" : "▶ Продолжить"}</button>
-                  <div className={`history-timeline${historyPlaying ? " is-playing" : ""}`} style={{ "--history-progress": `${historyVersionEntries.length > 1 ? visiblePosition / (historyVersionEntries.length - 1) * 100 : 100}%` }}>
+                  <div className={`history-timeline${historyPlaying ? " is-playing" : ""}`} style={{ "--history-progress": `${historyVersionEntries.length > 1 ? visiblePosition / (historyVersionEntries.length - 1) * 100 : 100}%`, "--history-step-duration": `${820 / historyPlaybackSpeed}ms` }}>
                     <i><b /></i>
                     <input className="history-range" aria-label="Положение в истории" type="range" min="0" max={historyVersionEntries.length - 1} value={visiblePosition} onChange={(event) => { setHistoryPlaying(false); setHistoryPreviewIndex(historyVersionEntries[Number(event.target.value)].index); }} />
                   </div>
                   <span>{visiblePosition + 1} / {historyVersionEntries.length}</span>
+                  <div className="history-speed" role="group" aria-label="Скорость воспроизведения">
+                    {[0.5, 1, 1.5, 2].map((speed) => <button type="button" key={speed} className={historyPlaybackSpeed === speed ? "active" : ""} onClick={() => setHistoryPlaybackSpeed(speed)}>{String(speed).replace(".", ",")}×</button>)}
+                  </div>
                 </div>
                 <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
-                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button><button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><span className="history-version-delete-icon" aria-hidden="true" /></button></div>)}</div>
+                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button><button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button></div>)}</div>
               </>;
             })() : <p className="feature-empty">Версий пока нет. Внеси изменение в карту или сохрани важный этап вручную.</p>}
             {versionUndoNotice && (() => {
