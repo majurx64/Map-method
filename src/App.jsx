@@ -1110,9 +1110,11 @@ function mapFromSupabaseRow(row) {
   });
 }
 
-const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false, animationKey = "" }) {
+const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false, animationKey = "", showTemplate = true }) {
   const canvasRef = useRef(null);
   const previewAnimationFrameRef = useRef(0);
+  const previousPreviewMapRef = useRef(map);
+  const previousPreviewModeRef = useRef(showTemplate);
   const completedCells = new Set(map.progressCompleted || []);
   const drawingCells = new Set(map.completed || []);
   const densePreview = dimensions.actualTotal >= 2000;
@@ -1174,8 +1176,28 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       ? Object.assign(document.createElement("canvas"), { width: canvas.width, height: canvas.height })
       : null;
     previousFrame?.getContext("2d")?.drawImage(canvas, 0, 0);
+    const previousMap = previousPreviewMapRef.current;
+    const previousProgressCells = new Set(previousMap.progressCompleted || []);
+    const previousTemplateCells = new Set(previousMap.completed || []);
     const progressCells = new Set(map.progressCompleted || []);
     const templateCells = new Set(map.completed || []);
+    const animateWholeFrame = previousPreviewModeRef.current !== showTemplate;
+    const changedIndices = animateChanges && !animateWholeFrame
+      ? visibleIndices.filter((index) => {
+          const previousUtility = previousMap.mapType === "free" && normalizeHexColor(previousMap.colors?.[index]) === UTILITY_COLOR;
+          const utility = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
+          const previousFilled = previousProgressCells.has(index) && !previousUtility;
+          const filled = progressCells.has(index) && !utility;
+          const previousBackground = showTemplate && !previousUtility && (previousMap.mapType === "image" || previousTemplateCells.has(index));
+          const background = showTemplate && !utility && (map.mapType === "image" || templateCells.has(index));
+          return previousFilled !== filled
+            || previousBackground !== background
+            || (previousFilled || filled || previousBackground || background)
+              && normalizeHexColor(previousMap.colors?.[index]) !== normalizeHexColor(map.colors?.[index]);
+        })
+      : [];
+    previousPreviewMapRef.current = map;
+    previousPreviewModeRef.current = showTemplate;
     // Layout dimensions must never include the ancestor's temporary FLIP scale.
     // Observe the canvas content box, not its transformed screen rectangle.
     const draw = (entries, transition = 1) => {
@@ -1199,7 +1221,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       visibleIndices.forEach((index) => {
         const utilityCell = map.mapType === "free" && normalizeHexColor(map.colors?.[index]) === UTILITY_COLOR;
         const filled = progressCells.has(index) && !utilityCell;
-        const backgroundDrawingCell = !utilityCell && (map.mapType === "image" || templateCells.has(index));
+        const backgroundDrawingCell = showTemplate && !utilityCell && (map.mapType === "image" || templateCells.has(index));
         context.fillStyle = filled
           ? map.colors?.[index] || "#32624f"
           : backgroundDrawingCell
@@ -1223,7 +1245,23 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       context.globalAlpha = 1;
       if (previousFrame && previousFrame.width === width && previousFrame.height === height && transition < 1) {
         context.globalAlpha = 1 - transition;
-        context.drawImage(previousFrame, 0, 0);
+        if (animateWholeFrame) {
+          context.drawImage(previousFrame, 0, 0);
+        } else {
+          changedIndices.forEach((index) => {
+            const row = Math.floor(index / dimensions.cols) - startRow;
+            const column = index % dimensions.cols - startCol;
+            const left = Math.round(offsetX + column * cellSize);
+            const top = Math.round(offsetY + row * cellSize);
+            const right = Math.round(offsetX + (column + 1) * cellSize);
+            const bottom = Math.round(offsetY + (row + 1) * cellSize);
+            const cellWidth = Math.max(0, right - left - gap);
+            const cellHeight = Math.max(0, bottom - top - gap);
+            if (cellWidth && cellHeight) {
+              context.drawImage(previousFrame, left, top, cellWidth, cellHeight, left, top, cellWidth, cellHeight);
+            }
+          });
+        }
         context.globalAlpha = 1;
       }
     };
@@ -1250,7 +1288,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       observer.disconnect();
       window.removeEventListener("resize", redraw);
     };
-  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices, animateChanges, animationKey]);
+  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices, animateChanges, animationKey, showTemplate]);
 
   if (!cropToDrawing) {
     return (
@@ -1295,6 +1333,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   && previous.dimensions.actualTotal === next.dimensions.actualTotal
   && previous.cropToDrawing === next.cropToDrawing
   && previous.animateChanges === next.animateChanges
+  && previous.showTemplate === next.showTemplate
   && previous.previewBounds?.width === next.previewBounds?.width
   && previous.previewBounds?.height === next.previewBounds?.height);
 
@@ -1467,7 +1506,7 @@ const AnimatedPercent = memo(function AnimatedPercent({ value }) {
   return <>{Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%</>;
 });
 
-const CrossfadeText = memo(function CrossfadeText({ value, as: Tag = "span" }) {
+const CrossfadeToken = memo(function CrossfadeToken({ value }) {
   const previousValueRef = useRef(value);
   const clearTimerRef = useRef(null);
   const [previousValue, setPreviousValue] = useState(null);
@@ -1482,9 +1521,18 @@ const CrossfadeText = memo(function CrossfadeText({ value, as: Tag = "span" }) {
   }, [value]);
 
   return (
-    <Tag className="history-crossfade-text">
-      <span className="history-text-current">{value}</span>
+    <span className="history-text-token">
+      <span className="history-text-current" key={value}>{value}</span>
       {previousValue !== null && <span className="history-text-previous" aria-hidden="true">{previousValue}</span>}
+    </span>
+  );
+});
+
+const CrossfadeText = memo(function CrossfadeText({ value, as: Tag = "span" }) {
+  const tokens = String(value).split(/(\s+|[.,:·/+()\-]+)/).filter(Boolean);
+  return (
+    <Tag className="history-crossfade-text">
+      {tokens.map((token, index) => <CrossfadeToken key={index} value={token} />)}
     </Tag>
   );
 });
@@ -1547,6 +1595,7 @@ export default function App() {
   const [historyPlaying, setHistoryPlaying] = useState(false);
   const [historyPlaybackSpeed, setHistoryPlaybackSpeed] = useState(1);
   const [historyViewMode, setHistoryViewMode] = useState("changes");
+  const [historyPreviewMode, setHistoryPreviewMode] = useState("template");
   const [historyClosing, setHistoryClosing] = useState(false);
   const [deletingVersionId, setDeletingVersionId] = useState("");
   const [restoredVersionId, setRestoredVersionId] = useState("");
@@ -6665,6 +6714,7 @@ export default function App() {
     window.clearTimeout(historyCloseTimerRef.current);
     setHistoryClosing(false);
     setHistoryViewMode("changes");
+    setHistoryPreviewMode("template");
     setHistoryMapId(map.id);
     setHistoryPreviewIndex(Math.max(0, (map.versions?.length || 1) - 1));
     setHistoryPlaying(false);
@@ -10220,7 +10270,7 @@ export default function App() {
               const current = getMapStats(historyMap);
               const visiblePosition = Math.max(0, historyVersionEntries.findIndex((entry) => entry.index === selectedEntry.index));
               return <>
-                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges animationKey={snapshot.id} /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><CrossfadeText value={new Date(snapshot.createdAt).toLocaleString("ru-RU")} /><CrossfadeText as="p" value={`${snapshot.filled} из ${snapshot.total} клеток · ${snapshot.filled - current.filled >= 0 ? "+" : ""}${snapshot.filled - current.filled} к текущей версии`} /></div></div>
+                <div className="history-preview"><div className="library-preview history-preview-map"><MapCardGrid map={preview} dimensions={dimensions} animateChanges animationKey={snapshot.id} showTemplate={historyPreviewMode === "template"} /></div><div className="history-preview-copy"><strong>{snapshot.label}</strong><CrossfadeText value={new Date(snapshot.createdAt).toLocaleString("ru-RU")} /><CrossfadeText as="p" value={`${snapshot.filled} из ${snapshot.total} клеток · ${snapshot.filled - current.filled >= 0 ? "+" : ""}${snapshot.filled - current.filled} к текущей версии`} /><div className={`history-preview-mode is-${historyPreviewMode}`} role="group" aria-label="Вид воспроизведения"><button type="button" className={historyPreviewMode === "template" ? "active" : ""} onClick={() => setHistoryPreviewMode("template")}>С фоном</button><button type="button" className={historyPreviewMode === "cells" ? "active" : ""} onClick={() => setHistoryPreviewMode("cells")}>Только клетки</button></div></div></div>
                 <div className="history-player">
                   <button type="button" onClick={() => {
                     if (historyPlaying) setHistoryPlaying(false);
