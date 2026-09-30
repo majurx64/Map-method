@@ -3583,8 +3583,8 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 /* Activity hints use the same light popover language as the rest of the site. */
 .history-clear-day { position:relative; display:grid; place-items:center; font-family:Arial,sans-serif; }
 .account-menu.is-open::after { position:absolute; top:100%; right:0; width:100%; height:9px; content:""; }
-.history-clear-day::after,.rest-day-card::after,.history-version-delete::after { position:absolute; z-index:30; left:50%; bottom:calc(100% + 8px); width:max-content; max-width:230px; padding:7px 9px; border:1px solid #d8d2c8; border-radius:8px; background:#fffdf9; color:#4e574f; box-shadow:0 9px 24px rgba(45,51,44,.13); content:attr(data-tooltip); font-size:11px; font-weight:650; line-height:1.35; opacity:0; pointer-events:none; text-align:center; transform:translate(-50%,5px) scale(.96); transition:opacity 180ms ease,transform 220ms cubic-bezier(.16,1,.3,1); white-space:normal; }
-.history-clear-day:hover::after,.history-clear-day:focus-visible::after,.rest-day-card:hover::after,.rest-day-card:focus-visible::after,.history-version-delete:hover::after,.history-version-delete:focus-visible::after { opacity:1; transform:translate(-50%,0) scale(1); }
+.history-clear-day::after,.rest-day-card::after,.history-version-delete::after,.share-revoke-button::after { position:absolute; z-index:30; left:50%; bottom:calc(100% + 8px); width:max-content; max-width:230px; padding:7px 9px; border:1px solid #d8d2c8; border-radius:8px; background:#fffdf9; color:#4e574f; box-shadow:0 9px 24px rgba(45,51,44,.13); content:attr(data-tooltip); font-size:11px; font-weight:650; line-height:1.35; opacity:0; pointer-events:none; text-align:center; transform:translate(-50%,5px) scale(.96); transition:opacity 180ms ease,transform 220ms cubic-bezier(.16,1,.3,1); white-space:normal; }
+.history-clear-day:hover::after,.history-clear-day:focus-visible::after,.rest-day-card:hover::after,.rest-day-card:focus-visible::after,.history-version-delete:hover::after,.history-version-delete:focus-visible::after,.share-revoke-button:not(:disabled):hover::after,.share-revoke-button:not(:disabled):focus-visible::after { opacity:1; transform:translate(-50%,0) scale(1); }
 .rest-day-card { position:relative; outline:none; }
 .rest-day-card::after { bottom:auto; top:calc(100% + 8px); }
 
@@ -3816,3 +3816,9 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .share-modal button:disabled,.share-modal .feature-toggle:has(input:disabled) { opacity:.65; cursor:default; }
 @keyframes share-feedback-arrive { from { opacity:0; transform:translateY(8px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
 @media (prefers-reduced-motion:reduce) { .share-revoked { animation:none; } .share-link button { transition:none; } }
+
+.app-launch-help .modal-close { position:absolute; top:16px; right:16px; }
+.share-revoke-button { position:relative; }
+.share-revoke-button::after { left:auto; right:0; max-width:200px; transform:translateY(5px) scale(.96); }
+.share-revoke-button:not(:disabled):hover::after,.share-revoke-button:not(:disabled):focus-visible::after { transform:translateY(0) scale(1); }
+@media (prefers-reduced-motion:reduce) { .share-revoke-button::after { transition:none; } }
