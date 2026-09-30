@@ -1978,6 +1978,7 @@ export default function App() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
   const [isSketchSubmissionOpen, setIsSketchSubmissionOpen] = useState(false);
+  const [isSketchSubmissionClosing, setIsSketchSubmissionClosing] = useState(false);
   const [sketchSubmissionMapIds, setSketchSubmissionMapIds] = useState([]);
   const [sketchSubmissionNote, setSketchSubmissionNote] = useState("");
   const [sketchSubmissionStatus, setSketchSubmissionStatus] = useState("");
@@ -2244,6 +2245,11 @@ export default function App() {
   function setLibraryFavorites(update) {
     setFavoritesByUser((current) => ({ ...current, [libraryUserKey]: update(Array.isArray(current[libraryUserKey]) ? current[libraryUserKey] : []) }));
   }
+  function toggleLibraryFavorite(itemId) {
+    setLibraryFavorites((current) => current.includes(itemId)
+      ? current.filter((id) => id !== itemId)
+      : [...current, itemId]);
+  }
   const libraryCategories = ["Все", ...new Set(publicLibrary.map((item) => item.category || "Другое"))];
   const visiblePublicLibrary = publicLibrary
     .filter((item) => libraryCategory === "Все" || item.category === libraryCategory)
@@ -2251,7 +2257,6 @@ export default function App() {
     .sort((a, b) => {
       if (librarySort === "name") return a.name.localeCompare(b.name, "ru");
       if (librarySort === "new") return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
-      if (librarySort === "favorites") return Number(libraryFavorites.includes(b.id)) - Number(libraryFavorites.includes(a.id));
       return Math.max(Number(b.useCount) || 0, Number(libraryUsage[b.id]) || 0) - Math.max(Number(a.useCount) || 0, Number(libraryUsage[a.id]) || 0);
     });
   const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
@@ -5847,6 +5852,16 @@ export default function App() {
     }, 260);
   }
 
+  function closeSketchSubmissionModal(afterClose) {
+    if (isSketchSubmissionClosing) return;
+    setIsSketchSubmissionClosing(true);
+    window.setTimeout(() => {
+      setIsSketchSubmissionOpen(false);
+      setIsSketchSubmissionClosing(false);
+      afterClose?.();
+    }, 260);
+  }
+
   function openCreateModal() {
     setClosingModal("");
     setNewMapName("");
@@ -6682,14 +6697,13 @@ export default function App() {
     }
     recordAnalytics("library_submission", { value: sources.length });
     setSketchSubmissionStatus("sent");
-    window.setTimeout(() => {
-      setIsSketchSubmissionOpen(false);
+    window.setTimeout(() => closeSketchSubmissionModal(() => {
       setSketchSubmissionStatus("");
       setSketchSubmissionNote("");
       setSketchSubmissionMapIds([]);
       setShowFeedbackThanks(true);
       feedbackThanksAutoTimerRef.current = window.setTimeout(closeFeedbackThanks, 2200);
-    }, 500);
+    }), 500);
   }
 
   async function approveLibrarySubmission(message, submissionIndex = 0) {
@@ -8590,7 +8604,7 @@ export default function App() {
               <span>Пользователи могут отправить готовый эскиз на рассмотрение.</span>
             </div>
             {!isLibraryOwner && !!maps.length && (
-              <button type="button" className="library-submit-sketch" onClick={() => { setSketchSubmissionMapIds(maps[0]?.id ? [maps[0].id] : []); setSketchSubmissionStatus(""); setIsSketchSubmissionOpen(true); }}>
+              <button type="button" className="library-submit-sketch" onClick={() => { setSketchSubmissionMapIds(maps[0]?.id ? [maps[0].id] : []); setSketchSubmissionStatus(""); setIsSketchSubmissionClosing(false); setIsSketchSubmissionOpen(true); }}>
                 Предложить свой эскиз
               </button>
             )}
@@ -8602,7 +8616,7 @@ export default function App() {
             {!!libraryStatus && <p className="library-status" role="status">{libraryStatus}</p>}
             <div className="library-discovery">
               <label className="library-search"><span>Поиск</span><input type="search" value={librarySearch} placeholder="Название или категория" onChange={(event) => setLibrarySearch(event.target.value)} /></label>
-              <label><span>Порядок</span><select value={librarySort} onChange={(event) => setLibrarySort(event.target.value)}><option value="popular">Популярные</option><option value="new">Новые</option><option value="name">По названию</option><option value="favorites">Избранные сначала</option></select></label>
+              <div className="library-order"><span>Порядок</span><AnimatedSelect value={librarySort} onChange={setLibrarySort} ariaLabel="Порядок эскизов" options={[{ value: "popular", label: "Популярные" }, { value: "new", label: "Новые" }, { value: "name", label: "По алфавиту" }]} /></div>
             </div>
             <div className="library-collections" role="group" aria-label="Коллекции">
               {libraryCategories.map((category) => <button type="button" key={category} className={libraryCategory === category ? "active" : ""} onClick={() => setLibraryCategory(category)}>{category}</button>)}
@@ -8612,7 +8626,7 @@ export default function App() {
                 const dimensions = getGridDimensions(item.totalCells, 1, item.gridMode, item.manualRows, item.manualCols);
                 return (
                   <article className="library-card" key={item.id}>
-                    <button type="button" className={`library-favorite${libraryFavorites.includes(item.id) ? " active" : ""}`} aria-label={libraryFavorites.includes(item.id) ? "Убрать из избранного" : "Добавить в избранное"} onClick={() => setLibraryFavorites((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}>♥</button>
+                    <button type="button" className={`library-favorite${libraryFavorites.includes(item.id) ? " active" : ""}`} aria-label={libraryFavorites.includes(item.id) ? "Убрать из избранного" : "Добавить в избранное"} aria-pressed={libraryFavorites.includes(item.id)} onClick={(event) => { event.stopPropagation(); toggleLibraryFavorite(item.id); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.2 10.6 19C5.7 14.7 2.5 11.8 2.5 8.2 2.5 5.3 4.8 3 7.7 3c1.6 0 3.2.8 4.3 2 1.1-1.2 2.7-2 4.3-2 2.9 0 5.2 2.3 5.2 5.2 0 3.6-3.2 6.5-8.1 10.8L12 20.2Z" /></svg></button>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
                     <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)}</span></div>
                     <small>{item.useCount !== null && item.useCount !== undefined ? `Создано карт: ${item.useCount}` : `Создано на этом устройстве: ${Number(libraryUsage[item.id]) || 0}`}</small>
@@ -8660,7 +8674,7 @@ export default function App() {
       )}
 
       {screen === "maps" && (
-        <section className={`maps-page${authLoading || mapsLoading || !isMapInitialized ? " is-loading" : " is-ready"}`}>
+        <section className={`maps-page${authLoading || mapsLoading || !isMapInitialized ? " is-loading" : " is-ready"}${pendingDeletes.length ? " has-delete-undo" : ""}`}>
           <div className="maps-page-header">
             <div>
               <h1>
@@ -8695,21 +8709,6 @@ export default function App() {
               </button>
             </div>
           </div>
-
-          {!!pendingDeletes.length && (() => {
-            const latest = pendingDeletes[0];
-            const remainingMs = Math.max(0, latest.deadline - deleteCountdownNow);
-            return (
-              <div className="delete-undo-bar" role="status">
-                <div className="delete-undo-copy">
-                  <span>Карта «{latest.map.name}» удалена</span>
-                  <strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong>
-                  <button type="button" onClick={() => void restoreLastDeletedMap()}>Отменить</button>
-                </div>
-                <i><b style={{ width: `${remainingMs / 50}%` }} /></i>
-              </div>
-            );
-          })()}
 
           {authLoading || mapsLoading || !isMapInitialized ? (
             <div className="maps-loading-placeholder" aria-label="Загружаем карты">
@@ -9984,6 +9983,21 @@ export default function App() {
         </main>
       )}
 
+      {screen === "maps" && !!pendingDeletes.length && (() => {
+        const latest = pendingDeletes[0];
+        const remainingMs = Math.max(0, latest.deadline - deleteCountdownNow);
+        return (
+          <div className="delete-undo-bar map-delete-undo" role="status">
+            <div className="delete-undo-copy">
+              <span>Карта «{latest.map.name}» удалена</span>
+              <strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong>
+              <button type="button" onClick={() => void restoreLastDeletedMap()}>Отменить</button>
+            </div>
+            <i><b style={{ width: `${remainingMs / 50}%` }} /></i>
+          </div>
+        );
+      })()}
+
       {isCreateOpen && (
         <div
           className={`modal-overlay${closingModal === "create" ? " is-closing" : ""}`}
@@ -10234,9 +10248,9 @@ export default function App() {
       )}
 
       {isSketchSubmissionOpen && (
-        <div className="modal-overlay" onMouseDown={() => setIsSketchSubmissionOpen(false)}>
+        <div className={`modal-overlay${isSketchSubmissionClosing ? " is-closing" : ""}`} onMouseDown={() => closeSketchSubmissionModal()}>
           <form className="create-modal sketch-submission-modal" onSubmit={submitLibrarySketch} onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><h2>Предложить эскизы</h2><p>Выберите одну или несколько карт. Рисунки и цвета попадут в заявку разработчику.</p></div><button type="button" className="modal-close" onClick={() => setIsSketchSubmissionOpen(false)}>×</button></div>
+            <div className="modal-header"><div><h2>Предложить эскизы</h2><p>Выберите одну или несколько карт. Рисунки и цвета попадут в заявку разработчику.</p></div><button type="button" className="modal-close" onClick={() => closeSketchSubmissionModal()}>×</button></div>
             <div className="modal-field">
               <label>Карты</label>
               <div className="sketch-map-options">
