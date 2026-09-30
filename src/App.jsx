@@ -4411,8 +4411,8 @@ export default function App() {
     drawColorRef.current = v;
   }
 
-  function addCustomColor() {
-    const c = normalizeHexColor(newColor);
+  function addCustomColor(value = newColor) {
+    const c = normalizeHexColor(value);
 
     if (!c) return;
 
@@ -9919,6 +9919,7 @@ export default function App() {
                     <span>{t("redo")}</span>
                   </button>
                 </div>
+                <button className="clear-btn" onClick={clearProgress}>{t("clearProgress")}</button>
                 {!isGameMode && <button className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
 
                 {mapType ===
@@ -10243,16 +10244,6 @@ export default function App() {
                 </div>
               )}
 
-              <button
-                className="clear-btn"
-                onClick={
-                  clearProgress
-                }
-              >
-                {t(
-                  "clearProgress"
-                )}
-              </button>
             </section>
             <AnimatedEditorPanel viewKey={mapType === "free" && !isGameMode ? "palette" : "no-palette"}>
             {mapType === "free" && !isGameMode && (
@@ -10407,7 +10398,7 @@ export default function App() {
                       disabled={!normalizeHexColor(newColor)}
                       className="add-color-btn"
                       onClick={
-                        addCustomColor
+                        () => addCustomColor()
                       }
                     >
                       + Добавить цвет
@@ -10852,7 +10843,7 @@ export default function App() {
         </div>
       )}
 
-      <EditorColorPicker open={editorColorOpen} value={normalizeHexColor(newColor)||'#111111'} onChange={setNewColor} onClose={() => setEditorColorOpen(false)} />
+      <EditorColorPicker open={editorColorOpen} value={normalizeHexColor(newColor)||'#111111'} onChange={setNewColor} onPick={addCustomColor} onClose={() => setEditorColorOpen(false)} />
       {windowsInstallHelp && (
         <div className={`modal-overlay feature-modal-overlay${closingModal === "windows-install" ? " is-closing" : ""}`} onMouseDown={() => closeModal("windows-install")}>
           <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="windows-install-title" onMouseDown={(event) => event.stopPropagation()}>

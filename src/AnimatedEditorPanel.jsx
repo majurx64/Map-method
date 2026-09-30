@@ -8,7 +8,7 @@ export default function AnimatedEditorPanel({ viewKey, children }) {
   useLayoutEffect(() => {
     let timer;
     if (last.current.key !== viewKey) {
-      setOutgoing(last.current);
+      setOutgoing({ ...last.current, height: height ?? 0 });
       timer = setTimeout(() => setOutgoing(null), 240);
     }
     last.current = { key: viewKey, children };
@@ -26,7 +26,7 @@ export default function AnimatedEditorPanel({ viewKey, children }) {
     measure();
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
   }, []);
-  return <div className="editor-panel-transition" style={{ height: height ?? undefined }}>
+  return <div className="editor-panel-transition" style={{ height: outgoing ? Math.max(height ?? 0, outgoing.height) : height ?? undefined }}>
     {outgoing && <div key={`old-${outgoing.key}`} className="editor-panel-outgoing" aria-hidden="true" inert>{outgoing.children}</div>}
     <div ref={content}><div key={viewKey} className="editor-panel-current">{children}</div></div>
   </div>;
