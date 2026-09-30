@@ -1692,6 +1692,8 @@ export default function App() {
   const [windowsInstallHelp, setWindowsInstallHelp] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
+  const [latestSiteVersion, setLatestSiteVersion] = useState("");
+  const [siteUpdateStatus, setSiteUpdateStatus] = useState("");
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setHistoryMapId(null);
@@ -2183,6 +2185,36 @@ export default function App() {
 
   const accountEmail = user?.email || "";
   const isLibraryOwner = accountEmail.toLowerCase() === PUBLIC_LIBRARY_OWNER_EMAIL;
+  useEffect(() => {
+    if (!isLibraryOwner) return;
+    let cancelled = false;
+    let request;
+    const check = async () => {
+      if (request || !navigator.onLine) return;
+      request = new AbortController();
+      const timeout = setTimeout(() => request?.abort(), 8000);
+      try {
+        const url = new URL('site-version.json', import.meta.env.BASE_URL);
+        url.searchParams.set('check', Date.now());
+        const response = await fetch(url, { cache: 'no-store', signal: request.signal });
+        if (!response.ok) throw new Error('version-unavailable');
+        const data = await response.json();
+        if (!cancelled && typeof data.version === 'string') setLatestSiteVersion(data.version);
+      } catch { /* Keep the last known version during a temporary connection failure. */ }
+      finally { clearTimeout(timeout); request = null; }
+    };
+    void check();
+    const timer = setInterval(check, 5000);
+    window.addEventListener('focus', check);
+    window.addEventListener('online', check);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      request?.abort();
+      window.removeEventListener('focus', check);
+      window.removeEventListener('online', check);
+    };
+  }, [isLibraryOwner]);
   const recordAnalytics = (eventName, options = {}) => {
     if (!isLibraryOwner) trackAnalytics(eventName, { ...options, userId: user?.id || null });
   };
@@ -2499,7 +2531,7 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
-    if (!user?.id || mapsLoading || !isMapInitialized || maps.length || screen === "shared" || syncStatus || !navigator.onLine) return;
+    if (!user?.id || isLibraryOwner || mapsLoading || !isMapInitialized || maps.length || screen === "shared" || syncStatus || !navigator.onLine) return;
     const key = `${ONBOARDING_KEY}:${user.id}`;
     if (localStorage.getItem(key)) return;
     const timer = window.setTimeout(() => {
@@ -2507,7 +2539,7 @@ export default function App() {
       setOnboardingOpen(true);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [user?.id, mapsLoading, isMapInitialized, maps.length, screen, syncStatus]);
+  }, [user?.id, isLibraryOwner, mapsLoading, isMapInitialized, maps.length, screen, syncStatus]);
 
   useEffect(() => {
     if (!historyPlaying || historyPlaybackEntries.length < 2) return undefined;
@@ -6139,6 +6171,7 @@ export default function App() {
       if (kind === "feedback") setIsFeedbackOpen(false);
       if (kind === "download") setDownloadChoice(null);
       if (kind === "windows-install") setWindowsInstallHelp(false);
+      if (kind === "onboarding") setOnboardingOpen(false);
       if (kind === "delete") {
         setIsDeleteOpen(false);
         setMapToDelete(null);
@@ -7568,12 +7601,29 @@ export default function App() {
 
   function finishOnboarding() {
     if (user?.id) localStorage.setItem(`${ONBOARDING_KEY}:${user.id}`, "done");
-    setOnboardingOpen(false);
+    closeModal('onboarding');
   }
 
   async function installApp() {
     await openApp({ win: window, prompt: installPrompt, installed: appInstalled,
       showHelp: () => setAppHelpOpen(true), clearPrompt: () => setInstallPrompt(null) });
+  }
+
+  async function updateDeveloperSite() {
+    if (siteUpdateStatus === 'updating') return;
+    if (publicLibraryEditContext) { setSiteUpdateStatus('Сначала сохраните эскиз.'); return; }
+    setSiteUpdateStatus('updating');
+    try {
+      clearTimeout(saveTimerRef.current);
+      const current = buildCurrentMap();
+      if (current && user?.id) {
+        await queueMapSave(user.id, normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current)));
+        pendingVersionSequenceRef.current = [];
+      }
+      const registration = await navigator.serviceWorker?.getRegistration();
+      await registration?.update();
+      window.location.reload();
+    } catch { setSiteUpdateStatus('Не удалось обновить сайт. Повторите попытку.'); }
   }
 
   return (
@@ -7633,8 +7683,13 @@ export default function App() {
           <span className="saved-account-handle">≡</span>
         </div>
       )}
-      <header className="header">
+      <header className={`header${isLibraryOwner ? ' has-developer-tools' : ''}`}>
         <div className="header-back-links">
+          {isLibraryOwner && screen === 'home' && <button type="button" className="back-link developer-training" onClick={() => {
+            setClosingModal('');
+            setOnboardingStep(0);
+            setOnboardingOpen(true);
+          }}>Обучение</button>}
           <button
             className="back-link"
             onClick={() => {
@@ -7687,6 +7742,13 @@ export default function App() {
         </a>
 
         <div className="header-actions">
+          {isLibraryOwner && <div className="developer-site-version" role="status">
+            <span>Сайт: <b>{__MM_SITE_VERSION__}</b><small>Последняя: {latestSiteVersion || 'проверяем…'}</small></span>
+            <button type="button" onClick={updateDeveloperSite} disabled={!latestSiteVersion || latestSiteVersion === __MM_SITE_VERSION__ || siteUpdateStatus === 'updating'}>
+              {siteUpdateStatus === 'updating' ? 'Обновляем…' : latestSiteVersion === __MM_SITE_VERSION__ ? 'Актуальная версия' : 'Обновить сайт'}
+            </button>
+            {siteUpdateStatus && siteUpdateStatus !== 'updating' && <small>{siteUpdateStatus}</small>}
+          </div>}
           {screen === "home" && (
             <button
               className="home-how-btn"
@@ -10856,7 +10918,7 @@ export default function App() {
               <button type="button" className="modal-close" aria-label="Закрыть" onClick={() => closeModal("windows-install")}>×</button>
             </div>
             <p className="feature-modal-intro">Map Method пока не имеет цифровой подписи издателя, поэтому Windows может показать «Система Windows защитила ваш компьютер».</p>
-            <p className="feature-modal-intro">Если Вы скачали установщик Map Method с этого сайта, продолжить установку можно так:</p>
+            <p className="feature-modal-intro">Для установщика Map Method, скачанного с этого сайта, выполните следующие шаги:</p>
             <ol><li>Нажмите <strong>«Подробнее»</strong>.</li><li>Нажмите <strong>«Выполнить в любом случае»</strong>.</li></ol>
             <div className="history-actions"><button type="button" className="feature-primary" autoFocus onClick={() => closeModal("windows-install")}>Понятно</button></div>
           </div>
@@ -10971,7 +11033,7 @@ export default function App() {
       )}
 
       {onboardingOpen && (
-        <div className="modal-overlay onboarding-overlay">
+        <div className={`modal-overlay onboarding-overlay${closingModal === 'onboarding' ? ' is-closing' : ''}`}>
           <div className="create-modal onboarding-modal">
             <div className="onboarding-progress">{[0,1,2].map((step) => <i key={step} className={step <= onboardingStep ? "active" : ""} />)}</div>
             {onboardingStep === 0 && <><span className="onboarding-icon">□</span><h2>Добро пожаловать в Map Method</h2><p>Здесь большая цель превращается в карту: один выполненный шаг — одна закрашенная клетка.</p></>}
