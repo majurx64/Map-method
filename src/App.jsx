@@ -8596,7 +8596,7 @@ export default function App() {
               <div className="account-tools-actions">
                 <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
                 <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
-                <button type="button" onClick={installApp} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : installPrompt ? "Установить Map Method" : appInstalled ? "Открыть приложение" : "Как открыть приложение"}</button>
+                <button type="button" onClick={installApp} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
