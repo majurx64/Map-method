@@ -1628,6 +1628,7 @@ export default function App() {
   const [librarySearch, setLibrarySearch] = useState("");
   const [librarySort, setLibrarySort] = useState("popular");
   const [libraryCategory, setLibraryCategory] = useState("Все");
+  const [libraryCategoryTransition, setLibraryCategoryTransition] = useState("");
   const [favoritesByUser, setFavoritesByUser] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(LIBRARY_FAVORITES_KEY) || "{}");
@@ -2276,6 +2277,31 @@ export default function App() {
     });
   const visiblePublicLibraryOrder = visiblePublicLibrary.map((item) => item.id).join("|");
   const libraryCardPositionsRef = useRef(new Map());
+  const libraryCollectionsRef = useRef(null);
+  const libraryCategoryIndicatorRef = useRef(null);
+  const libraryCategoryTimerRef = useRef(null);
+  function changeLibraryCategory(category) {
+    if (category === libraryCategory || category === libraryCategoryTransition) return;
+    window.clearTimeout(libraryCategoryTimerRef.current);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setLibraryCategory(category);
+      return;
+    }
+    setLibraryCategoryTransition(category);
+    libraryCategoryTimerRef.current = window.setTimeout(() => {
+      setLibraryCategory(category);
+      setLibraryCategoryTransition("");
+    }, 170);
+  }
+  useLayoutEffect(() => {
+    if (screen !== "library") return;
+    const activeButton = libraryCollectionsRef.current?.querySelector("[data-library-category].active");
+    const indicator = libraryCategoryIndicatorRef.current;
+    if (!activeButton || !indicator) return;
+    indicator.style.width = `${activeButton.offsetWidth}px`;
+    indicator.style.transform = `translate3d(${activeButton.offsetLeft}px,0,0)`;
+    indicator.dataset.ready = "true";
+  }, [screen, libraryCategory, libraryCategoryTransition, libraryCategories.join("|")]);
   useLayoutEffect(() => {
     if (screen !== "library") return;
     const cards = [...document.querySelectorAll("[data-library-item-id]")];
@@ -2283,7 +2309,14 @@ export default function App() {
     cards.forEach((card) => {
       const previous = libraryCardPositionsRef.current.get(card.dataset.libraryItemId);
       const next = nextPositions.get(card.dataset.libraryItemId);
-      if (!previous || !next) return;
+      if (!next) return;
+      if (!previous) {
+        card.animate(
+          [{ transform: "translateY(12px) scale(.985)", opacity: 0 }, { transform: "translateY(0) scale(1)", opacity: 1 }],
+          { duration: 380, delay: Math.min(cards.indexOf(card) * 35, 175), easing: "cubic-bezier(.16,1,.3,1)", fill: "both" },
+        );
+        return;
+      }
       const deltaX = previous.left - next.left;
       const deltaY = previous.top - next.top;
       if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
@@ -8670,8 +8703,9 @@ export default function App() {
               <label className="library-search"><span>Поиск</span><input type="search" value={librarySearch} placeholder="Название или категория" onChange={(event) => setLibrarySearch(event.target.value)} /></label>
               <div className="library-order"><span>Порядок</span><AnimatedSelect value={librarySort} onChange={setLibrarySort} ariaLabel="Порядок эскизов" options={[{ value: "popular", label: "Популярные" }, { value: "new", label: "Новые" }, { value: "name", label: "По алфавиту" }, { value: "favorites", label: "Избранное" }]} /></div>
             </div>
-            <div className="library-collections" role="group" aria-label="Коллекции">
-              {libraryCategories.map((category) => <button type="button" key={category} className={libraryCategory === category ? "active" : ""} onClick={() => setLibraryCategory(category)}>{category}</button>)}
+            <div ref={libraryCollectionsRef} className="library-collections" role="group" aria-label="Коллекции">
+              <span ref={libraryCategoryIndicatorRef} className="library-category-indicator" aria-hidden="true" />
+              {libraryCategories.map((category) => <button type="button" key={category} data-library-category={category} className={(libraryCategoryTransition || libraryCategory) === category ? "active" : ""} onClick={() => changeLibraryCategory(category)}>{category}</button>)}
               {isLibraryOwner && (!isLibraryCategoryAdding ? (
                   <button type="button" className="library-add-category" onClick={() => { setNewCategoryDraft(""); setIsLibraryCategoryAdding(true); }}>+ Добавить категорию</button>
                 ) : (
@@ -8682,7 +8716,7 @@ export default function App() {
                   </form>
                 ))}
             </div>
-            <div className="library-grid">
+            <div key={libraryCategory} className={`library-grid public-library-grid${libraryCategoryTransition ? " is-leaving" : ""}`}>
               {visiblePublicLibrary.map((item) => {
                 const dimensions = getGridDimensions(item.totalCells, 1, item.gridMode, item.manualRows, item.manualCols);
                 return (
