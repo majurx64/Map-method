@@ -1,6 +1,6 @@
 module.exports = {
   appId: 'ru.mapmethod.desktop', productName: 'Map Method',
-  extraMetadata: { name: 'mapmethod-desktop', version: '1.0.1', main: 'desktop/main.cjs', description: 'Map Method для Windows', author: 'Map Method' },
+  extraMetadata: { name: 'mapmethod-desktop', version: '1.0.2', main: 'desktop/main.cjs', description: 'Map Method для Windows', author: 'Map Method' },
   directories: { output: 'release' },
   files: ['desktop/**/*', 'package.json'],
   asar: true, npmRebuild: false,

@@ -6,3 +6,12 @@ export function mergeLiveMaps(remote, local, pending, dirtyIds, deletedIds) {
   for (const id of deletedIds) result.delete(id);
   return [...result.values()];
 }
+
+export function liveCellChanges(before, after, beforeColors = [], afterColors = []) {
+  const previous = new Set(before);
+  const next = new Set(after);
+  return [...new Set([...previous, ...next])]
+    .filter((index) => previous.has(index) !== next.has(index)
+      || (next.has(index) && beforeColors[index] !== afterColors[index]))
+    .map((index) => ({ index, mode: next.has(index) ? 'draw' : 'erase' }));
+}

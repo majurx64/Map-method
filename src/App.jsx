@@ -7,7 +7,7 @@ import Auth from "./Auth";
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
-import { mergeLiveMaps } from "./lib/liveMaps";
+import { liveCellChanges, mergeLiveMaps } from "./lib/liveMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, publicSharedSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
 
@@ -3519,7 +3519,7 @@ export default function App() {
     };
   }, [user?.id, authLoading]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (
       !isMapInitialized ||
       hydratingRef.current ||
@@ -3635,6 +3635,8 @@ export default function App() {
     ]
   );
 
+  useLayoutEffect(() => { liveStateRef.current.editor = buildCurrentMap(); });
+
   useEffect(() => {
     if (!user?.id || !isMapInitialized || loadedOwnerRef.current !== user.id) return;
     const owner = user.id;
@@ -3642,9 +3644,10 @@ export default function App() {
     let cancelled = false;
     let refreshing = false;
     let refreshRequested = false;
+    let channelReady = false;
     let retryTimer;
     const refresh = async () => {
-      if (cancelled || !navigator.onLine || document.hidden) return;
+      if (cancelled || !navigator.onLine) return;
       if (refreshing) { refreshRequested = true; return; }
       refreshing = true;
       try {
@@ -3668,15 +3671,28 @@ export default function App() {
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
         const mapsChanged = JSON.stringify(current.maps) !== JSON.stringify(nextMaps);
         const libraryChanged = JSON.stringify(current.personalLibrary) !== JSON.stringify(nextLibrary);
-        if (!mapsChanged && !libraryChanged) return;
+        const nextActive = nextMaps.find((map) => map.id === current.activeMapId);
+        const oldActive = current.maps.find((map) => map.id === current.activeMapId);
+        const activeChanged = !current.publicLibraryEditContext && nextActive
+          && !dirtyMapsRef.current.has(nextActive.id)
+          && !pending.some((entry) => entry.map.id === nextActive.id)
+          && JSON.stringify(nextActive) !== JSON.stringify(current.editor);
+        if (!mapsChanged && !libraryChanged && !activeChanged) return;
         hydratingRef.current = true;
+        if (activeChanged) {
+          const progress = current.editor?.isGameMode;
+          const animations = liveCellChanges(
+            progress ? progressCompletedRef.current : completedRef.current,
+            progress ? nextActive.progressCompleted : nextActive.completed,
+            colorsRef.current, nextActive.colors,
+          );
+          clearTimeout(saveTimerRef.current);
+          // Capture erase colours before replacing the editor's colour buffer.
+          animateCells(animations);
+          openMap(nextActive, { preserveViewport: true });
+        }
         if (mapsChanged) {
-          const nextActive = nextMaps.find((map) => map.id === current.activeMapId);
-          const oldActive = current.maps.find((map) => map.id === current.activeMapId);
-          if (!current.publicLibraryEditContext && nextActive && JSON.stringify(nextActive) !== JSON.stringify(oldActive)) {
-            clearTimeout(saveTimerRef.current);
-            openMap(nextActive, { preserveViewport: true });
-          } else if (oldActive && !nextActive && !current.publicLibraryEditContext) {
+          if (oldActive && !nextActive && !current.publicLibraryEditContext) {
             setActiveMapId(null);
             setScreen("maps");
           }
@@ -3695,15 +3711,20 @@ export default function App() {
     // Broadcast carries only an invalidation signal; map contents remain behind account RLS.
     const channel = supabase.channel(`account-maps:${owner}`)
       .on("broadcast", { event: "maps-changed" }, refresh)
-      .subscribe((status) => { if (status === "SUBSCRIBED") void refresh(); });
+      .subscribe((status) => {
+        channelReady = status === "SUBSCRIBED";
+        if (channelReady) void refresh();
+      });
     liveChannelRef.current = channel;
     const interval = setInterval(refresh, 15000);
+    const reconnectInterval = setInterval(() => { if (!channelReady) void refresh(); }, 2000);
     window.addEventListener("focus", refresh);
     window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      clearInterval(reconnectInterval);
       clearTimeout(retryTimer);
       window.removeEventListener("focus", refresh);
       window.removeEventListener("online", refresh);
@@ -3842,7 +3863,7 @@ export default function App() {
     return () => { cancelled = true; window.removeEventListener("online", flush); };
   }, [user?.id, isMapInitialized, remoteSave]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (
       !isMapInitialized ||
       hydratingRef.current ||

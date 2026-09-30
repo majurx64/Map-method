@@ -23,7 +23,7 @@ if (!app.requestSingleInstanceLock()) {
       icon: path.join(__dirname, 'icon.png'),
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
-        nodeIntegration: false, contextIsolation: true, sandbox: true,
+        nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false,
         webSecurity: true, allowRunningInsecureContent: false,
       },
     });
