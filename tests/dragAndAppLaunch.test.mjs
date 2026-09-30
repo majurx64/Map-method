@@ -26,7 +26,7 @@ test('drop target uses actual row positions for unequal card heights, gaps and l
 });
 function setup({standalone=false,installed=false,prompt=null}={}) {
   const calls=[];
-  const win={matchMedia:()=>({matches:standalone}),navigator:{},location:{assign:(url)=>calls.push(url)}};
+  const win={matchMedia:()=>({matches:standalone}),navigator:{},location:{origin:'https://www.mapmethod.ru',assign:(url)=>calls.push(url)}};
   return {calls,options:{win,installed,prompt,showHelp:()=>calls.push('help'),clearPrompt:()=>calls.push('clear')}};
 }
 test('unknown or missing installation never launches an unregistered protocol silently',async()=>{
@@ -57,4 +57,26 @@ test('installed-app detection only accepts this site and handles unsupported or 
   assert.equal(await hasInstalledApp({getInstalledRelatedApps:async()=>{throw Error();}},origin),false);
   assert.equal(await hasInstalledApp({getInstalledRelatedApps:async()=>[{platform:'webapp',url:'https://other.example/manifest.webmanifest'}]},origin),false);
   assert.equal(await hasInstalledApp({getInstalledRelatedApps:async()=>[{platform:'webapp',url:origin+'/manifest.webmanifest'}]},origin),true);
+});
+
+
+test('desktop app is recognised by its manifest id and launches when initial detection was stale',async()=>{
+  const origin='https://www.mapmethod.ru';
+  const related={platform:'webapp',id:origin+'/'};
+  assert.equal(await hasInstalledApp({getInstalledRelatedApps:async()=>[related]},origin),true);
+  assert.equal(await hasInstalledApp({getInstalledRelatedApps:async()=>[{platform:'webapp',url:'/manifest.webmanifest',id:origin+'/'}]},origin),true);
+  assert.equal(await hasInstalledApp({getInstalledRelatedApps:async()=>[{platform:'webapp',id:'https://other.example/'}]},origin),false);
+  const {calls,options}=setup();
+  options.win.navigator.getInstalledRelatedApps=async()=>[related];
+  assert.equal(await openApp(options),'requested');
+  assert.deepEqual(calls,['help','web+mapmethod://open']);
+});
+
+test('desktop related-app configuration supplies the canonical app id',async()=>{
+  const {readFile}=await import('node:fs/promises');
+  const manifest=JSON.parse(await readFile(new URL('../public/manifest.webmanifest',import.meta.url),'utf8'));
+  const origin='https://www.mapmethod.ru';
+  const self=manifest.related_applications.find((app)=>app.platform==='webapp');
+  assert.equal(self.id,new URL(manifest.id,origin).href);
+  assert.equal(self.url,origin+'/manifest.webmanifest');
 });

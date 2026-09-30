@@ -5,7 +5,7 @@
   "start_url": "/",
   "id": "/",
   "related_applications": [
-    { "platform": "webapp", "url": "https://www.mapmethod.ru/manifest.webmanifest" }
+    { "platform": "webapp", "url": "https://www.mapmethod.ru/manifest.webmanifest", "id": "https://www.mapmethod.ru/" }
   ],
   "prefer_related_applications": false,
   "scope": "/",

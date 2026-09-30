@@ -6,7 +6,12 @@ export async function hasInstalledApp(nav, origin) {
   if (typeof nav.getInstalledRelatedApps !== 'function') return false;
   try {
     const apps = await nav.getInstalledRelatedApps();
-    return apps.some((app) => app.platform === 'webapp' && app.url === `${origin}/manifest.webmanifest`);
+    return apps.some((app) => {
+      if (app.platform !== 'webapp') return false;
+      const manifestMatches = app.url && new URL(app.url, origin).href === `${origin}/manifest.webmanifest`;
+      const idMatches = app.id && new URL(app.id, origin).href === `${origin}/`;
+      return Boolean(manifestMatches || (!app.url && idMatches));
+    });
   } catch { return false; }
 }
 
@@ -25,7 +30,7 @@ export async function openApp({ win, prompt, installed, showHelp, clearPrompt })
   }
   // No web API can guarantee a registered OS handler. Always leave a usable fallback.
   showHelp();
-  if (!installed) return 'help';
+  if (!installed && !await hasInstalledApp(win.navigator, win.location.origin)) return 'help';
   try { win.location.assign('web+mapmethod://open'); } catch { return 'help'; }
   return 'requested';
 }
