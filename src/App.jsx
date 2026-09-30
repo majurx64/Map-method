@@ -8743,7 +8743,7 @@ export default function App() {
                   if (!/Windows NT/.test(navigator.userAgent)) { installApp(); return; }
                   setClosingModal("");
                   setWindowsInstallHelp(true);
-                  window.location.assign("https://github.com/majurx64/Map-method/releases/download/desktop-v1.0.2/Map-Method-Setup.exe");
+                  window.location.assign("https://github.com/majurx64/Map-method/releases/download/v1.0.3/Map-Method-Setup.exe");
                 }} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : /Windows NT/.test(navigator.userAgent) ? "Скачать для Windows" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
