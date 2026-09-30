@@ -1899,7 +1899,8 @@ button:disabled {
   }
 
   .language-select {
-    width: 32px;
+    width: auto;
+    white-space: nowrap;
   }
 
   .save-map-btn,
@@ -3822,3 +3823,9 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .share-revoke-button::after { left:auto; right:0; max-width:200px; transform:translateY(5px) scale(.96); }
 .share-revoke-button:not(:disabled):hover::after,.share-revoke-button:not(:disabled):focus-visible::after { transform:translateY(0) scale(1); }
 @media (prefers-reduced-motion:reduce) { .share-revoke-button::after { transition:none; } }
+
+@media (max-width:470px) {
+  .header { display:flex; flex-wrap:wrap; gap:8px 12px; height:auto; min-height:62px; padding-block:10px; }
+  .header-actions { max-width:100%; margin-left:auto; flex-wrap:wrap; justify-content:flex-end; }
+  .language-menu { flex-shrink:0; }
+}
