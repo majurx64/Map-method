@@ -1615,6 +1615,7 @@ export default function App() {
 
   const [maps, setMaps] = useState([]);
   const [publicLibraryDraft, setPublicLibraryDraft] = useState(null);
+  const [publicLibraryCategoryDraft, setPublicLibraryCategoryDraft] = useState("Личное");
   const [privateLibrary, setPrivateLibrary] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(PRIVATE_LIBRARY_KEY) || "{}");
@@ -2251,6 +2252,11 @@ export default function App() {
       : [...current, itemId]);
   }
   const libraryCategories = ["Все", ...new Set(publicLibrary.map((item) => item.category || "Другое"))];
+  const publicLibraryCategoryOptions = [...new Set([
+    "Спорт",
+    "Личное",
+    ...publicLibrary.map((item) => item.category || "Другое"),
+  ])];
   const visiblePublicLibrary = publicLibrary
     .filter((item) => libraryCategory === "Все" || item.category === libraryCategory)
     .filter((item) => !librarySearch.trim() || `${item.name} ${item.category || ""}`.toLowerCase().includes(librarySearch.trim().toLowerCase()))
@@ -2641,7 +2647,12 @@ export default function App() {
     recordAnalytics("map_created", { metadata: { source: "library" } });
     recordAnalytics("cells_created", { value: Number(map.totalCells) || 0, metadata: { source: "library" } });
     setLibraryUsage((current) => ({ ...current, [item.id]: (Number(current[item.id]) || 0) + 1 }));
-    if (item.publicLibraryOwnerId) void supabase.rpc("increment_library_item_use", { item_id: item.id });
+    if (item.publicLibraryOwnerId) {
+      setPublicLibrary((current) => current.map((entry) => entry.id === item.id
+        ? { ...entry, useCount: (Number(entry.useCount) || 0) + 1 }
+        : entry));
+      void supabase.rpc("increment_library_item_use", { item_id: item.id });
+    }
     setActiveMapId(map.id);
     openMap(map);
     setScreen("editor");
@@ -2651,6 +2662,7 @@ export default function App() {
     if (!user || !isLibraryOwner) return;
     const draft = normalizeMap({ ...item, id: createMapId(), progressCompleted: [] });
     setPublicLibraryDraft(draft);
+    setPublicLibraryCategoryDraft(item.category || "Личное");
     setPublicLibraryEditContext({
       draftId: draft.id,
       itemId: item.id,
@@ -2673,6 +2685,7 @@ export default function App() {
       setPublicLibraryEditStatus("saving");
       const item = normalizeMap({
         ...currentMap,
+        category: publicLibraryCategoryDraft,
         id: context.itemId,
         mapType: "free",
         image: null,
@@ -2706,6 +2719,7 @@ export default function App() {
         : entry));
     }
     setPublicLibraryDraft(null);
+    setPublicLibraryCategoryDraft("Личное");
     setActiveMapId(null);
     setPublicLibraryEditContext(null);
     setPublicLibraryEditStatus("");
@@ -7262,15 +7276,22 @@ export default function App() {
         </div>
       )}
       <header className="header">
-        <button
-          className="back-link"
-          onClick={() => {
-            setMapCategoryFilter("Все");
-            setScreen("maps");
-          }}
-        >
-          ← {t("myMaps")}
-        </button>
+        <div className="header-back-links">
+          <button
+            className="back-link"
+            onClick={() => {
+              setMapCategoryFilter("Все");
+              setScreen("maps");
+            }}
+          >
+            ← {t("myMaps")}
+          </button>
+          {publicLibraryEditContext && (
+            <button className="back-link library-return-link" onClick={() => finishPublicLibraryEditing(false)}>
+              Вернуться в библиотеку
+            </button>
+          )}
+        </div>
 
         <a
           href="/"
@@ -8653,7 +8674,7 @@ export default function App() {
                     <button type="button" className={`library-favorite${libraryFavorites.includes(item.id) ? " active" : ""}`} aria-label={libraryFavorites.includes(item.id) ? "Убрать из избранного" : "Добавить в избранное"} aria-pressed={libraryFavorites.includes(item.id)} title={libraryFavorites.includes(item.id) ? "В избранном" : "Добавить в избранное"} onClick={(event) => { event.stopPropagation(); toggleLibraryFavorite(item.id); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.2 10.6 19C5.7 14.7 2.5 11.8 2.5 8.2 2.5 5.3 4.8 3 7.7 3c1.6 0 3.2.8 4.3 2 1.1-1.2 2.7-2 4.3-2 2.9 0 5.2 2.3 5.2 5.2 0 3.6-3.2 6.5-8.1 10.8L12 20.2Z" /></svg></button>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
                     <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)}</span></div>
-                    <small>{item.useCount !== null && item.useCount !== undefined ? `Создано карт: ${item.useCount}` : `Создано на этом устройстве: ${Number(libraryUsage[item.id]) || 0}`}</small>
+                    <small>Использовали для своих карт: {item.useCount !== null && item.useCount !== undefined ? Number(item.useCount) || 0 : Number(libraryUsage[item.id]) || 0}</small>
                     <div className={`library-card-actions${isLibraryOwner ? " owner" : " single"}`}>
                       <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
                       {isLibraryOwner && <button type="button" className="edit-action" onClick={() => editPublicLibraryItem(item)}>Изменить</button>}
@@ -9069,6 +9090,20 @@ export default function App() {
                   }}
                 />
               </div>
+
+              {publicLibraryEditContext && (
+                <>
+                  <label className="field-label library-category-label">Категория</label>
+                  <div className="map-select-control">
+                    <AnimatedSelect
+                      ariaLabel="Категория эскиза"
+                      value={publicLibraryCategoryDraft}
+                      options={publicLibraryCategoryOptions.map((category) => ({ value: category, label: category }))}
+                      onChange={setPublicLibraryCategoryDraft}
+                    />
+                  </div>
+                </>
+              )}
 
               <div className="map-actions">
                 {submissionEditContext ? (
