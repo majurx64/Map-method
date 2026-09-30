@@ -2257,8 +2257,32 @@ export default function App() {
     .sort((a, b) => {
       if (librarySort === "name") return a.name.localeCompare(b.name, "ru");
       if (librarySort === "new") return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+      if (librarySort === "favorites") {
+        const favoriteOrder = Number(libraryFavorites.includes(b.id)) - Number(libraryFavorites.includes(a.id));
+        return favoriteOrder || a.name.localeCompare(b.name, "ru");
+      }
       return Math.max(Number(b.useCount) || 0, Number(libraryUsage[b.id]) || 0) - Math.max(Number(a.useCount) || 0, Number(libraryUsage[a.id]) || 0);
     });
+  const visiblePublicLibraryOrder = visiblePublicLibrary.map((item) => item.id).join("|");
+  const libraryCardPositionsRef = useRef(new Map());
+  useLayoutEffect(() => {
+    if (screen !== "library") return;
+    const cards = [...document.querySelectorAll("[data-library-item-id]")];
+    const nextPositions = new Map(cards.map((card) => [card.dataset.libraryItemId, card.getBoundingClientRect()]));
+    cards.forEach((card) => {
+      const previous = libraryCardPositionsRef.current.get(card.dataset.libraryItemId);
+      const next = nextPositions.get(card.dataset.libraryItemId);
+      if (!previous || !next) return;
+      const deltaX = previous.left - next.left;
+      const deltaY = previous.top - next.top;
+      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+      card.animate(
+        [{ transform: `translate(${deltaX}px, ${deltaY}px)`, opacity: .82 }, { transform: "translate(0, 0)", opacity: 1 }],
+        { duration: 480, easing: "cubic-bezier(.16,1,.3,1)" },
+      );
+    });
+    libraryCardPositionsRef.current = nextPositions;
+  }, [screen, visiblePublicLibraryOrder]);
   const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const historyMap = maps.find((map) => map.id === historyMapId) || null;
   const historyVersionEntries = useMemo(() => {
@@ -8616,7 +8640,7 @@ export default function App() {
             {!!libraryStatus && <p className="library-status" role="status">{libraryStatus}</p>}
             <div className="library-discovery">
               <label className="library-search"><span>Поиск</span><input type="search" value={librarySearch} placeholder="Название или категория" onChange={(event) => setLibrarySearch(event.target.value)} /></label>
-              <div className="library-order"><span>Порядок</span><AnimatedSelect value={librarySort} onChange={setLibrarySort} ariaLabel="Порядок эскизов" options={[{ value: "popular", label: "Популярные" }, { value: "new", label: "Новые" }, { value: "name", label: "По алфавиту" }]} /></div>
+              <div className="library-order"><span>Порядок</span><AnimatedSelect value={librarySort} onChange={setLibrarySort} ariaLabel="Порядок эскизов" options={[{ value: "popular", label: "Популярные" }, { value: "new", label: "Новые" }, { value: "name", label: "По алфавиту" }, { value: "favorites", label: "Избранное" }]} /></div>
             </div>
             <div className="library-collections" role="group" aria-label="Коллекции">
               {libraryCategories.map((category) => <button type="button" key={category} className={libraryCategory === category ? "active" : ""} onClick={() => setLibraryCategory(category)}>{category}</button>)}
@@ -8625,8 +8649,8 @@ export default function App() {
               {visiblePublicLibrary.map((item) => {
                 const dimensions = getGridDimensions(item.totalCells, 1, item.gridMode, item.manualRows, item.manualCols);
                 return (
-                  <article className="library-card" key={item.id}>
-                    <button type="button" className={`library-favorite${libraryFavorites.includes(item.id) ? " active" : ""}`} aria-label={libraryFavorites.includes(item.id) ? "Убрать из избранного" : "Добавить в избранное"} aria-pressed={libraryFavorites.includes(item.id)} onClick={(event) => { event.stopPropagation(); toggleLibraryFavorite(item.id); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.2 10.6 19C5.7 14.7 2.5 11.8 2.5 8.2 2.5 5.3 4.8 3 7.7 3c1.6 0 3.2.8 4.3 2 1.1-1.2 2.7-2 4.3-2 2.9 0 5.2 2.3 5.2 5.2 0 3.6-3.2 6.5-8.1 10.8L12 20.2Z" /></svg></button>
+                  <article className="library-card" key={item.id} data-library-item-id={item.id}>
+                    <button type="button" className={`library-favorite${libraryFavorites.includes(item.id) ? " active" : ""}`} aria-label={libraryFavorites.includes(item.id) ? "Убрать из избранного" : "Добавить в избранное"} aria-pressed={libraryFavorites.includes(item.id)} title={libraryFavorites.includes(item.id) ? "В избранном" : "Добавить в избранное"} onClick={(event) => { event.stopPropagation(); toggleLibraryFavorite(item.id); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.2 10.6 19C5.7 14.7 2.5 11.8 2.5 8.2 2.5 5.3 4.8 3 7.7 3c1.6 0 3.2.8 4.3 2 1.1-1.2 2.7-2 4.3-2 2.9 0 5.2 2.3 5.2 5.2 0 3.6-3.2 6.5-8.1 10.8L12 20.2Z" /></svg></button>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
                     <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)}</span></div>
                     <small>{item.useCount !== null && item.useCount !== undefined ? `Создано карт: ${item.useCount}` : `Создано на этом устройстве: ${Number(libraryUsage[item.id]) || 0}`}</small>
