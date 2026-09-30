@@ -3771,3 +3771,11 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .animated-select-trigger i,.deadline-selects .animated-select-trigger i { top:0 !important; right:11px !important; bottom:0; width:14px !important; height:14px !important; margin:auto 0; border:0 !important; transform:none !important; }
 .animated-select-trigger i::before { display:block; width:6px; height:6px; margin:2px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; content:""; transform:rotate(45deg); transition:transform 240ms cubic-bezier(.16,1,.3,1); }
 .animated-select.is-open .animated-select-trigger i::before { transform:rotate(225deg); }
+
+.app-launch-help { grid-column:1/-1; display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows 300ms ease,opacity 220ms ease; }
+.app-launch-help.is-open { grid-template-rows:1fr; opacity:1; }
+.app-launch-help > div { min-height:0; overflow:hidden; }
+.app-launch-help section { position:relative; padding:18px 52px 18px 18px; border:1px solid #d8d1c6; border-radius:12px; background:#f6f3ed; }
+.app-launch-help strong { color:#285942; }
+.account-tools-card .app-launch-help p { margin:8px 0; line-height:1.5; }
+.app-launch-help small { display:block; color:#737970; line-height:1.5; }

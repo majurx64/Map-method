@@ -4,6 +4,8 @@ import "./App.css";
 import { supabase } from "./lib/supabase";
 import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
+import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
+import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
@@ -1665,6 +1667,9 @@ export default function App() {
   useLayoutEffect(() => { latestOwnerRef.current = user?.id || null; }, [user?.id]);
   const backupInputRef = useRef(null);
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [appStandalone, setAppStandalone] = useState(() => isStandaloneApp(window));
+  const [appInstalled, setAppInstalled] = useState(false);
+  const [appHelpOpen, setAppHelpOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   useEffect(() => {
@@ -2315,7 +2320,24 @@ export default function App() {
       setInstallPrompt(event);
     };
     window.addEventListener("beforeinstallprompt", handleInstall);
-    return () => window.removeEventListener("beforeinstallprompt", handleInstall);
+    let cancelled = false;
+    const display = window.matchMedia("(display-mode: standalone)");
+    const refreshAppState = () => {
+      setAppStandalone(isStandaloneApp(window));
+      void hasInstalledApp(navigator, window.location.origin).then((installed) => {
+        if (!cancelled) setAppInstalled(installed);
+      });
+    };
+    const installed = () => { setInstallPrompt(null); setAppInstalled(true); setAppHelpOpen(true); };
+    refreshAppState();
+    display.addEventListener("change", refreshAppState);
+    window.addEventListener("appinstalled", installed);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("beforeinstallprompt", handleInstall);
+      window.removeEventListener("appinstalled", installed);
+      display.removeEventListener("change", refreshAppState);
+    };
   }, []);
 
   useEffect(() => {
@@ -6441,54 +6463,62 @@ export default function App() {
     const drag = { id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, scrollX: window.scrollX, scrollY: window.scrollY, dx: 0, dy: 0, targetIndex: visible.findIndex((map) => map.id === id), dropRect: null, active: false };
     cardDragRef.current = drag;
     suppressCardClick.current = false;
+    const pointer = { x: event.clientX, y: event.clientY };
+    const update = () => {
+      if (!drag.active) return;
+      const previous = { dx: drag.dx, dy: drag.dy, targetIndex: drag.targetIndex };
+      Object.assign(drag, cardDragPosition(drag, pointer, { x: window.scrollX, y: window.scrollY }));
+      const list = element.closest(".maps-list");
+      const listRect = list.getBoundingClientRect();
+      const cards = [...list.querySelectorAll("[data-map-id]")];
+      // Use actual layout slots, not the dragged card's height to estimate rows.
+      const slots = cards.map((card) => ({ left: card.offsetLeft, top: card.offsetTop, width: card.offsetWidth, height: card.offsetHeight }));
+      drag.targetIndex = cardDropIndex({ x: pointer.x - listRect.left, y: pointer.y - listRect.top }, slots);
+      drag.dropRect = slots[drag.targetIndex];
+      if (previous.dx !== drag.dx || previous.dy !== drag.dy || previous.targetIndex !== drag.targetIndex || !drag.painted) {
+        drag.painted = true;
+        // Paint synchronously on scroll so React cannot leave the card one scroll behind.
+        element.style.transform = `translate3d(${drag.dx}px, ${drag.dy}px, 0) rotate(1deg)`;
+        setCardDrag({ ...drag });
+      }
+    };
+    let previousFrame = 0;
+    const follow = (now) => {
+      if (cardDragRef.current !== drag || !drag.active) return;
+      const elapsed = Math.min(32, previousFrame ? now - previousFrame : 0);
+      previousFrame = now;
+      const direction = pointer.y < 65 ? -1 : pointer.y > window.innerHeight - 65 ? 1 : 0;
+      if (direction) window.scrollBy({ top: direction * elapsed * 0.6, behavior: "instant" });
+      update();
+      drag.frame = window.requestAnimationFrame(follow);
+    };
     const activate = () => {
-      if (cardDragRef.current !== drag) return;
+      if (cardDragRef.current !== drag || drag.active) return;
       drag.active = true;
       suppressCardClick.current = true;
       element.setPointerCapture(drag.pointerId);
-      setCardDrag({ ...drag });
+      update();
+      drag.frame = window.requestAnimationFrame(follow);
     };
     const timer = window.setTimeout(activate, 220);
     const move = (e) => {
       if (e.pointerId !== drag.pointerId) return;
+      pointer.x = e.clientX;
+      pointer.y = e.clientY;
       if (!drag.active) {
-        if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) <= 8) return;
+        if (Math.hypot(pointer.x - drag.x, pointer.y - drag.y) <= 8) return;
         window.clearTimeout(timer);
         if (e.pointerType === "touch") return;
         activate();
       }
       e.preventDefault();
-      drag.dx = e.clientX - drag.x + window.scrollX - drag.scrollX;
-      drag.dy = e.clientY - drag.y + window.scrollY - drag.scrollY;
-      const list = element.closest(".maps-list");
-      const listRect = list.getBoundingClientRect();
-      const style = getComputedStyle(list);
-      const columns = style.gridTemplateColumns.split(" ").length;
-      const columnGap = parseFloat(style.columnGap) || 0;
-      const rowGap = parseFloat(style.rowGap) || 0;
-      const cellWidth = (listRect.width - columnGap * (columns - 1)) / columns;
-      const cellHeight = element.offsetHeight;
-      const column = Math.max(0, Math.min(columns - 1, Math.floor((e.clientX - listRect.left) / (cellWidth + columnGap))));
-      const row = Math.max(0, Math.floor((e.clientY - listRect.top) / (cellHeight + rowGap)));
-      const cards = [...list.querySelectorAll("[data-map-id]")];
-      const visibleCount = cards.length;
-      drag.targetIndex = Math.min(visibleCount - 1, row * columns + column);
-      const targetCard = cards[drag.targetIndex];
-      drag.dropRect = targetCard
-        ? { left: targetCard.offsetLeft, top: targetCard.offsetTop, width: targetCard.offsetWidth, height: targetCard.offsetHeight }
-        : { left: column * (cellWidth + columnGap), top: row * (cellHeight + rowGap), width: cellWidth, height: cellHeight };
-      if (e.clientY < 65) window.scrollBy(0, -14);
-      if (e.clientY > window.innerHeight - 65) window.scrollBy(0, 14);
-      if (!drag.frame) {
-        drag.frame = window.requestAnimationFrame(() => {
-          drag.frame = 0;
-          setCardDrag({ ...drag });
-        });
-      }
+      update();
     };
     const finish = (e) => {
       if (e.pointerId !== drag.pointerId) return;
+      if (e.type !== "pointercancel") { pointer.x = e.clientX; pointer.y = e.clientY; update(); }
       window.clearTimeout(timer);
+      window.removeEventListener("scroll", update, true);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
@@ -6501,6 +6531,7 @@ export default function App() {
       setCardDrag(null);
       window.setTimeout(() => { suppressCardClick.current = false; }, 0);
     };
+    window.addEventListener("scroll", update, { capture: true, passive: true });
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
@@ -7131,12 +7162,8 @@ export default function App() {
   }
 
   async function installApp() {
-    if (installPrompt) {
-      await installPrompt.prompt();
-      setInstallPrompt(null);
-      return;
-    }
-    window.location.href = "web+mapmethod://open";
+    await openApp({ win: window, prompt: installPrompt, installed: appInstalled,
+      showHelp: () => setAppHelpOpen(true), clearPrompt: () => setInstallPrompt(null) });
   }
 
   return (
@@ -8293,10 +8320,19 @@ export default function App() {
               <div className="account-tools-actions">
                 <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
                 <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
-                <button type="button" onClick={installApp}>{installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
+                <button type="button" onClick={installApp} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : installPrompt ? "Установить Map Method" : appInstalled ? "Открыть приложение" : "Как открыть приложение"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
+              <div className={`app-launch-help${appHelpOpen && !appStandalone ? " is-open" : ""}`} aria-hidden={!appHelpOpen || appStandalone} inert={!appHelpOpen || appStandalone}>
+                <div><section>
+                  <button type="button" className="modal-close" aria-label="Закрыть подсказку" onClick={() => setAppHelpOpen(false)}>×</button>
+                  <strong>Map Method в отдельном окне</strong>
+                  <p>Если приложение уже установлено, найди «Map Method» в меню «Пуск» или нажми значок «Открыть в приложении» справа в адресной строке браузера, в котором устанавливал его.</p>
+                  <p>Если приложения там нет, открой сайт в Chrome или Edge и выбери в меню браузера «Установить Map Method» или «Установить этот сайт как приложение».</p>
+                  <small>Если кнопка запуска не открыла окно, воспользуйся одним из способов выше: браузер мог ещё не обновить настройки установленного приложения.</small>
+                </section></div>
+              </div>
             </section>
 
             <section className="account-achievements">

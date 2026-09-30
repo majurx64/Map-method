@@ -3,6 +3,11 @@
   "short_name": "Map Method",
   "description": "Превращайте цели в наглядные карты прогресса.",
   "start_url": "/",
+  "id": "/",
+  "related_applications": [
+    { "platform": "webapp", "url": "https://www.mapmethod.ru/manifest.webmanifest" }
+  ],
+  "prefer_related_applications": false,
   "scope": "/",
   "display": "standalone",
   "launch_handler": { "client_mode": "navigate-existing" },
