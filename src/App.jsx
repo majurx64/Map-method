@@ -1860,6 +1860,7 @@ export default function App() {
   const [newMapDeadline, setNewMapDeadline] = useState("");
   const [newMapPlanMode, setNewMapPlanMode] = useState("balanced");
   const [newCategoryDraft, setNewCategoryDraft] = useState("");
+  const [isLibraryCategoryAdding, setIsLibraryCategoryAdding] = useState(false);
   const [customCategories, setCustomCategories] = useState(() => {
     try { return JSON.parse(localStorage.getItem(CUSTOM_CATEGORIES_KEY) || "[]").filter((item) => typeof item === "string"); }
     catch { return []; }
@@ -2251,10 +2252,14 @@ export default function App() {
       ? current.filter((id) => id !== itemId)
       : [...current, itemId]);
   }
-  const libraryCategories = ["Все", ...new Set(publicLibrary.map((item) => item.category || "Другое"))];
+  const libraryCategories = ["Все", ...new Set([
+    ...publicLibrary.map((item) => item.category || "Другое"),
+    ...customCategories,
+  ])];
   const publicLibraryCategoryOptions = [...new Set([
     "Спорт",
     "Личное",
+    ...customCategories,
     ...publicLibrary.map((item) => item.category || "Другое"),
   ])];
   const visiblePublicLibrary = publicLibrary
@@ -5939,7 +5944,9 @@ export default function App() {
     if (!category) return;
     setCustomCategories((previous) => previous.includes(category) || MAP_CATEGORIES.includes(category) ? previous : [...previous, category]);
     if (target === "rename") setRenameCategory(category);
-    else setNewMapCategory(category);
+    else if (target === "library") {
+      setIsLibraryCategoryAdding(false);
+    } else setNewMapCategory(category);
     setNewCategoryDraft("");
   }
 
@@ -8665,6 +8672,15 @@ export default function App() {
             </div>
             <div className="library-collections" role="group" aria-label="Коллекции">
               {libraryCategories.map((category) => <button type="button" key={category} className={libraryCategory === category ? "active" : ""} onClick={() => setLibraryCategory(category)}>{category}</button>)}
+              {isLibraryOwner && (!isLibraryCategoryAdding ? (
+                  <button type="button" className="library-add-category" onClick={() => { setNewCategoryDraft(""); setIsLibraryCategoryAdding(true); }}>+ Добавить категорию</button>
+                ) : (
+                  <form className="library-category-create" onSubmit={(event) => { event.preventDefault(); addCustomCategory("library"); }}>
+                    <input autoFocus value={newCategoryDraft} maxLength={36} placeholder="Название категории" onChange={(event) => setNewCategoryDraft(event.target.value)} />
+                    <button type="submit" disabled={!newCategoryDraft.trim()}>Добавить</button>
+                    <button type="button" className="library-category-cancel" aria-label="Отменить добавление категории" onClick={() => { setNewCategoryDraft(""); setIsLibraryCategoryAdding(false); }}>×</button>
+                  </form>
+                ))}
             </div>
             <div className="library-grid">
               {visiblePublicLibrary.map((item) => {
