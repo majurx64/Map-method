@@ -7,7 +7,9 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "desktop:start": "electron desktop/main.cjs",
+    "desktop:build": "electron-builder --config desktop/electron-builder.cjs --win nsis --x64 --publish never"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
@@ -19,6 +21,8 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
     "eslint": "^10.9.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.4",

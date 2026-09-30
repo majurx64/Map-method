@@ -1,5 +1,5 @@
 export function isStandaloneApp(win) {
-  return win.matchMedia('(display-mode: standalone)').matches || win.navigator.standalone === true;
+  return win.mapMethodDesktop?.isDesktop === true || win.matchMedia('(display-mode: standalone)').matches || win.navigator.standalone === true;
 }
 
 export async function hasInstalledApp(nav, origin) {

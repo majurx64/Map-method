@@ -39,6 +39,12 @@ test('standalone app does not recursively launch itself',async()=>{
   assert.equal(await openApp(options),'standalone');
   assert.deepEqual(calls,[]);
 });
+test('Windows desktop app does not offer browser installation or launch itself again',async()=>{
+  const {calls,options}=setup();
+  options.win.mapMethodDesktop={isDesktop:true};
+  assert.equal(await openApp(options),'standalone');
+  assert.deepEqual(calls,[]);
+});
 test('confirmed installation gets a launch attempt AND instructions if OS handler is missing',async()=>{
   const {calls,options}=setup({installed:true});
   assert.equal(await openApp(options),'requested');
