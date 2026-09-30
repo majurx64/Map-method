@@ -8,7 +8,7 @@ import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
-import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
+import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -1055,6 +1055,8 @@ function normalizeMap(map = {}) {
     shareSettings: map.shareSettings ? {
       showProgress: map.shareSettings.showProgress !== false,
       showActivity: Boolean(map.shareSettings.showActivity),
+      showHistory: Boolean(map.shareSettings.showHistory),
+      mode: map.shareSettings.mode === "snapshot" ? "snapshot" : "live",
     } : null,
     privateLibraryItem: Boolean(map.privateLibraryItem),
     modeDrafts: {
@@ -1660,6 +1662,8 @@ export default function App() {
   const [shareMap, setShareMap] = useState(null);
   const [shareProgressVisible, setShareProgressVisible] = useState(true);
   const [shareActivityVisible, setShareActivityVisible] = useState(false);
+  const [shareHistoryVisible, setShareHistoryVisible] = useState(false);
+  const [shareMode, setShareMode] = useState("live");
   const [shareStatus, setShareStatus] = useState("");
   const [shareClosing, setShareClosing] = useState(false);
   const [shareCopyStatus, setShareCopyStatus] = useState("");
@@ -2339,7 +2343,8 @@ export default function App() {
     libraryCardPositionsRef.current = nextPositions;
   }, [screen, visiblePublicLibraryOrder]);
   const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
-  const historyMap = maps.find((map) => map.id === historyMapId) || null;
+  const historyReadOnly = historyMapId === "public-share";
+  const historyMap = historyReadOnly ? (sharedView?.settings?.showHistory ? sharedView.map : null) : maps.find((map) => map.id === historyMapId) || null;
   const historyVersionEntries = useMemo(() => {
     const entries = (historyMap?.versions || []).map((version, index) => ({ version, index }));
     if (historyViewMode === "changes") return entries;
@@ -2428,7 +2433,7 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("shared");
     const snapshot = new URLSearchParams(window.location.hash.slice(1)).get("snapshot") || params.get("snapshot");
-    if (!token && !snapshot) return;
+    if ((!token && !snapshot) || screen !== "shared") return;
     let cancelled = false;
     if (snapshot) {
       decodeSharedSnapshot(snapshot).then((data) => {
@@ -2441,19 +2446,50 @@ export default function App() {
       });
       return () => { cancelled = true; };
     }
-    supabase.rpc("get_shared_map", { share_token: token }).then(({ data, error }) => {
-      if (cancelled) return;
-      if (error || !data) {
-        setSharedViewStatus("missing");
-        setScreen("shared");
-        return;
+    let loading = false;
+    let lastUpdatedAt = "";
+    const refresh = async () => {
+      if (loading || document.hidden || cancelled) return;
+      loading = true;
+      try {
+        const { data, error } = await supabase.rpc("get_shared_map", { share_token: token });
+        if (cancelled) return;
+        if (error) {
+          if (!lastUpdatedAt) setSharedViewStatus("missing");
+          return;
+        }
+        if (!data) {
+          setSharedView(null);
+          setHistoryMapId((id) => id === "public-share" ? null : id);
+          setHistoryPlaying(false);
+          setSharedViewStatus("missing");
+          setScreen("shared");
+          return;
+        }
+        if (data.updated_at !== lastUpdatedAt) {
+          lastUpdatedAt = data.updated_at;
+          setSharedView({ ...data, map: normalizeMap(data.map_data) });
+          if (!data.settings?.showHistory) {
+            setHistoryMapId((id) => id === "public-share" ? null : id);
+            setHistoryPlaying(false);
+          }
+        }
+        setSharedViewStatus("ready");
+      } catch {
+        if (!cancelled && !lastUpdatedAt) setSharedViewStatus("missing");
+      } finally {
+        loading = false;
       }
-      setSharedView({ ...data, map: normalizeMap(data.map_data) });
-      setSharedViewStatus("ready");
-      setScreen("shared");
-    });
-    return () => { cancelled = true; };
-  }, []);
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 20000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [screen]);
 
   useEffect(() => {
     if (!user?.id || mapsLoading || !isMapInitialized || maps.length || screen === "shared" || syncStatus || !navigator.onLine) return;
@@ -3050,7 +3086,7 @@ export default function App() {
 
   useEffect(() => {
     const handleDeletedVersionUndo = (event) => {
-      if (!historyMapId || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.code !== "KeyZ" || !deletedVersionsRef.current.length) return;
+      if (!historyMapId || historyReadOnly || !(event.ctrlKey || event.metaKey) || event.shiftKey || event.code !== "KeyZ" || !deletedVersionsRef.current.length) return;
       const targetIsField = event.target instanceof HTMLInputElement
         || event.target instanceof HTMLTextAreaElement
         || event.target instanceof HTMLSelectElement
@@ -3646,7 +3682,13 @@ export default function App() {
               // Older maps keep their visibility settings on the server.
               if (shared.data) settings = shared.data.settings;
             }
-            if (settings && !revokedShareIdsRef.current.has(map.shareId)) {
+            let publishedSettings = null;
+            if (settings?.mode === "snapshot") {
+              const shared = await supabase.rpc("get_shared_map", { share_token: map.shareId });
+              if (shared.error) throw shared.error;
+              publishedSettings = shared.data?.settings;
+            }
+            if (settings && shouldUpdateSharedMap(settings, publishedSettings) && !revokedShareIdsRef.current.has(map.shareId)) {
               const { error: shareError } = await supabase.from(SHARED_MAPS_TABLE).update({
                 map_data: publicSnapshot(map, settings),
                 settings,
@@ -6984,7 +7026,7 @@ export default function App() {
     setHistoryClosing(false);
     setHistoryViewMode("changes");
     setHistoryPreviewMode("template");
-    setHistoryMapId(map.id);
+    setHistoryMapId(screen === "shared" ? "public-share" : map.id);
     setHistoryPreviewIndex(Math.max(0, (map.versions?.length || 1) - 1));
     setHistoryPlaying(false);
     setFeatureStatus("");
@@ -7199,7 +7241,7 @@ export default function App() {
     try {
       const id = crypto.randomUUID();
       const source = dialog.id === activeMapId ? buildCurrentMap() || dialog : maps.find((map) => map.id === dialog.id) || dialog;
-      const settings = { showProgress: shareProgressVisible, showActivity: shareActivityVisible };
+      const settings = { showProgress: shareProgressVisible, showActivity: shareActivityVisible, showHistory: shareHistoryVisible, mode: shareMode };
       const { error } = await supabase.from(SHARED_MAPS_TABLE).insert({
         id,
         owner_id: user.id,
@@ -7232,6 +7274,8 @@ export default function App() {
     setShareCopyStatus("");
     setShareProgressVisible(map.shareSettings?.showProgress !== false);
     setShareActivityVisible(Boolean(map.shareSettings?.showActivity));
+    setShareHistoryVisible(Boolean(map.shareSettings?.showHistory));
+    setShareMode(map.shareSettings?.mode === "snapshot" ? "snapshot" : "live");
     setShareStatus(map.shareId ? "loading" : "");
     if (!map.shareId) return;
     try {
@@ -7250,6 +7294,8 @@ export default function App() {
       dialog.shareSettings = data.settings;
       setShareProgressVisible(data.settings.showProgress !== false);
       setShareActivityVisible(Boolean(data.settings.showActivity));
+      setShareHistoryVisible(Boolean(data.settings.showHistory));
+      setShareMode(data.settings.mode === "snapshot" ? "snapshot" : "live");
       setShareStatus("ready");
     } catch {
       if (shareDialogRef.current === dialog) setShareStatus("load-error");
@@ -7259,9 +7305,11 @@ export default function App() {
   async function updateShareSettings(patch) {
     const dialog = shareDialogRef.current;
     if (!dialog || shareBusyRef.current) return;
-    const settings = { showProgress: shareProgressVisible, showActivity: shareActivityVisible, ...patch };
+    const settings = { showProgress: shareProgressVisible, showActivity: shareActivityVisible, showHistory: shareHistoryVisible, mode: shareMode, ...patch };
     setShareProgressVisible(settings.showProgress);
     setShareActivityVisible(settings.showActivity);
+    setShareHistoryVisible(settings.showHistory);
+    setShareMode(settings.mode);
     if (!dialog.shareId) return;
     shareBusyRef.current = true;
     setShareStatus("saving");
@@ -8104,6 +8152,8 @@ export default function App() {
               <div className="shared-map-preview"><MapCardGrid map={publicMap} dimensions={dimensions} /></div>
               {sharedView.settings?.showProgress !== false && <div className="shared-map-progress"><strong><AnimatedPercent value={stats.percent} /></strong><span>{stats.filled} из {stats.total} клеток</span><i><b style={{ width: `${stats.percent}%` }} /></i></div>}
               {sharedView.settings?.showActivity && map.lastPaintedAt && <small>Последнее изменение: {new Date(map.lastPaintedAt).toLocaleString("ru-RU")}</small>}
+              <small>{sharedView.settings?.mode === "snapshot" ? "Сохранённый этап карты" : "Прогресс обновляется автоматически"}</small>
+              {sharedView.settings?.showHistory && <button type="button" onClick={() => openHistoryModal(map)}>История прогресса</button>}
               <button type="button" onClick={() => { history.replaceState({}, "", "/"); setScreen("home"); }}>Создать свою карту</button>
             </section>;
           })() : null}
@@ -10675,13 +10725,13 @@ export default function App() {
         <div className={`modal-overlay feature-modal-overlay history-overlay${versionUndoNotice ? " has-version-undo" : ""}${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
           <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ВСЕ ВЕРСИИ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
-            <p className="feature-modal-intro">Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням.</p>
+            <p className="feature-modal-intro">{historyReadOnly ? "История прогресса опубликована владельцем. Выбирай этапы или включи воспроизведение." : "Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням."}</p>
             <div className={`history-view-switch is-${historyViewMode}`} role="group" aria-label="Отображение истории">
               <button type="button" className={historyViewMode === "changes" ? "active" : ""} onClick={() => changeHistoryViewMode("changes")}>Все изменения</button>
               <button type="button" className={historyViewMode === "days" ? "active" : ""} onClick={() => changeHistoryViewMode("days")}>По дням</button>
             </div>
-            {featureStatus && <p className="feature-status" role="status">{featureStatus}</p>}
-            <button type="button" className="feature-primary" onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>
+            {!historyReadOnly && featureStatus && <p className="feature-status" role="status">{featureStatus}</p>}
+            {!historyReadOnly && <button type="button" className="feature-primary" onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>}
             {historyVersionEntries.length ? (() => {
               const selectedEntry = historyVersionEntries.find((entry) => entry.index === historyPreviewIndex) || historyVersionEntries.at(-1);
               const snapshot = selectedEntry.version;
@@ -10710,12 +10760,12 @@ export default function App() {
                     {[0.5, 1, 1.5, 2, 4, 8, 16].map((speed) => <button type="button" key={speed} className={historyPlaybackSpeed === speed ? "active" : ""} onClick={() => changeHistoryPlaybackSpeed(speed)}>{String(speed).replace(".", ",")}×</button>)}
                   </div>
                 </div>
-                <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>
-                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button><button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button></div>)}</div>
+                {!historyReadOnly && <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>}
+                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && <button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
               </>;
-            })() : <p className="feature-empty">Версий пока нет. Внеси изменение в карту или сохрани важный этап вручную.</p>}
+            })() : <p className="feature-empty">{historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внеси изменение в карту или сохрани важный этап вручную."}</p>}
           </div>
-          {versionUndoNotice && (() => {
+          {!historyReadOnly && versionUndoNotice && (() => {
             const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
             return <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoClosing ? " is-closing" : ""}`} role="status" onMouseDown={(event) => event.stopPropagation()}><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
           })()}
@@ -10727,11 +10777,17 @@ export default function App() {
           <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ТОЛЬКО ПРОСМОТР</span><h2 id="share-modal-title">{shareStatus === "revoked" ? "Ссылка отключена" : "Публичная ссылка"}</h2></div><button type="button" className="modal-close" disabled={shareStatus === "saving"} onClick={closeShareDialog}>×</button></div>
             {shareStatus === "revoked" ? <div className="share-revoked" role="status"><span className="share-revoked-icon" aria-hidden="true">✓</span><p>Теперь по этой ссылке люди не увидят карту. Твоя карта сохранена и доступна тебе.</p><button type="button" className="feature-primary" onClick={closeShareDialog}>Понятно</button></div> : <>
-            <p className="feature-modal-intro">Посетитель увидит карту и не сможет её изменить. Изменения карты и настройки показа обновляются автоматически по той же ссылке.</p>
+            <p className="feature-modal-intro">Посетитель сможет посмотреть карту и выбранные данные без возможности их изменить.</p>
+            <div className={`share-mode-switch history-view-switch is-${shareMode === "live" ? "days" : "changes"}`} role="group" aria-label="Режим публичной ссылки">
+              <button type="button" className={shareMode === "snapshot" ? "active" : ""} aria-pressed={shareMode === "snapshot"} disabled={["saving", "loading", "load-error"].includes(shareStatus)} onClick={() => updateShareSettings({ mode: "snapshot" })}>Текущий этап</button>
+              <button type="button" className={shareMode === "live" ? "active" : ""} aria-pressed={shareMode === "live"} disabled={["saving", "loading", "load-error"].includes(shareStatus)} onClick={() => updateShareSettings({ mode: "live" })}>Следить за прогрессом</button>
+            </div>
+            <p className="share-mode-description"><CrossfadeText value={shareMode === "snapshot" ? "Сохранённый этап: дальнейшие изменения карты сюда не попадут. Смена настроек сохранит новый текущий этап." : "Карта и история прогресса обновляются автоматически по той же ссылке."} /></p>
             <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareProgressVisible} onChange={(event) => updateShareSettings({ showProgress: event.target.checked })} /><span>Показывать прогресс</span></label>
             <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareActivityVisible} onChange={(event) => updateShareSettings({ showActivity: event.target.checked })} /><span>Показывать дату последнего изменения</span></label>
+            <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareHistoryVisible} onChange={(event) => updateShareSettings({ showHistory: event.target.checked })} /><span>Показывать историю прогресса</span></label>
             {shareMap.shareUrl && <div className="share-link"><input readOnly aria-label="Публичная ссылка на карту" value={shareMap.shareUrl} /><button type="button" className={shareCopyStatus === "copied" ? "is-copied" : ""} onClick={() => copyShareLink()}><CrossfadeText value={shareCopyStatus === "copied" ? "✓ Скопировано" : "Копировать"} /></button></div>}
-            <div className="share-status" role="status" aria-live="polite"><CrossfadeText as="p" value={shareCopyStatus === "error" ? "Не удалось скопировать. Выдели ссылку и скопируй вручную." : shareStatus === "error" ? "Не удалось создать ссылку. Попробуй ещё раз." : shareStatus === "revoke-error" ? "Не удалось отключить ссылку. Попробуй ещё раз." : shareStatus === "sync-error" ? "Настройки сохранены на устройстве. Ссылка обновится после восстановления связи." : shareStatus === "load-error" ? "Не удалось загрузить настройки ссылки. Открой это окно повторно." : shareStatus === "loading" ? "Загружаем настройки…" : shareStatus === "saving" ? "Сохраняем…" : shareCopyStatus === "copied" ? "Ссылка скопирована." : shareMap.shareUrl ? "Ссылка активна. Изменения обновляются автоматически." : ""} /></div>
+            <div className="share-status" role="status" aria-live="polite"><CrossfadeText as="p" value={shareCopyStatus === "error" ? "Не удалось скопировать. Выдели ссылку и скопируй вручную." : shareStatus === "error" ? "Не удалось создать ссылку. Попробуй ещё раз." : shareStatus === "revoke-error" ? "Не удалось отключить ссылку. Попробуй ещё раз." : shareStatus === "sync-error" ? "Настройки сохранены на устройстве. Ссылка обновится после восстановления связи." : shareStatus === "load-error" ? "Не удалось загрузить настройки ссылки. Открой это окно повторно." : shareStatus === "loading" ? "Загружаем настройки…" : shareStatus === "saving" ? "Сохраняем…" : shareCopyStatus === "copied" ? "Ссылка скопирована." : shareMap.shareUrl ? (shareMode === "snapshot" ? "Ссылка активна. Текущий этап сохранён." : "Ссылка активна. Изменения обновляются автоматически.") : ""} /></div>
             <div className="history-actions">{!shareMap.shareId && <button type="button" className="feature-primary" disabled={shareStatus === "saving"} onClick={publishShare}>{shareStatus === "saving" ? "Создаём…" : "Создать и скопировать ссылку"}</button>}{shareMap.shareId && <button type="button" className="danger-action share-revoke-button" data-tooltip="Закроет доступ к карте по этой ссылке" aria-description="Закроет доступ к карте по этой ссылке" disabled={["saving", "loading"].includes(shareStatus)} onClick={revokeShare}>Отключить ссылку</button>}</div>
             </>}
           </div>

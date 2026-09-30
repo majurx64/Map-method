@@ -236,6 +236,22 @@ export function publicSnapshot(map, settings) {
   result.progressCompleted = settings.showProgress ? [...(map.progressCompleted || [])] : [];
   result.isGameMode = Boolean(settings.showProgress);
   result.lastPaintedAt = settings.showActivity ? map.lastPaintedAt || "" : "";
+  if (settings.showHistory) {
+    result.versions = normalizeVersions(map.versions).map((version) => {
+      const safeVersion = publicSnapshot(version, { ...settings, showHistory: false });
+      safeVersion.isGameMode = Boolean(settings.showProgress && version.isGameMode);
+      const stats = getMapStats(safeVersion);
+      return {
+        ...safeVersion,
+        id: version.id,
+        createdAt: version.createdAt,
+        label: version.label,
+        filled: stats.filled,
+        total: stats.total,
+        cellSequence: settings.showProgress ? version.cellSequence : [],
+      };
+    });
+  }
   return result;
 }
 
@@ -277,4 +293,10 @@ export async function decodeSharedSnapshot(value) {
     chunks.push(chunk);
   }
   return JSON.parse(await new Blob(chunks).text());
+}
+
+// A frozen stage changes only when the owner changes its sharing settings.
+export function shouldUpdateSharedMap(settings, publishedSettings) {
+  if (settings.mode !== "snapshot" || publishedSettings?.mode !== "snapshot") return true;
+  return ["showProgress", "showActivity", "showHistory"].some((key) => Boolean(settings[key]) !== Boolean(publishedSettings[key]));
 }

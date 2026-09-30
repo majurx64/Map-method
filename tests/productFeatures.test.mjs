@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot, encodeSharedSnapshot, decodeSharedSnapshot } from '../src/lib/productFeatures.js';
+import { adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, normalizeVersions, parseBackup, publicSnapshot, shouldUpdateSharedMap, restoreSnapshot, encodeSharedSnapshot, decodeSharedSnapshot } from '../src/lib/productFeatures.js';
 import { mergePendingMaps } from '../src/lib/offlineMaps.js';
 
 const today = new Date(2026, 8, 28, 12);
@@ -93,4 +93,33 @@ test('Pending offline edits override stale cloud rows without replacing other ma
   const merged = mergePendingMaps([map, { ...map, id: 'two' }], [{ map: { ...map, name: 'Offline edit' } }]);
   assert.equal(merged.length, 2);
   assert.equal(merged[0].name, 'Offline edit');
+});
+
+
+test('Shared history keeps playback data without private images, metadata or hidden progress', () => {
+  const original = { ...map, isGameMode: true, completed: [0, 1, 2], progressCompleted: [1, 2], image: 'private-source' };
+  const version = { ...createMapSnapshot(original, 'Этап', [1, 2]), shareId: 'private-token', owner: 'private-owner', activityLog: [{ cells: 10 }], modeDrafts: { private: true } };
+  const settings = { showHistory: true, showProgress: true, showActivity: false };
+  const visible = publicSnapshot({ ...original, versions: [version] }, settings);
+  assert.equal(visible.versions.length, 1);
+  assert.equal(visible.versions[0].label, 'Этап');
+  assert.equal(visible.versions[0].createdAt, version.createdAt);
+  assert.deepEqual(visible.versions[0].progressCompleted, [1, 2]);
+  assert.deepEqual(visible.versions[0].cellSequence, [1, 2]);
+  assert.equal(visible.versions[0].filled, 2);
+  for (const field of ['image', 'owner', 'activityLog', 'modeDrafts', 'shareId', 'versions']) assert.equal(field in visible.versions[0], false);
+  const hidden = publicSnapshot({ ...original, versions: [version] }, { ...settings, showProgress: false });
+  assert.deepEqual(hidden.versions[0].progressCompleted, []);
+  assert.deepEqual(hidden.versions[0].cellSequence, []);
+  assert.equal(hidden.versions[0].isGameMode, false);
+  assert.equal('versions' in publicSnapshot({ ...original, versions: [version] }, { ...settings, showHistory: false }), false);
+});
+
+test('A frozen link ignores map edits and updates only after sharing settings change', () => {
+  const settings = { mode: 'snapshot', showProgress: true, showActivity: false, showHistory: true };
+  assert.equal(shouldUpdateSharedMap(settings, { ...settings }), false);
+  for (const key of ['showProgress', 'showActivity', 'showHistory']) assert.equal(shouldUpdateSharedMap({ ...settings, [key]: !settings[key] }, settings), true);
+  assert.equal(shouldUpdateSharedMap(settings, { ...settings, mode: 'live' }), true);
+  assert.equal(shouldUpdateSharedMap({ ...settings, mode: 'live' }, settings), true);
+  assert.equal(shouldUpdateSharedMap({ showProgress: true }, { showProgress: true }), true);
 });

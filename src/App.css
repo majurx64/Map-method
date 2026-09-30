@@ -3829,3 +3829,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   .header-actions { max-width:100%; margin-left:auto; flex-wrap:wrap; justify-content:flex-end; }
   .language-menu { flex-shrink:0; }
 }
+
+.share-mode-switch { display:grid; width:100%; margin-bottom:8px; }
+.share-mode-switch button { padding:8px; font-size:12px; white-space:normal; }
+.share-mode-description { min-height:42px; margin:0 0 12px; color:#737970; font-size:12px; line-height:1.5; }
