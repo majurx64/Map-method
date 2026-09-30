@@ -26,11 +26,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = node -p "require('./desktop/electron-builder.cjs').extraMetadata.version"
-          $tag = "desktop-v$version"
+          $tag = "v$version"
           gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Map Method для Windows $version" --notes "Установщик для Windows x64. Создаёт ярлыки на рабочем столе и в меню Пуск. Первый запуск требует подключения к интернету. Установщик без цифровой подписи."
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          gh release upload $tag release/Map-Method-Setup.exe --repo $env:GITHUB_REPOSITORY --clobber
+          gh release upload $tag release/Map-Method-Setup.exe release/Map-Method-Setup.exe.blockmap release/latest.yml --repo $env:GITHUB_REPOSITORY --clobber
           exit $LASTEXITCODE

@@ -1,4 +1,6 @@
-const { app, BrowserWindow, session, shell } = require('electron');
+const { app, BrowserWindow, session, shell, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
+const { startUpdates } = require('./updates.cjs');
 const path = require('node:path');
 const { APP_ORIGIN, navigationTarget } = require('./navigation.cjs');
 let mainWindow;
@@ -44,6 +46,9 @@ if (!app.requestSingleInstanceLock()) {
       }
     });
     mainWindow.on('closed', () => { mainWindow = null; });
+    mainWindow.webContents.once('did-finish-load', () => {
+      startUpdates({ app, autoUpdater, dialog, getWindow: () => mainWindow });
+    });
     void mainWindow.loadURL(APP_ORIGIN).catch(() => {});
   });
   app.on('window-all-closed', () => app.quit());

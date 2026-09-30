@@ -1689,6 +1689,7 @@ export default function App() {
   const [appStandalone, setAppStandalone] = useState(() => isStandaloneApp(window));
   const [appInstalled, setAppInstalled] = useState(false);
   const [appHelpOpen, setAppHelpOpen] = useState(false);
+  const [windowsInstallHelp, setWindowsInstallHelp] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   useEffect(() => {
@@ -3023,6 +3024,7 @@ export default function App() {
   useEffect(() => {
     const handleEscape = (event) => {
       if (event.key !== "Escape") return;
+      if (windowsInstallHelp) { closeModal("windows-install"); return; }
       if (historyMapId) { closeHistoryModal(); return; }
       if (shareMap) { closeShareDialog(); return; }
       if (showVictory) return;
@@ -3742,6 +3744,28 @@ export default function App() {
     }, 300);
     return () => clearTimeout(timer);
   }, [maps, personalLibrary, user?.id, isMapInitialized]);
+
+  useEffect(() => {
+    if (!window.mapMethodDesktop?.isDesktop) return;
+    const prepare = async () => {
+      if (user?.id && !isMapInitialized) return false;
+      if (publicLibraryEditContext) return false;
+      clearTimeout(saveTimerRef.current);
+      const current = buildCurrentMap();
+      if (user?.id && current && !publicLibraryEditContext) {
+        const map = normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current));
+        // Persist before restarting even if the network is unavailable.
+        await queueMapSave(user.id, map);
+        pendingVersionSequenceRef.current = [];
+      } else if (current) {
+        const maps = liveStateRef.current.maps.map((map) => map.id === current.id ? current : map);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(maps));
+      }
+      return true;
+    };
+    window.mapMethodPrepareUpdate = prepare;
+    return () => { if (window.mapMethodPrepareUpdate === prepare) delete window.mapMethodPrepareUpdate; };
+  }, [user?.id, isMapInitialized, buildCurrentMap, publicLibraryEditContext]);
 
   const remoteSave = useCallback(
     (map, queuedEntry = null) => {
@@ -6114,6 +6138,7 @@ export default function App() {
       if (kind === "rename") setIsRenameOpen(false);
       if (kind === "feedback") setIsFeedbackOpen(false);
       if (kind === "download") setDownloadChoice(null);
+      if (kind === "windows-install") setWindowsInstallHelp(false);
       if (kind === "delete") {
         setIsDeleteOpen(false);
         setMapToDelete(null);
@@ -8714,7 +8739,12 @@ export default function App() {
               <div className="account-tools-actions">
                 <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
                 <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
-                <button type="button" onClick={() => /Windows NT/.test(navigator.userAgent) ? window.location.assign("https://github.com/majurx64/Map-method/releases/download/desktop-v1.0.2/Map-Method-Setup.exe") : installApp()} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : /Windows NT/.test(navigator.userAgent) ? "Скачать для Windows" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
+                <button type="button" onClick={() => {
+                  if (!/Windows NT/.test(navigator.userAgent)) { installApp(); return; }
+                  setClosingModal("");
+                  setWindowsInstallHelp(true);
+                  window.location.assign("https://github.com/majurx64/Map-method/releases/download/desktop-v1.0.2/Map-Method-Setup.exe");
+                }} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : /Windows NT/.test(navigator.userAgent) ? "Скачать для Windows" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
@@ -10814,6 +10844,21 @@ export default function App() {
             <span aria-hidden="true">✓</span>
             <strong>Спасибо за сообщение!</strong>
             <p>Обращение отправлено.</p>
+          </div>
+        </div>
+      )}
+
+      {windowsInstallHelp && (
+        <div className={`modal-overlay feature-modal-overlay${closingModal === "windows-install" ? " is-closing" : ""}`} onMouseDown={() => closeModal("windows-install")}>
+          <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="windows-install-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div><span className="account-eyebrow">УСТАНОВКА ДЛЯ WINDOWS</span><h2 id="windows-install-title">Если Windows покажет предупреждение</h2></div>
+              <button type="button" className="modal-close" aria-label="Закрыть" onClick={() => closeModal("windows-install")}>×</button>
+            </div>
+            <p className="feature-modal-intro">Map Method пока не имеет цифровой подписи издателя, поэтому Windows может показать «Система Windows защитила ваш компьютер».</p>
+            <p className="feature-modal-intro">Если ты скачал установщик Map Method с этого сайта, продолжить установку можно так:</p>
+            <ol><li>Нажми <strong>«Подробнее»</strong>.</li><li>Нажми <strong>«Выполнить в любом случае»</strong>.</li></ol>
+            <div className="history-actions"><button type="button" className="feature-primary" autoFocus onClick={() => closeModal("windows-install")}>Понятно</button></div>
           </div>
         </div>
       )}
