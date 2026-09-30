@@ -1755,6 +1755,7 @@ export default function App() {
   const categoryDragRef = useRef(null);
   const suppressCategoryClick = useRef(false);
   const artworkDragRef = useRef(null);
+  const artworkDragFrameRef = useRef(0);
   const [movingArtwork, setMovingArtwork] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 600, height: 500 });
   const zoomAnchorRef = useRef(null);
@@ -4641,6 +4642,7 @@ export default function App() {
           completed: [...completedRef.current], progressCompleted: [...progressCompletedRef.current],
           colors: [...colorsRef.current], imageOffset: { ...imageOffset }, dx: 0, dy: 0,
         };
+        startArtworkDragTracking();
         setMovingArtwork(true);
       } else {
         setSelectionReady(false);
@@ -4691,6 +4693,25 @@ export default function App() {
   function handleEditorViewportScroll() {
     const drag = artworkDragRef.current;
     if (drag) updateArtworkDrag(drag, drag.clientX, drag.clientY);
+  }
+
+  function startArtworkDragTracking() {
+    window.cancelAnimationFrame(artworkDragFrameRef.current);
+    const followScroll = () => {
+      const drag = artworkDragRef.current;
+      if (!drag) {
+        artworkDragFrameRef.current = 0;
+        return;
+      }
+      updateArtworkDrag(drag, drag.clientX, drag.clientY);
+      artworkDragFrameRef.current = window.requestAnimationFrame(followScroll);
+    };
+    artworkDragFrameRef.current = window.requestAnimationFrame(followScroll);
+  }
+
+  function stopArtworkDragTracking() {
+    window.cancelAnimationFrame(artworkDragFrameRef.current);
+    artworkDragFrameRef.current = 0;
   }
 
   function handlePointerMove(e) {
@@ -4818,6 +4839,7 @@ export default function App() {
       setSelection(artworkDragRef.current.area);
       setSelectionReady(true);
       artworkDragRef.current = null;
+      stopArtworkDragTracking();
       setMovingArtwork(false);
     }
     finishStroke();
@@ -4836,6 +4858,7 @@ export default function App() {
       redoStackRef.current = [];
     }
     artworkDragRef.current = null;
+    stopArtworkDragTracking();
     setMovingArtwork(false);
   }
 
@@ -7113,7 +7136,7 @@ export default function App() {
       setInstallPrompt(null);
       return;
     }
-    window.open(`${window.location.origin}/`, "_blank", "noopener,noreferrer");
+    window.location.href = "web+mapmethod://open";
   }
 
   return (
@@ -8270,7 +8293,7 @@ export default function App() {
               <div className="account-tools-actions">
                 <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
                 <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
-                <button type="button" onClick={installApp}>{installPrompt ? "Установить Map Method" : "Открыть Map Method"}</button>
+                <button type="button" onClick={installApp}>{installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
@@ -10376,7 +10399,7 @@ export default function App() {
       )}
 
       {historyMap && (
-        <div className={`modal-overlay feature-modal-overlay history-overlay${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
+        <div className={`modal-overlay feature-modal-overlay history-overlay${versionUndoNotice ? " has-version-undo" : ""}${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
           <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ВСЕ ВЕРСИИ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
             <p className="feature-modal-intro">Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням.</p>
