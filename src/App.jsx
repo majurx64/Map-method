@@ -7,6 +7,7 @@ import Auth from "./Auth";
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
+import { mergeLiveMaps } from "./lib/liveMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, publicSharedSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
 
@@ -2089,6 +2090,9 @@ export default function App() {
   const hydratingRef = useRef(true);
   const saveTimerRef = useRef(null);
   const remoteSaveQueueRef = useRef(Promise.resolve());
+  const liveChannelRef = useRef(null);
+  const dirtyMapsRef = useRef(new Map());
+  const liveStateRef = useRef(null);
   const activeMapRef = useRef(activeMap);
   const hydrationReleaseTimerRef = useRef(null);
   const historyReadyRef = useRef(false);
@@ -2260,6 +2264,7 @@ export default function App() {
   ];
   const libraryUserKey = user?.id || "guest";
   const personalLibrary = useMemo(() => Array.isArray(privateLibrary[libraryUserKey]) ? privateLibrary[libraryUserKey] : [], [privateLibrary, libraryUserKey]);
+  useLayoutEffect(() => { liveStateRef.current = { maps, personalLibrary, activeMapId, publicLibraryEditContext }; });
   const libraryFavorites = Array.isArray(favoritesByUser[libraryUserKey]) ? favoritesByUser[libraryUserKey] : [];
   function setLibraryFavorites(update) {
     setFavoritesByUser((current) => ({ ...current, [libraryUserKey]: update(Array.isArray(current[libraryUserKey]) ? current[libraryUserKey] : []) }));
@@ -3517,6 +3522,7 @@ export default function App() {
   useEffect(() => {
     if (
       !isMapInitialized ||
+      hydratingRef.current ||
       !activeMapId
     ) {
       return;
@@ -3629,12 +3635,100 @@ export default function App() {
     ]
   );
 
+  useEffect(() => {
+    if (!user?.id || !isMapInitialized || loadedOwnerRef.current !== user.id) return;
+    const owner = user.id;
+    dirtyMapsRef.current.clear();
+    let cancelled = false;
+    let refreshing = false;
+    let refreshRequested = false;
+    let retryTimer;
+    const refresh = async () => {
+      if (cancelled || !navigator.onLine || document.hidden) return;
+      if (refreshing) { refreshRequested = true; return; }
+      refreshing = true;
+      try {
+        const queue = remoteSaveQueueRef.current;
+        await queue;
+        const { data, error } = await supabase.from("maps")
+          .select("id,user_id,name,data,created_at,updated_at")
+          .eq("user_id", owner).order("created_at", { ascending: true });
+        const pending = await pendingMapSaves(owner);
+        if (cancelled || latestOwnerRef.current !== owner || error) return;
+        if (queue !== remoteSaveQueueRef.current || isDrawingRef.current || artworkDragRef.current || hydratingRef.current) {
+          clearTimeout(retryTimer);
+          retryTimer = setTimeout(refresh, 500);
+          return;
+        }
+        const current = liveStateRef.current;
+        const local = [...current.maps, ...current.personalLibrary];
+        const blocked = new Set([...deletingIdsRef.current, ...pendingDeletesRef.current.map((entry) => entry.map.id)]);
+        const merged = mergeLiveMaps(data.map(mapFromSupabaseRow), local, pending, dirtyMapsRef.current, blocked);
+        const nextMaps = merged.filter((map) => !map.privateLibraryItem);
+        const nextLibrary = merged.filter((map) => map.privateLibraryItem);
+        const mapsChanged = JSON.stringify(current.maps) !== JSON.stringify(nextMaps);
+        const libraryChanged = JSON.stringify(current.personalLibrary) !== JSON.stringify(nextLibrary);
+        if (!mapsChanged && !libraryChanged) return;
+        hydratingRef.current = true;
+        if (mapsChanged) {
+          const nextActive = nextMaps.find((map) => map.id === current.activeMapId);
+          const oldActive = current.maps.find((map) => map.id === current.activeMapId);
+          if (!current.publicLibraryEditContext && nextActive && JSON.stringify(nextActive) !== JSON.stringify(oldActive)) {
+            clearTimeout(saveTimerRef.current);
+            openMap(nextActive, { preserveViewport: true });
+          } else if (oldActive && !nextActive && !current.publicLibraryEditContext) {
+            setActiveMapId(null);
+            setScreen("maps");
+          }
+          setMaps(nextMaps);
+        }
+        if (libraryChanged) setPrivateLibrary((stored) => ({ ...stored, [owner]: nextLibrary }));
+        clearTimeout(hydrationReleaseTimerRef.current);
+        hydrationReleaseTimerRef.current = setTimeout(() => { hydratingRef.current = false; }, 0);
+      } catch (error) {
+        console.error("Не удалось получить изменения карт:", error);
+      } finally {
+        refreshing = false;
+        if (refreshRequested && !cancelled) { refreshRequested = false; void refresh(); }
+      }
+    };
+    // Broadcast carries only an invalidation signal; map contents remain behind account RLS.
+    const channel = supabase.channel(`account-maps:${owner}`)
+      .on("broadcast", { event: "maps-changed" }, refresh)
+      .subscribe((status) => { if (status === "SUBSCRIBED") void refresh(); });
+    liveChannelRef.current = channel;
+    const interval = setInterval(refresh, 15000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      clearTimeout(retryTimer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      if (liveChannelRef.current === channel) liveChannelRef.current = null;
+      void supabase.removeChannel(channel);
+    };
+  }, [user?.id, isMapInitialized]);
+
+  useEffect(() => {
+    if (!user?.id || !isMapInitialized || hydratingRef.current) return;
+    const timer = setTimeout(async () => {
+      await remoteSaveQueueRef.current;
+      void liveChannelRef.current?.send({ type: "broadcast", event: "maps-changed", payload: {} });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [maps, personalLibrary, user?.id, isMapInitialized]);
+
   const remoteSave = useCallback(
     (map, queuedEntry = null) => {
       if (!user || !map) {
         return Promise.resolve(null);
       }
 
+      const editRevision = dirtyMapsRef.current.get(map.id);
       const queued = queuedEntry ? Promise.resolve(queuedEntry) : queueMapSave(user.id, normalizeMap(map)).catch(() => {
         setSyncStatus("Не удалось сохранить офлайн-копию. Скачай резервную копию.");
         return null;
@@ -3704,6 +3798,8 @@ export default function App() {
             }
           }
           if (pending) await acknowledgeMapSave(pending);
+          if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
+          void liveChannelRef.current?.send({ type: "broadcast", event: "maps-changed", payload: {} });
           setSyncStatus("");
           return null;
         } catch (error) {
@@ -3757,6 +3853,7 @@ export default function App() {
       return;
     }
 
+    dirtyMapsRef.current.set(activeMapId, (dirtyMapsRef.current.get(activeMapId) || 0) + 1);
     clearTimeout(saveTimerRef.current);
 
     saveTimerRef.current = setTimeout(() => {
@@ -3769,7 +3866,7 @@ export default function App() {
         setMaps((stored) => stored.map((item) => item.id === map.id ? map : item));
         remoteSave(map);
       }
-    }, 700);
+    }, 250);
 
     return () =>
       clearTimeout(saveTimerRef.current);
@@ -6150,9 +6247,9 @@ export default function App() {
     }, 260);
   }
 
-  function openMap(map) {
+  function openMap(map, { preserveViewport = false } = {}) {
     finishStroke();
-    gridRestoreRef.current = null;
+    if (!preserveViewport) gridRestoreRef.current = null;
     setSelection(null);
     setSelectionTool(false);
 
@@ -6185,7 +6282,7 @@ export default function App() {
       source.onload = () => {
         if (requestId !== imageProcessingRef.current) return;
         sourceImageRef.current = source;
-        if (m.mapType === "image" && !m.imageOffset.cellsEdited) {
+        if (!preserveViewport && m.mapType === "image" && !m.imageOffset.cellsEdited) {
           const dimensions = getGridDimensions(m.totalCells, m.imageRatio, m.gridMode, m.manualRows, m.manualCols);
           const offset = m.imageOffset.frame
             ? m.imageOffset
@@ -6243,7 +6340,7 @@ export default function App() {
 
     clearHistory();
 
-    setMapZoom(1);
+    if (!preserveViewport) setMapZoom(1);
 
     localStorage.setItem(
       ACTIVE_MAP_KEY,
@@ -8596,7 +8693,7 @@ export default function App() {
               <div className="account-tools-actions">
                 <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
                 <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
-                <button type="button" onClick={() => /Windows NT/.test(navigator.userAgent) ? window.open("https://github.com/majurx64/Map-method/releases/latest/download/Map-Method-Setup.exe", "_blank", "noopener,noreferrer") : installApp()} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : /Windows NT/.test(navigator.userAgent) ? "Скачать для Windows" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
+                <button type="button" onClick={() => /Windows NT/.test(navigator.userAgent) ? window.location.assign("https://github.com/majurx64/Map-method/releases/latest/download/Map-Method-Setup.exe") : installApp()} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : /Windows NT/.test(navigator.userAgent) ? "Скачать для Windows" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
