@@ -8,7 +8,7 @@ import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
-import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, encodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
+import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, restoreSnapshot } from "./lib/productFeatures";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -1052,6 +1052,10 @@ function normalizeMap(map = {}) {
       .map(Number)
       .filter((entry) => Number.isInteger(entry) && entry >= -MAX_CELLS && entry < MAX_CELLS),
     shareId: typeof map.shareId === "string" && /^[0-9a-f-]{36}$/i.test(map.shareId) ? map.shareId : "",
+    shareSettings: map.shareSettings ? {
+      showProgress: map.shareSettings.showProgress !== false,
+      showActivity: Boolean(map.shareSettings.showActivity),
+    } : null,
     privateLibraryItem: Boolean(map.privateLibraryItem),
     modeDrafts: {
       ...(freeDraft ? { free: freeDraft } : {}),
@@ -1657,6 +1661,13 @@ export default function App() {
   const [shareProgressVisible, setShareProgressVisible] = useState(true);
   const [shareActivityVisible, setShareActivityVisible] = useState(false);
   const [shareStatus, setShareStatus] = useState("");
+  const [shareClosing, setShareClosing] = useState(false);
+  const [shareCopyStatus, setShareCopyStatus] = useState("");
+  const shareDialogRef = useRef(null);
+  const shareCloseTimerRef = useRef(null);
+  const shareCopyTimerRef = useRef(null);
+  const shareBusyRef = useRef(false);
+  const revokedShareIdsRef = useRef(new Set());
   const [sharedView, setSharedView] = useState(null);
   const [sharedViewStatus, setSharedViewStatus] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2971,7 +2982,7 @@ export default function App() {
     const handleEscape = (event) => {
       if (event.key !== "Escape") return;
       if (historyMapId) { closeHistoryModal(); return; }
-      if (shareMap) { setShareMap(null); return; }
+      if (shareMap) { closeShareDialog(); return; }
       if (showVictory) return;
       if (onboardingOpen) { finishOnboarding(); return; }
 
@@ -3627,6 +3638,26 @@ export default function App() {
             return error;
           }
 
+          if (map.shareId && !revokedShareIdsRef.current.has(map.shareId)) {
+            let settings = map.shareSettings;
+            if (!settings) {
+              const shared = await supabase.rpc("get_shared_map", { share_token: map.shareId });
+              if (shared.error) throw shared.error;
+              // Older maps keep their visibility settings on the server.
+              if (shared.data) settings = shared.data.settings;
+            }
+            if (settings && !revokedShareIdsRef.current.has(map.shareId)) {
+              const { error: shareError } = await supabase.from(SHARED_MAPS_TABLE).update({
+                map_data: publicSnapshot(map, settings),
+                settings,
+                updated_at: new Date().toISOString(),
+              }).eq("id", map.shareId).eq("owner_id", user.id);
+              if (shareError) {
+                setSyncStatus("Карта сохранена. Публичная ссылка обновится после восстановления связи.");
+                return shareError;
+              }
+            }
+          }
           if (pending) await acknowledgeMapSave(pending);
           setSyncStatus("");
           return null;
@@ -7138,58 +7169,141 @@ export default function App() {
     } finally { featureBusyRef.current = false; }
   }
 
-  async function publishShare() {
-    if (!shareMap || !user || shareStatus === "saving") return;
-    setShareStatus("saving");
-    const id = shareMap.shareId || crypto.randomUUID();
-    const source = shareMap.id === activeMapId ? buildCurrentMap() || shareMap : shareMap;
-    const settings = { showProgress: shareProgressVisible, showActivity: shareActivityVisible };
-    const safeMap = publicSnapshot(source, settings);
-    const readiness = await supabase.rpc("get_shared_map", { share_token: id });
-    const { error } = readiness.error ? readiness : await supabase.from(SHARED_MAPS_TABLE).upsert({
-      id,
-      owner_id: user.id,
-      map_id: source.id,
-      map_data: safeMap,
-      settings,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "id" });
-    if (error) {
-      try {
-        const snapshot = await encodeSharedSnapshot({ map: safeMap, settings, updated_at: new Date().toISOString() });
-        if (snapshot.length > 60000) throw new Error("share-too-large");
-        const url = `${window.location.origin}/#snapshot=${snapshot}`;
-        if (navigator.clipboard) await navigator.clipboard.writeText(url).catch(() => null);
-        setShareMap({ ...shareMap, shareUrl: url, portableShare: true });
-        setShareStatus("portable");
-      } catch {
-        setShareStatus("error");
-      }
-      return;
-    }
-    const url = `${window.location.origin}/?shared=${id}`;
-    await persistFeatureMap({ ...source, shareId: id });
-    if (navigator.clipboard) await navigator.clipboard.writeText(url).catch(() => null);
-    setShareMap({ ...shareMap, shareId: id, shareUrl: url, portableShare: false });
-    setShareStatus("copied");
+  function closeShareDialog() {
+    if (shareBusyRef.current || shareClosing) return;
+    setShareClosing(true);
+    shareCloseTimerRef.current = window.setTimeout(() => {
+      shareDialogRef.current = null;
+      setShareMap(null);
+      setShareClosing(false);
+    }, 260);
   }
 
-  function openShareDialog(map) {
-    setShareMap({ ...map, shareUrl: map.shareId ? `${window.location.origin}/?shared=${map.shareId}` : "" });
-    setShareProgressVisible(true);
-    setShareActivityVisible(false);
-    setShareStatus("");
+  async function copyShareLink(url = shareDialogRef.current?.shareUrl) {
+    if (!url) return;
+    window.clearTimeout(shareCopyTimerRef.current);
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareCopyStatus("copied");
+    } catch {
+      setShareCopyStatus("error");
+    }
+    shareCopyTimerRef.current = window.setTimeout(() => setShareCopyStatus(""), 2500);
+  }
+
+  async function publishShare() {
+    const dialog = shareDialogRef.current;
+    if (!dialog || !user || shareBusyRef.current) return;
+    shareBusyRef.current = true;
+    setShareStatus("saving");
+    try {
+      const id = crypto.randomUUID();
+      const source = dialog.id === activeMapId ? buildCurrentMap() || dialog : maps.find((map) => map.id === dialog.id) || dialog;
+      const settings = { showProgress: shareProgressVisible, showActivity: shareActivityVisible };
+      const { error } = await supabase.from(SHARED_MAPS_TABLE).insert({
+        id,
+        owner_id: user.id,
+        map_id: source.id,
+        map_data: publicSnapshot(source, settings),
+        settings,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) throw error;
+      const url = `${window.location.origin}/?shared=${id}`;
+      const updated = await persistFeatureMap({ ...source, shareId: id, shareSettings: settings });
+      shareDialogRef.current = { ...updated, shareUrl: url };
+      setShareMap(shareDialogRef.current);
+      setShareStatus("ready");
+      await copyShareLink(url);
+    } catch {
+      setShareStatus("error");
+    } finally {
+      shareBusyRef.current = false;
+    }
+  }
+
+  async function openShareDialog(map) {
+    window.clearTimeout(shareCloseTimerRef.current);
+    window.clearTimeout(shareCopyTimerRef.current);
+    const dialog = { ...map, shareUrl: map.shareId ? `${window.location.origin}/?shared=${map.shareId}` : "" };
+    shareDialogRef.current = dialog;
+    setShareMap(dialog);
+    setShareClosing(false);
+    setShareCopyStatus("");
+    setShareProgressVisible(map.shareSettings?.showProgress !== false);
+    setShareActivityVisible(Boolean(map.shareSettings?.showActivity));
+    setShareStatus(map.shareId ? "loading" : "");
+    if (!map.shareId) return;
+    try {
+      const { data, error } = await supabase.rpc("get_shared_map", { share_token: map.shareId });
+      if (shareDialogRef.current !== dialog) return;
+      if (error) throw error;
+      if (!data) {
+        const current = map.id === activeMapId ? buildCurrentMap() || map : map;
+        const updated = await persistFeatureMap({ ...current, shareId: "", shareSettings: null });
+        if (shareDialogRef.current !== dialog) return;
+        shareDialogRef.current = { ...updated, shareUrl: "" };
+        setShareMap(shareDialogRef.current);
+        setShareStatus("revoked");
+        return;
+      }
+      dialog.shareSettings = data.settings;
+      setShareProgressVisible(data.settings.showProgress !== false);
+      setShareActivityVisible(Boolean(data.settings.showActivity));
+      setShareStatus("ready");
+    } catch {
+      if (shareDialogRef.current === dialog) setShareStatus("load-error");
+    }
+  }
+
+  async function updateShareSettings(patch) {
+    const dialog = shareDialogRef.current;
+    if (!dialog || shareBusyRef.current) return;
+    const settings = { showProgress: shareProgressVisible, showActivity: shareActivityVisible, ...patch };
+    setShareProgressVisible(settings.showProgress);
+    setShareActivityVisible(settings.showActivity);
+    if (!dialog.shareId) return;
+    shareBusyRef.current = true;
+    setShareStatus("saving");
+    try {
+      const current = dialog.id === activeMapId ? buildCurrentMap() || dialog : maps.find((map) => map.id === dialog.id) || dialog;
+      const updated = normalizeMap({ ...current, shareId: dialog.shareId, shareSettings: settings });
+      clearTimeout(saveTimerRef.current);
+      if (updated.id === activeMapId) activeMapRef.current = updated;
+      setMaps((stored) => stored.map((map) => map.id === updated.id ? updated : map));
+      shareDialogRef.current = { ...updated, shareUrl: dialog.shareUrl };
+      setShareMap(shareDialogRef.current);
+      const error = await remoteSave(updated);
+      setShareStatus(error ? "sync-error" : "ready");
+    } catch {
+      setShareStatus("sync-error");
+    } finally {
+      shareBusyRef.current = false;
+    }
   }
 
   async function revokeShare() {
-    if (!shareMap?.shareId || !user) return;
+    const dialog = shareDialogRef.current;
+    if (!dialog?.shareId || !user || shareBusyRef.current) return;
+    shareBusyRef.current = true;
     setShareStatus("saving");
-    const { error } = await supabase.from(SHARED_MAPS_TABLE).delete().eq("id", shareMap.shareId).eq("owner_id", user.id);
-    setShareStatus(error ? "error" : "revoked");
-    if (!error) {
-      const current = shareMap.id === activeMapId ? buildCurrentMap() || shareMap : maps.find((map) => map.id === shareMap.id) || shareMap;
-      await persistFeatureMap({ ...current, shareId: "" });
-      setShareMap(null);
+    revokedShareIdsRef.current.add(dialog.shareId);
+    try {
+      // Finish earlier updates before removing the link. Updates never recreate it.
+      await remoteSaveQueueRef.current;
+      const { error } = await supabase.from(SHARED_MAPS_TABLE).delete().eq("id", dialog.shareId).eq("owner_id", user.id);
+      if (error) throw error;
+      const current = dialog.id === activeMapId ? buildCurrentMap() || dialog : maps.find((map) => map.id === dialog.id) || dialog;
+      const updated = await persistFeatureMap({ ...current, shareId: "", shareSettings: null });
+      shareDialogRef.current = { ...updated, shareUrl: "" };
+      setShareMap(shareDialogRef.current);
+      setShareCopyStatus("");
+      setShareStatus("revoked");
+    } catch {
+      revokedShareIdsRef.current.delete(dialog.shareId);
+      setShareStatus("revoke-error");
+    } finally {
+      shareBusyRef.current = false;
     }
   }
 
@@ -10609,17 +10723,17 @@ export default function App() {
       )}
 
       {shareMap && (
-        <div className="modal-overlay feature-modal-overlay" onMouseDown={() => setShareMap(null)}>
-          <div className="create-modal share-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><span className="account-eyebrow">ТОЛЬКО ПРОСМОТР</span><h2>Публичная ссылка</h2></div><button type="button" className="modal-close" onClick={() => setShareMap(null)}>×</button></div>
-            <p className="feature-modal-intro">Посетитель увидит снимок карты и не сможет его изменить. Обнови ссылку повторно, чтобы показать свежую версию.</p>
-            <label className="feature-toggle"><input type="checkbox" checked={shareProgressVisible} onChange={(event) => setShareProgressVisible(event.target.checked)} /><span>Показывать прогресс</span></label>
-            <label className="feature-toggle"><input type="checkbox" checked={shareActivityVisible} onChange={(event) => setShareActivityVisible(event.target.checked)} /><span>Показывать дату последнего изменения</span></label>
-            {shareMap.shareUrl && <div className="share-link"><input readOnly value={shareMap.shareUrl} /><button type="button" onClick={() => navigator.clipboard.writeText(shareMap.shareUrl)}>Копировать</button></div>}
-            {shareStatus === "error" && <p className="feature-status error">Не удалось создать ссылку. Попробуй ещё раз.</p>}
-            {shareStatus === "copied" && <p className="feature-status">Ссылка создана. Её можно скопировать из поля выше.</p>}
-            {shareStatus === "portable" && <p className="feature-status">Создана автономная ссылка-снимок. Её нельзя отозвать или обновить: новая публикация создаст другую ссылку.</p>}
-            <div className="history-actions"><button type="button" className="feature-primary" disabled={shareStatus === "saving"} onClick={publishShare}>{shareStatus === "saving" ? "Публикуем…" : shareMap.shareUrl ? "Обновить снимок" : "Создать и скопировать ссылку"}</button>{shareMap.shareId && <button type="button" className="danger-action" onClick={revokeShare}>Отключить ссылку</button>}</div>
+        <div className={`modal-overlay feature-modal-overlay${shareClosing ? " is-closing" : ""}`} onMouseDown={closeShareDialog}>
+          <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="account-eyebrow">ТОЛЬКО ПРОСМОТР</span><h2 id="share-modal-title">{shareStatus === "revoked" ? "Ссылка отключена" : "Публичная ссылка"}</h2></div><button type="button" className="modal-close" disabled={shareStatus === "saving"} onClick={closeShareDialog}>×</button></div>
+            {shareStatus === "revoked" ? <div className="share-revoked" role="status"><span className="share-revoked-icon" aria-hidden="true">✓</span><p>Теперь по этой ссылке люди не увидят карту. Твоя карта сохранена и доступна тебе.</p><button type="button" className="feature-primary" onClick={closeShareDialog}>Понятно</button></div> : <>
+            <p className="feature-modal-intro">Посетитель увидит карту и не сможет её изменить. Изменения карты и настройки показа обновляются автоматически по той же ссылке.</p>
+            <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareProgressVisible} onChange={(event) => updateShareSettings({ showProgress: event.target.checked })} /><span>Показывать прогресс</span></label>
+            <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareActivityVisible} onChange={(event) => updateShareSettings({ showActivity: event.target.checked })} /><span>Показывать дату последнего изменения</span></label>
+            {shareMap.shareUrl && <div className="share-link"><input readOnly aria-label="Публичная ссылка на карту" value={shareMap.shareUrl} /><button type="button" className={shareCopyStatus === "copied" ? "is-copied" : ""} onClick={() => copyShareLink()}><CrossfadeText value={shareCopyStatus === "copied" ? "✓ Скопировано" : "Копировать"} /></button></div>}
+            <div className="share-status" role="status" aria-live="polite"><CrossfadeText as="p" value={shareCopyStatus === "error" ? "Не удалось скопировать. Выдели ссылку и скопируй вручную." : shareStatus === "error" ? "Не удалось создать ссылку. Попробуй ещё раз." : shareStatus === "revoke-error" ? "Не удалось отключить ссылку. Попробуй ещё раз." : shareStatus === "sync-error" ? "Настройки сохранены на устройстве. Ссылка обновится после восстановления связи." : shareStatus === "load-error" ? "Не удалось загрузить настройки ссылки. Открой это окно повторно." : shareStatus === "loading" ? "Загружаем настройки…" : shareStatus === "saving" ? "Сохраняем…" : shareCopyStatus === "copied" ? "Ссылка скопирована." : shareMap.shareUrl ? "Ссылка активна. Изменения обновляются автоматически." : ""} /></div>
+            <div className="history-actions">{!shareMap.shareId && <button type="button" className="feature-primary" disabled={shareStatus === "saving"} onClick={publishShare}>{shareStatus === "saving" ? "Создаём…" : "Создать и скопировать ссылку"}</button>}{shareMap.shareId && <button type="button" className="danger-action" disabled={["saving", "loading"].includes(shareStatus)} onClick={revokeShare}>Отключить ссылку</button>}</div>
+            </>}
           </div>
         </div>
       )}
