@@ -4,6 +4,7 @@ import "./App.css";
 import { supabase } from "./lib/supabase";
 import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
+import AnimatedEditorPanel from './AnimatedEditorPanel';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
@@ -3701,7 +3702,9 @@ export default function App() {
         const local = [...current.maps, ...current.personalLibrary];
         const blocked = new Set([...deletingIdsRef.current, ...pendingDeletesRef.current.map((entry) => entry.map.id)]);
         const merged = mergeLiveMaps(data.map(mapFromSupabaseRow), local, pending, dirtyMapsRef.current, blocked);
-        const nextMaps = merged.filter((map) => !map.privateLibraryItem);
+        const nextMaps = merged.filter((map) => !map.privateLibraryItem).map((map) =>
+          map.id === current.activeMapId && current.editor
+            ? { ...map, isGameMode: current.editor.isGameMode } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
         const mapsChanged = JSON.stringify(current.maps) !== JSON.stringify(nextMaps);
         const libraryChanged = JSON.stringify(current.personalLibrary) !== JSON.stringify(nextLibrary);
@@ -6348,7 +6351,7 @@ export default function App() {
     setProgressCompleted(m.progressCompleted);
     progressExtraRef.current = m.progressExtra;
     setProgressExtra(m.progressExtra);
-    setIsGameMode(m.isGameMode);
+    if (!preserveViewport) setIsGameMode(m.isGameMode);
 
     imageProcessingRef.current += 1;
     setImage(m.image);
@@ -9510,12 +9513,12 @@ export default function App() {
               </div>
 
               <label className="field-label">
-                {t("name")}
+                {language === "ru" ? "Переключить карту" : "Switch map"}
               </label>
 
               <div className="map-select-control">
                 <AnimatedSelect
-                  ariaLabel={t("name")}
+                  ariaLabel={language === "ru" ? "Переключить карту" : "Switch map"}
                   value={activeMapId || ""}
                   options={(publicLibraryDraft ? [publicLibraryDraft] : maps).filter((map) => {
                     const draftId = submissionEditContext?.draftId || publicLibraryEditContext?.draftId;
@@ -9562,45 +9565,8 @@ export default function App() {
                     <button className="text-action" disabled={publicLibraryEditStatus === "saving"} onClick={() => finishPublicLibraryEditing(false)}>Отменить</button>
                     {publicLibraryEditStatus === "error" && <span className="field-error">Не удалось сохранить рисунок</span>}
                   </>
-                ) : (
-                  <>
-                    <button className="text-action" onClick={openCreateModal}>+ {t("new")}</button>
-                    {activeMap && <>
-                    <button
-                      className="text-action"
-                      onClick={() =>
-                        openRenameModal(
-                          activeMap
-                        )
-                      }
-                    >
-                      {t(
-                        "edit"
-                      )}
-                    </button>
-
-                    <button className="text-action" onClick={() => openHistoryModal(activeMap)}>
-                      История
-                    </button>
-                    <button className="text-action" onClick={() => openShareDialog(activeMap)}>
-                      Поделиться
-                    </button>
-
-                    <button
-                      className="text-action danger-action"
-                      onClick={() =>
-                        openDeleteModal(
-                          activeMap
-                        )
-                      }
-                    >
-                      {t(
-                        "delete"
-                      )}
-                    </button>
-                    </>}
-                  </>
-                )}
+                ) : null
+                }
               </div>
             </section>
 
@@ -9647,6 +9613,7 @@ export default function App() {
                 </button>
               </div>
 
+              <AnimatedEditorPanel viewKey={gridMode}>
               {gridMode ===
               "auto" ? (
                 <div className="compact-field">
@@ -9836,14 +9803,8 @@ export default function App() {
                 </div>
               )}
 
+              </AnimatedEditorPanel>
               {gridError && <p className="field-error" role="alert">{gridError}</p>}
-              <div className="grid-info">
-                {t("grid")}{" "}
-                {rows} ×{" "}
-                {cols} ·{" "}
-                {actualTotal}{" "}
-                {language === "ru" ? cellWord(actualTotal) : t("cells")}
-              </div>
               {actualTotal % cols !== 0 && (
                 <p className="grid-fill-hint">
                   Необязательно: добавьте ещё <strong>{cols - (actualTotal % cols)}</strong> {cellWord(cols - (actualTotal % cols))}, чтобы полностью заполнить последнюю строку.
@@ -9857,7 +9818,7 @@ export default function App() {
               </div>
 
               <div className="tool-stack">
-                {!isGameMode && <button className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
+
                 <div className="map-type tool-type">
                   <button
                     className={`map-type-btn ${
@@ -9897,7 +9858,7 @@ export default function App() {
                   </div>
 
                   <>
-                    <div className="map-mode-switch" role="group" aria-label="Режим карты">
+                    <div className={`map-mode-switch${isGameMode ? " is-game" : ""}`} role="group" aria-label="Режим карты">
                       <button className={!isGameMode ? "active" : ""} onClick={() => setIsGameMode(false)}>Рисование</button>
                       <button
                         className={isGameMode ? "active" : ""}
@@ -9955,6 +9916,7 @@ export default function App() {
                     <span>{t("redo")}</span>
                   </button>
                 </div>
+                {!isGameMode && <button className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
 
                 {mapType ===
                   "image" && (
@@ -10018,188 +9980,6 @@ export default function App() {
               </div>
             </section>
 
-            {mapType === "free" && !isGameMode && (
-              <section className="sidebar-section palette-section">
-                <div className="section-heading">
-                  {t(
-                    "palette"
-                  )}
-                </div>
-
-                <div className="color-palette">
-                  <div className="color-palette-header">
-                    <div>
-                      <div className="color-palette-title">
-                        {t(
-                          "brushColor"
-                        )}
-                      </div>
-
-                      <div className="color-palette-subtitle">
-                        {t(
-                          "newCells"
-                        )}
-                      </div>
-                    </div>
-
-                    <div
-                      className="selected-color-preview"
-                      style={{
-                        backgroundColor:
-                          drawColor,
-                      }}
-                    />
-                  </div>
-
-                  <div className="color-list">
-                    {BASIC_COLORS.filter((color) => color !== UTILITY_COLOR).map(
-                      (c) => (
-                        <button
-                          key={c}
-                          className={`color-item ${
-                            drawColor ===
-                            c
-                              ? "selected"
-                              : ""
-                          } ${
-                            c ===
-                            "#ffffff"
-                              ? "white"
-                              : ""
-                          }`}
-                          title={c}
-                          onClick={() =>
-                            selectDrawColor(
-                              c
-                            )
-                          }
-                          style={{
-                            "--color":
-                              c,
-                          }}
-                        >
-                          <span className="color-dot" />
-                        </button>
-                      )
-                    )}
-                  </div>
-
-                  {customColors.length >
-                    0 && (
-                    <div className="color-palette-section">
-                      <div className="color-palette-label">
-                        {t(
-                          "myColors"
-                        )}
-                      </div>
-
-                      <div className="color-list">
-                        {customColors.map(
-                          (c) => (
-                            <div
-                              key={c}
-                              className="custom-color-wrapper"
-                              onContextMenu={(
-                                e
-                              ) => {
-                                e.preventDefault();
-
-                                deleteCustomColor(
-                                  c
-                                );
-                              }}
-                            >
-                              <button
-                                className={`color-item ${
-                                  drawColor ===
-                                  c
-                                    ? "selected"
-                                    : ""
-                                }`}
-                                title={
-                                  c
-                                }
-                                onClick={() =>
-                                  selectDrawColor(
-                                    c
-                                  )
-                                }
-                                style={{
-                                  "--color":
-                                    c,
-                                }}
-                              >
-                                <span className="color-dot" />
-                              </button>
-
-                              <button
-                                className="delete-color-btn"
-                                onClick={() =>
-                                  deleteCustomColor(
-                                    c
-                                  )
-                                }
-                              >
-                                ×
-                              </button>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="utility-color-section">
-                    <div className="utility-color-copy">
-                      <strong>Служебные клетки</strong>
-                      <span>Добавляют клетки к количеству карты, когда в рисунке для них уже нет подходящего места. В списке «Мои карты» они выглядят как пустой фон.</span>
-                    </div>
-                    <button
-                      className={`color-item utility-color${drawColor === UTILITY_COLOR ? " selected" : ""}`}
-                      title={`${UTILITY_COLOR} — служебные клетки`}
-                      onClick={() => selectDrawColor(UTILITY_COLOR)}
-                      style={{ "--color": UTILITY_COLOR }}
-                    >
-                      <span className="color-dot" />
-                    </button>
-                  </div>
-
-                  <div className="custom-color-create">
-                    <label className="color-picker-wrap" htmlFor="new-color-picker">
-                      <input
-                        id="new-color-picker"
-                        type="color"
-                        value={
-                          normalizeHexColor(newColor) || "#111111"
-                        }
-                        onChange={(
-                          e
-                        ) =>
-                          setNewColor(
-                            e.target
-                              .value
-                          )
-                        }
-                      />
-
-                      <span className="color-picker-value">
-                        {newColor.toUpperCase()}
-                      </span>
-                    </label>
-
-                    <button
-                      disabled={!normalizeHexColor(newColor)}
-                      className="add-color-btn"
-                      onClick={
-                        addCustomColor
-                      }
-                    >
-                      + Добавить цвет
-                    </button>
-                  </div>
-                </div>
-              </section>
-            )}
           </aside>
 
           <section className="workspace">
@@ -10475,6 +10255,190 @@ export default function App() {
                 )}
               </button>
             </section>
+            <AnimatedEditorPanel viewKey={mapType === "free" && !isGameMode ? "palette" : "no-palette"}>
+            {mapType === "free" && !isGameMode && (
+              <section className="sidebar-section palette-section">
+                <div className="section-heading">
+                  {t(
+                    "palette"
+                  )}
+                </div>
+
+                <div className="color-palette">
+                  <div className="color-palette-header">
+                    <div>
+                      <div className="color-palette-title">
+                        {t(
+                          "brushColor"
+                        )}
+                      </div>
+
+                      <div className="color-palette-subtitle">
+                        {t(
+                          "newCells"
+                        )}
+                      </div>
+                    </div>
+
+                    <div
+                      className="selected-color-preview"
+                      style={{
+                        backgroundColor:
+                          drawColor,
+                      }}
+                    />
+                  </div>
+
+                  <div className="color-list">
+                    {BASIC_COLORS.filter((color) => color !== UTILITY_COLOR).map(
+                      (c) => (
+                        <button
+                          key={c}
+                          className={`color-item ${
+                            drawColor ===
+                            c
+                              ? "selected"
+                              : ""
+                          } ${
+                            c ===
+                            "#ffffff"
+                              ? "white"
+                              : ""
+                          }`}
+                          title={c}
+                          onClick={() =>
+                            selectDrawColor(
+                              c
+                            )
+                          }
+                          style={{
+                            "--color":
+                              c,
+                          }}
+                        >
+                          <span className="color-dot" />
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  {customColors.length >
+                    0 && (
+                    <div className="color-palette-section">
+                      <div className="color-palette-label">
+                        {t(
+                          "myColors"
+                        )}
+                      </div>
+
+                      <div className="color-list">
+                        {customColors.map(
+                          (c) => (
+                            <div
+                              key={c}
+                              className="custom-color-wrapper"
+                              onContextMenu={(
+                                e
+                              ) => {
+                                e.preventDefault();
+
+                                deleteCustomColor(
+                                  c
+                                );
+                              }}
+                            >
+                              <button
+                                className={`color-item ${
+                                  drawColor ===
+                                  c
+                                    ? "selected"
+                                    : ""
+                                }`}
+                                title={
+                                  c
+                                }
+                                onClick={() =>
+                                  selectDrawColor(
+                                    c
+                                  )
+                                }
+                                style={{
+                                  "--color":
+                                    c,
+                                }}
+                              >
+                                <span className="color-dot" />
+                              </button>
+
+                              <button
+                                className="delete-color-btn"
+                                onClick={() =>
+                                  deleteCustomColor(
+                                    c
+                                  )
+                                }
+                              >
+                                ×
+                              </button>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="utility-color-section">
+                    <div className="utility-color-copy">
+                      <strong>Служебные клетки</strong>
+                      <span>Добавляют клетки к количеству карты, когда в рисунке для них уже нет подходящего места. В списке «Мои карты» они выглядят как пустой фон.</span>
+                    </div>
+                    <button
+                      className={`color-item utility-color${drawColor === UTILITY_COLOR ? " selected" : ""}`}
+                      title={`${UTILITY_COLOR} — служебные клетки`}
+                      onClick={() => selectDrawColor(UTILITY_COLOR)}
+                      style={{ "--color": UTILITY_COLOR }}
+                    >
+                      <span className="color-dot" />
+                    </button>
+                  </div>
+
+                  <div className="custom-color-create">
+                    <label className="color-picker-wrap" htmlFor="new-color-picker">
+                      <input
+                        id="new-color-picker"
+                        type="color"
+                        value={
+                          normalizeHexColor(newColor) || "#111111"
+                        }
+                        onChange={(
+                          e
+                        ) =>
+                          setNewColor(
+                            e.target
+                              .value
+                          )
+                        }
+                      />
+
+                      <span className="color-picker-value">
+                        {newColor.toUpperCase()}
+                      </span>
+                    </label>
+
+                    <button
+                      disabled={!normalizeHexColor(newColor)}
+                      className="add-color-btn"
+                      onClick={
+                        addCustomColor
+                      }
+                    >
+                      + Добавить цвет
+                    </button>
+                  </div>
+                </div>
+              </section>
+            )}
+            </AnimatedEditorPanel>
           </aside>
         </main>
       )}
