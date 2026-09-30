@@ -198,7 +198,7 @@ const translations = {
     total: "Всего",
     clearProgress: "Очистить прогресс",
     drawHint: "ЛКМ — рисовать · ПКМ — стирать",
-    mapsEmpty: "У тебя пока нет карт",
+    mapsEmpty: "У Вас пока нет карт",
     open: "Открыть",
     createMap: "Создать карту",
     renameMap: "Переименовать карту",
@@ -211,7 +211,7 @@ const translations = {
     accountMaps: "Карт создано",
     accountCells: "Клеток закрашено",
     accountDescription:
-      "Здесь будет собираться твоя статистика, карты и будущие достижения.",
+      "Здесь будет собираться Ваша статистика, карты и будущие достижения.",
     accountProgress: "Прогресс",
     accountMember: "Профиль",
   },
@@ -756,7 +756,7 @@ const additionalTranslations = {
     saved: "Сохранено",
     benefitOne: "Визуальный путь",
     benefitTwo: "Гибкая сетка",
-    benefitThree: "Твой темп",
+    benefitThree: "Ваш темп",
   },
 
   en: {
@@ -3129,7 +3129,7 @@ export default function App() {
 
     saveMapsLocally(maps);
     if (user?.id && loadedOwnerRef.current === user.id) {
-      void cacheAccountMaps(user.id, [...maps, ...personalLibrary]).catch(() => setSyncStatus("Не удалось сохранить офлайн-копию: проверь свободное место на устройстве."));
+      void cacheAccountMaps(user.id, [...maps, ...personalLibrary]).catch(() => setSyncStatus("Не удалось сохранить офлайн-копию: проверьте свободное место на устройстве."));
     }
   }, [maps, isMapInitialized, user?.id, personalLibrary]);
 
@@ -3775,7 +3775,7 @@ export default function App() {
 
       const editRevision = dirtyMapsRef.current.get(map.id);
       const queued = queuedEntry ? Promise.resolve(queuedEntry) : queueMapSave(user.id, normalizeMap(map)).catch(() => {
-        setSyncStatus("Не удалось сохранить офлайн-копию. Скачай резервную копию.");
+        setSyncStatus("Не удалось сохранить офлайн-копию. Скачайте резервную копию.");
         return null;
       });
       const run = async () => {
@@ -3787,7 +3787,7 @@ export default function App() {
         if (deletingIdsRef.current.has(map.id)) return null;
         if (latestOwnerRef.current !== user.id) return new Error("account-changed");
         if (!navigator.onLine) {
-          setSyncStatus(pending ? "Сохранено на устройстве. Ожидаем подключения." : "Нет связи; скачай резервную копию.");
+          setSyncStatus(pending ? "Сохранено на устройстве. Ожидаем подключения." : "Нет связи; скачайте резервную копию.");
           return new Error("offline");
         }
         try {
@@ -7540,7 +7540,7 @@ export default function App() {
       setMaps((current) => [...current, ...imported.filter((map) => !map.privateLibraryItem)]);
       setPrivateLibrary((current) => ({ ...current, [user.id]: [...(current[user.id] || []), ...imported.filter((map) => map.privateLibraryItem)] }));
       const errors = await Promise.all(imported.map((map) => remoteSave(map)));
-      setBackupStatus(`Добавлено карт и эскизов: ${imported.length}.${errors.some(Boolean) ? " Есть несинхронизированные данные; сохрани файл копии до восстановления связи." : ""}`);
+      setBackupStatus(`Добавлено карт и эскизов: ${imported.length}.${errors.some(Boolean) ? " Есть несинхронизированные данные; сохраните файл копии до восстановления связи." : ""}`);
     } catch {
       setBackupStatus("Не удалось прочитать эту резервную копию.");
     } finally { featureBusyRef.current = false; }
@@ -8109,11 +8109,11 @@ export default function App() {
               </span>
 
               <h1>
-                Преврати каждый маленький шаг в картинку.
+                Превратите каждый маленький шаг в картинку.
               </h1>
 
               <p>
-                Map Method помогает замечать путь: каждый небольшой шаг остаётся на карте и постепенно складывается в историю твоего движения вперёд.
+                Map Method помогает замечать путь: каждый небольшой шаг остаётся на карте и постепенно складывается в историю Вашего движения вперёд.
               </p>
 
               <div className="home-actions">
@@ -8161,7 +8161,7 @@ export default function App() {
                 ))}
               </div>
               <strong>Путь складывается из маленьких действий.</strong>
-              <p>Нарисуй свою форму и отмечай движение так, как удобно тебе.</p>
+              <p>Нарисуйте свою форму и отмечайте движение так, как удобно Вам.</p>
             </aside>
 
           </section>
@@ -8227,15 +8227,15 @@ export default function App() {
               <article>
                 <span>01</span>
 
-                <h3>Выбери карту</h3>
+                <h3>Выберите карту</h3>
 
-                <p>Нарисуй карту кистью или загрузи изображение — оба способа превращают идею в наглядный путь.</p>
+                <p>Нарисуйте карту кистью или загрузите изображение — оба способа превращают идею в наглядный путь.</p>
               </article>
 
               <article>
                 <span>02</span>
 
-                <h3>Закрась клетку</h3>
+                <h3>Закрасьте клетку</h3>
 
                 <p>Одно действие становится видимой частью картинки.</p>
               </article>
@@ -8243,24 +8243,24 @@ export default function App() {
               <article>
                 <span>03</span>
 
-                <h3>Смотри, как она появляется</h3>
+                <h3>Смотрите, как она появляется</h3>
 
-                <p>Возвращайся позже и продолжай, не теряя прогресс.</p>
+                <p>Возвращайтесь позже и продолжайте, не теряя прогресс.</p>
               </article>
             </div>
           </section>
 
           <section className="landing-final">
             <span className="landing-label">
-              Твой маршрут
+              Ваш маршрут
             </span>
 
             <h2>
-              Начни с одной клетки. Продолжи своей картой.
+              Начните с одной клетки. Продолжите своей картой.
             </h2>
 
             <p>
-              Выбери форму, цвет и ритм. Map Method сохранит путь, чтобы к нему всегда можно было вернуться.
+              Выберите форму, цвет и ритм. Map Method сохранит путь, чтобы к нему всегда можно было вернуться.
             </p>
 
             <button
@@ -8625,7 +8625,7 @@ export default function App() {
             <section className="account-profile-card">
               <div className="account-avatar" key={accountInitial}>{accountInitial}</div>
               <div className="account-profile-copy">
-                <span className="account-eyebrow">ТВОЙ ПРОФИЛЬ</span>
+                <span className="account-eyebrow">ВАШ ПРОФИЛЬ</span>
                 <div className="account-name-slot">
                   {isEditingAccountName ? (
                   <div ref={accountNameEditorRef} className={`account-name-editor${isClosingAccountName ? " is-closing" : ""}`}>
@@ -8713,10 +8713,10 @@ export default function App() {
             <section className="account-plan-card">
               <div>
                 <span className="account-eyebrow">ПЛАН НА СЕГОДНЯ</span>
-                <h2>{!accountTotalCells ? "Начни с первой карты" : accountDailyGoal ? "Двигайся в своём ритме" : "Все карты завершены"}</h2>
+                <h2>{!accountTotalCells ? "Начните с первой карты" : accountDailyGoal ? "Двигайтесь в своём ритме" : "Все карты завершены"}</h2>
                 <p>
                   {!accountTotalCells
-                    ? "Создай карту, выбери рисунок — и здесь появится твой личный темп."
+                    ? "Создайте карту, выберите рисунок — и здесь появится Ваш личный темп."
                     : accountDailyGoal
                     ? `Чтобы завершить текущие карты примерно за 30 дней, достаточно закрашивать ${accountDailyGoal} клеток в день.`
                     : "Отличная работа — на текущих картах не осталось незакрашенных клеток."}
@@ -8735,7 +8735,7 @@ export default function App() {
             </section>
 
             <section className="account-tools-card">
-              <div><span className="account-eyebrow">ДАННЫЕ И ПРИЛОЖЕНИЕ</span><h2>Твои карты под контролем</h2><p>Скачай резервную копию всех карт или верни её на любом устройстве.</p></div>
+              <div><span className="account-eyebrow">ДАННЫЕ И ПРИЛОЖЕНИЕ</span><h2>Ваши карты под контролем</h2><p>Скачайте резервную копию всех карт или верните её на любом устройстве.</p></div>
               <div className="account-tools-actions">
                 <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
                 <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
@@ -8752,9 +8752,9 @@ export default function App() {
                 <div><section>
                   <button type="button" className="modal-close" aria-label="Закрыть подсказку" onClick={() => setAppHelpOpen(false)}>×</button>
                   <strong>Map Method в отдельном окне</strong>
-                  <p>Если приложение уже установлено, найди «Map Method» в меню «Пуск» или нажми значок «Открыть в приложении» справа в адресной строке браузера, в котором устанавливал его.</p>
-                  <p>Если приложения там нет, открой сайт в Chrome или Edge и выбери в меню браузера «Установить Map Method» или «Установить этот сайт как приложение».</p>
-                  <small>Если кнопка запуска не открыла окно, воспользуйся одним из способов выше: браузер мог ещё не обновить настройки установленного приложения.</small>
+                  <p>Если приложение уже установлено, найдите «Map Method» в меню «Пуск» или нажмите значок «Открыть в приложении» справа в адресной строке браузера, в котором устанавливали его.</p>
+                  <p>Если приложения там нет, откройте сайт в Chrome или Edge и выберите в меню браузера «Установить Map Method» или «Установить этот сайт как приложение».</p>
+                  <small>Если кнопка запуска не открыла окно, воспользуйтесь одним из способов выше: браузер мог ещё не обновить настройки установленного приложения.</small>
                 </section></div>
               </div>
             </section>
@@ -10485,7 +10485,7 @@ export default function App() {
               <label>{t("mapDescription")}</label>
               <textarea
                 value={newMapDescription}
-                placeholder="Можешь написать, для чего тебе эта карта — например, «30 тренировок» или «Мой путь к цели»."
+                placeholder="Можете написать, для чего Вам эта карта — например, «30 тренировок» или «Мой путь к цели»."
                 onChange={(e) => setNewMapDescription(e.target.value)}
               />
             </div>
@@ -10856,8 +10856,8 @@ export default function App() {
               <button type="button" className="modal-close" aria-label="Закрыть" onClick={() => closeModal("windows-install")}>×</button>
             </div>
             <p className="feature-modal-intro">Map Method пока не имеет цифровой подписи издателя, поэтому Windows может показать «Система Windows защитила ваш компьютер».</p>
-            <p className="feature-modal-intro">Если ты скачал установщик Map Method с этого сайта, продолжить установку можно так:</p>
-            <ol><li>Нажми <strong>«Подробнее»</strong>.</li><li>Нажми <strong>«Выполнить в любом случае»</strong>.</li></ol>
+            <p className="feature-modal-intro">Если Вы скачали установщик Map Method с этого сайта, продолжить установку можно так:</p>
+            <ol><li>Нажмите <strong>«Подробнее»</strong>.</li><li>Нажмите <strong>«Выполнить в любом случае»</strong>.</li></ol>
             <div className="history-actions"><button type="button" className="feature-primary" autoFocus onClick={() => closeModal("windows-install")}>Понятно</button></div>
           </div>
         </div>
@@ -10939,7 +10939,7 @@ export default function App() {
                 {!historyReadOnly && <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>}
                 <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && <button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
               </>;
-            })() : <p className="feature-empty">{historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внеси изменение в карту или сохрани важный этап вручную."}</p>}
+            })() : <p className="feature-empty">{historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внесите изменение в карту или сохраните важный этап вручную."}</p>}
           </div>
           {!historyReadOnly && versionUndoNotice && (() => {
             const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
@@ -10952,7 +10952,7 @@ export default function App() {
         <div className={`modal-overlay feature-modal-overlay${shareClosing ? " is-closing" : ""}`} onMouseDown={closeShareDialog}>
           <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ТОЛЬКО ПРОСМОТР</span><h2 id="share-modal-title">{shareStatus === "revoked" ? "Ссылка отключена" : "Публичная ссылка"}</h2></div><button type="button" className="modal-close" disabled={shareStatus === "saving"} onClick={closeShareDialog}>×</button></div>
-            {shareStatus === "revoked" ? <div className="share-revoked" role="status"><span className="share-revoked-icon" aria-hidden="true">✓</span><p>Теперь по этой ссылке люди не увидят карту. Твоя карта сохранена и доступна тебе.</p><button type="button" className="feature-primary" onClick={closeShareDialog}>Понятно</button></div> : <>
+            {shareStatus === "revoked" ? <div className="share-revoked" role="status"><span className="share-revoked-icon" aria-hidden="true">✓</span><p>Теперь по этой ссылке люди не увидят карту. Ваша карта сохранена и доступна Вам.</p><button type="button" className="feature-primary" onClick={closeShareDialog}>Понятно</button></div> : <>
             <p className="feature-modal-intro">Посетитель сможет посмотреть карту и выбранные данные без возможности их изменить.</p>
             <div className={`share-mode-switch history-view-switch is-${shareMode === "live" ? "days" : "changes"}`} role="group" aria-label="Режим публичной ссылки">
               <button type="button" className={shareMode === "snapshot" ? "active" : ""} aria-pressed={shareMode === "snapshot"} disabled={["saving", "loading", "load-error"].includes(shareStatus)} onClick={() => updateShareSettings({ mode: "snapshot" })}>Текущий этап</button>
@@ -10963,7 +10963,7 @@ export default function App() {
             <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareActivityVisible} onChange={(event) => updateShareSettings({ showActivity: event.target.checked })} /><span>Показывать дату последнего изменения</span></label>
             <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareHistoryVisible} onChange={(event) => updateShareSettings({ showHistory: event.target.checked })} /><span>Показывать историю прогресса</span></label>
             {shareMap.shareUrl && <div className="share-link"><input readOnly aria-label="Публичная ссылка на карту" value={shareMap.shareUrl} /><button type="button" className={shareCopyStatus === "copied" ? "is-copied" : ""} onClick={() => copyShareLink()}><CrossfadeText value={shareCopyStatus === "copied" ? "✓ Скопировано" : "Копировать"} /></button></div>}
-            <div className="share-status" role="status" aria-live="polite"><CrossfadeText as="p" value={shareCopyStatus === "error" ? "Не удалось скопировать. Выдели ссылку и скопируй вручную." : shareStatus === "error" ? "Не удалось создать ссылку. Попробуй ещё раз." : shareStatus === "revoke-error" ? "Не удалось отключить ссылку. Попробуй ещё раз." : shareStatus === "sync-error" ? "Настройки сохранены на устройстве. Ссылка обновится после восстановления связи." : shareStatus === "load-error" ? "Не удалось загрузить настройки ссылки. Открой это окно повторно." : shareStatus === "loading" ? "Загружаем настройки…" : shareStatus === "saving" ? "Сохраняем…" : shareCopyStatus === "copied" ? "Ссылка скопирована." : shareMap.shareUrl ? (shareMode === "snapshot" ? "Ссылка активна. Текущий этап сохранён." : "Ссылка активна. Изменения обновляются автоматически.") : ""} /></div>
+            <div className="share-status" role="status" aria-live="polite"><CrossfadeText as="p" value={shareCopyStatus === "error" ? "Не удалось скопировать. Выделите ссылку и скопируйте вручную." : shareStatus === "error" ? "Не удалось создать ссылку. Попробуйте ещё раз." : shareStatus === "revoke-error" ? "Не удалось отключить ссылку. Попробуйте ещё раз." : shareStatus === "sync-error" ? "Настройки сохранены на устройстве. Ссылка обновится после восстановления связи." : shareStatus === "load-error" ? "Не удалось загрузить настройки ссылки. Откройте это окно повторно." : shareStatus === "loading" ? "Загружаем настройки…" : shareStatus === "saving" ? "Сохраняем…" : shareCopyStatus === "copied" ? "Ссылка скопирована." : shareMap.shareUrl ? (shareMode === "snapshot" ? "Ссылка активна. Текущий этап сохранён." : "Ссылка активна. Изменения обновляются автоматически.") : ""} /></div>
             <div className="history-actions">{!shareMap.shareId && <button type="button" className="feature-primary" disabled={shareStatus === "saving"} onClick={publishShare}>{shareStatus === "saving" ? "Создаём…" : "Создать и скопировать ссылку"}</button>}{shareMap.shareId && <button type="button" className="danger-action share-revoke-button" data-tooltip="Закроет доступ к карте по этой ссылке" aria-description="Закроет доступ к карте по этой ссылке" disabled={["saving", "loading"].includes(shareStatus)} onClick={revokeShare}>Отключить ссылку</button>}</div>
             </>}
           </div>
@@ -10975,8 +10975,8 @@ export default function App() {
           <div className="create-modal onboarding-modal">
             <div className="onboarding-progress">{[0,1,2].map((step) => <i key={step} className={step <= onboardingStep ? "active" : ""} />)}</div>
             {onboardingStep === 0 && <><span className="onboarding-icon">□</span><h2>Добро пожаловать в Map Method</h2><p>Здесь большая цель превращается в карту: один выполненный шаг — одна закрашенная клетка.</p></>}
-            {onboardingStep === 1 && <><span className="onboarding-icon">✦</span><h2>Двигайся в своём темпе</h2><p>Укажи срок и выбери спокойный, ровный или интенсивный режим. План будет пересчитываться сам.</p></>}
-            {onboardingStep === 2 && <><span className="onboarding-icon">✓</span><h2>Попробуй на готовой карте</h2><p>Мы создадим небольшую демонстрационную карту. Её можно менять или удалить как обычную.</p></>}
+            {onboardingStep === 1 && <><span className="onboarding-icon">✦</span><h2>Двигайтесь в своём темпе</h2><p>Укажите срок и выберите спокойный, ровный или интенсивный режим. План будет пересчитываться сам.</p></>}
+            {onboardingStep === 2 && <><span className="onboarding-icon">✓</span><h2>Попробуйте на готовой карте</h2><p>Мы создадим небольшую демонстрационную карту. Её можно менять или удалить как обычную.</p></>}
             <div className="onboarding-actions">{onboardingStep > 0 && <button type="button" onClick={() => setOnboardingStep((step) => step - 1)}>Назад</button>}<button type="button" className="feature-primary" onClick={() => onboardingStep < 2 ? setOnboardingStep((step) => step + 1) : createDemoMap()}>{onboardingStep < 2 ? "Дальше" : "Создать демо-карту"}</button></div>
             <button type="button" className="onboarding-skip" onClick={finishOnboarding}>Пропустить</button>
           </div>
