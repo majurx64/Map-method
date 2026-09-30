@@ -8693,7 +8693,7 @@ export default function App() {
               <div className="account-tools-actions">
                 <button type="button" onClick={exportBackup}>Скачать резервную копию</button>
                 <button type="button" onClick={() => backupInputRef.current?.click()}>Восстановить из копии</button>
-                <button type="button" onClick={() => /Windows NT/.test(navigator.userAgent) ? window.location.assign("https://github.com/majurx64/Map-method/releases/latest/download/Map-Method-Setup.exe") : installApp()} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : /Windows NT/.test(navigator.userAgent) ? "Скачать для Windows" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
+                <button type="button" onClick={() => /Windows NT/.test(navigator.userAgent) ? window.location.assign("https://github.com/majurx64/Map-method/releases/download/desktop-v1.0.1/Map-Method-Setup.exe") : installApp()} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : /Windows NT/.test(navigator.userAgent) ? "Скачать для Windows" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
