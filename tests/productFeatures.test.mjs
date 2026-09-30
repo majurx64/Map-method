@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, normalizeVersions, parseBackup, publicSnapshot, shouldUpdateSharedMap, restoreSnapshot, encodeSharedSnapshot, decodeSharedSnapshot } from '../src/lib/productFeatures.js';
+import { adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, buildActivityCalendar, calculateStreaks, createBackup, createMapSnapshot, normalizeVersions, parseBackup, publicSnapshot, publicSharedSnapshot, shouldUpdateSharedMap, restoreSnapshot, encodeSharedSnapshot, decodeSharedSnapshot } from '../src/lib/productFeatures.js';
 import { mergePendingMaps } from '../src/lib/offlineMaps.js';
 
 const today = new Date(2026, 8, 28, 12);
@@ -122,4 +122,29 @@ test('A frozen link ignores map edits and updates only after sharing settings ch
   assert.equal(shouldUpdateSharedMap(settings, { ...settings, mode: 'live' }), true);
   assert.equal(shouldUpdateSharedMap({ ...settings, mode: 'live' }, settings), true);
   assert.equal(shouldUpdateSharedMap({ showProgress: true }, { showProgress: true }), true);
+});
+
+
+test('Visibility changes preserve the frozen map and its playback endpoint; live mode uses current progress', () => {
+  const frozen = { ...map, completed: [0, 1, 2, 3], progressCompleted: [0], lastPaintedAt: '2026-09-29T12:00:00Z' };
+  frozen.versions = [createMapSnapshot(frozen, 'Сохранённый этап', [0])];
+  const later = { ...frozen, progressCompleted: [0, 1, 2], lastPaintedAt: '2026-09-30T12:00:00Z' };
+  later.versions = [...frozen.versions, createMapSnapshot(later, 'Новый этап', [1, 2])];
+  later.shareSnapshot = publicSnapshot(frozen, { showProgress: true, showActivity: true, showHistory: true });
+  const settings = { mode: 'snapshot', showProgress: true, showActivity: true, showHistory: true };
+  const result = publicSharedSnapshot(later, settings);
+  assert.deepEqual(result.progressCompleted, [0]);
+  assert.equal(result.lastPaintedAt, frozen.lastPaintedAt);
+  assert.equal(result.versions.length, 1);
+  assert.deepEqual(result.versions[0].cellSequence, [0]);
+  const hidden = publicSharedSnapshot(later, { ...settings, showHistory: false, showProgress: false, showActivity: false });
+  assert.equal('versions' in hidden, false);
+  assert.deepEqual(hidden.progressCompleted, []);
+  assert.equal(hidden.lastPaintedAt, '');
+  assert.deepEqual(publicSharedSnapshot(later, settings), result);
+  const live = publicSharedSnapshot(later, { ...settings, mode: 'live' });
+  assert.deepEqual(live.progressCompleted, [0, 1, 2]);
+  assert.equal(live.versions.length, 2);
+  const legacy = { ...later, shareSnapshot: null };
+  assert.deepEqual(publicSharedSnapshot(legacy, settings, later.shareSnapshot), result);
 });

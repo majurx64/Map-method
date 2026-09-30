@@ -295,8 +295,13 @@ export async function decodeSharedSnapshot(value) {
   return JSON.parse(await new Blob(chunks).text());
 }
 
-// A frozen stage changes only when the owner changes its sharing settings.
+// Visibility settings may change; the frozen stage itself must stay unchanged.
 export function shouldUpdateSharedMap(settings, publishedSettings) {
   if (settings.mode !== "snapshot" || publishedSettings?.mode !== "snapshot") return true;
   return ["showProgress", "showActivity", "showHistory"].some((key) => Boolean(settings[key]) !== Boolean(publishedSettings[key]));
+}
+
+export function publicSharedSnapshot(map, settings, publishedMap = null) {
+  const source = settings.mode === "snapshot" ? map.shareSnapshot || publishedMap || map : map;
+  return publicSnapshot(source, settings);
 }

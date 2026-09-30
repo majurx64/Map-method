@@ -8,7 +8,7 @@ import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
-import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
+import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, publicSharedSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
 
 const STORAGE_KEY = "mm-maps";
 const ACTIVE_MAP_KEY = "mm-active-map";
@@ -1052,6 +1052,7 @@ function normalizeMap(map = {}) {
       .map(Number)
       .filter((entry) => Number.isInteger(entry) && entry >= -MAX_CELLS && entry < MAX_CELLS),
     shareId: typeof map.shareId === "string" && /^[0-9a-f-]{36}$/i.test(map.shareId) ? map.shareId : "",
+    shareSnapshot: map.shareSnapshot && Array.isArray(map.shareSnapshot.completed) ? map.shareSnapshot : null,
     shareSettings: map.shareSettings ? {
       showProgress: map.shareSettings.showProgress !== false,
       showActivity: Boolean(map.shareSettings.showActivity),
@@ -3683,14 +3684,16 @@ export default function App() {
               if (shared.data) settings = shared.data.settings;
             }
             let publishedSettings = null;
+            let publishedMap = null;
             if (settings?.mode === "snapshot") {
               const shared = await supabase.rpc("get_shared_map", { share_token: map.shareId });
               if (shared.error) throw shared.error;
               publishedSettings = shared.data?.settings;
+              publishedMap = shared.data?.map_data;
             }
             if (settings && shouldUpdateSharedMap(settings, publishedSettings) && !revokedShareIdsRef.current.has(map.shareId)) {
               const { error: shareError } = await supabase.from(SHARED_MAPS_TABLE).update({
-                map_data: publicSnapshot(map, settings),
+                map_data: publicSharedSnapshot(map, settings, publishedMap),
                 settings,
                 updated_at: new Date().toISOString(),
               }).eq("id", map.shareId).eq("owner_id", user.id);
@@ -7252,7 +7255,7 @@ export default function App() {
       });
       if (error) throw error;
       const url = `${window.location.origin}/?shared=${id}`;
-      const updated = await persistFeatureMap({ ...source, shareId: id, shareSettings: settings });
+      const updated = await persistFeatureMap({ ...source, shareId: id, shareSettings: settings, shareSnapshot: settings.mode === "snapshot" ? publicSnapshot(source, { showProgress: true, showActivity: true, showHistory: true }) : null });
       shareDialogRef.current = { ...updated, shareUrl: url };
       setShareMap(shareDialogRef.current);
       setShareStatus("ready");
@@ -7284,7 +7287,7 @@ export default function App() {
       if (error) throw error;
       if (!data) {
         const current = map.id === activeMapId ? buildCurrentMap() || map : map;
-        const updated = await persistFeatureMap({ ...current, shareId: "", shareSettings: null });
+        const updated = await persistFeatureMap({ ...current, shareId: "", shareSettings: null, shareSnapshot: null });
         if (shareDialogRef.current !== dialog) return;
         shareDialogRef.current = { ...updated, shareUrl: "" };
         setShareMap(shareDialogRef.current);
@@ -7292,6 +7295,13 @@ export default function App() {
         return;
       }
       dialog.shareSettings = data.settings;
+      if (data.settings.mode === "snapshot" && !dialog.shareSnapshot) {
+        // Preserve older frozen links too, without including any later versions.
+        dialog.shareSnapshot = {
+          ...data.map_data,
+          versions: data.map_data.versions || (map.versions || []).filter((version) => Date.parse(version.createdAt) <= Date.parse(data.updated_at)),
+        };
+      }
       setShareProgressVisible(data.settings.showProgress !== false);
       setShareActivityVisible(Boolean(data.settings.showActivity));
       setShareHistoryVisible(Boolean(data.settings.showHistory));
@@ -7315,7 +7325,10 @@ export default function App() {
     setShareStatus("saving");
     try {
       const current = dialog.id === activeMapId ? buildCurrentMap() || dialog : maps.find((map) => map.id === dialog.id) || dialog;
-      const updated = normalizeMap({ ...current, shareId: dialog.shareId, shareSettings: settings });
+      const frozen = settings.mode !== "snapshot" ? null
+        : dialog.shareSettings?.mode === "snapshot" ? dialog.shareSnapshot || current.shareSnapshot
+        : publicSnapshot(current, { showProgress: true, showActivity: true, showHistory: true });
+      const updated = normalizeMap({ ...current, shareId: dialog.shareId, shareSettings: settings, shareSnapshot: frozen });
       clearTimeout(saveTimerRef.current);
       if (updated.id === activeMapId) activeMapRef.current = updated;
       setMaps((stored) => stored.map((map) => map.id === updated.id ? updated : map));
@@ -7342,7 +7355,7 @@ export default function App() {
       const { error } = await supabase.from(SHARED_MAPS_TABLE).delete().eq("id", dialog.shareId).eq("owner_id", user.id);
       if (error) throw error;
       const current = dialog.id === activeMapId ? buildCurrentMap() || dialog : maps.find((map) => map.id === dialog.id) || dialog;
-      const updated = await persistFeatureMap({ ...current, shareId: "", shareSettings: null });
+      const updated = await persistFeatureMap({ ...current, shareId: "", shareSettings: null, shareSnapshot: null });
       shareDialogRef.current = { ...updated, shareUrl: "" };
       setShareMap(shareDialogRef.current);
       setShareCopyStatus("");
@@ -10782,7 +10795,7 @@ export default function App() {
               <button type="button" className={shareMode === "snapshot" ? "active" : ""} aria-pressed={shareMode === "snapshot"} disabled={["saving", "loading", "load-error"].includes(shareStatus)} onClick={() => updateShareSettings({ mode: "snapshot" })}>Текущий этап</button>
               <button type="button" className={shareMode === "live" ? "active" : ""} aria-pressed={shareMode === "live"} disabled={["saving", "loading", "load-error"].includes(shareStatus)} onClick={() => updateShareSettings({ mode: "live" })}>Следить за прогрессом</button>
             </div>
-            <p className="share-mode-description"><CrossfadeText value={shareMode === "snapshot" ? "Сохранённый этап: дальнейшие изменения карты сюда не попадут. Смена настроек сохранит новый текущий этап." : "Карта и история прогресса обновляются автоматически по той же ссылке."} /></p>
+            <p className="share-mode-description"><CrossfadeText value={shareMode === "snapshot" ? "Карта и история до этого момента зафиксированы. Галочки меняют только видимость данных. Для новых изменений выбери «Следить за прогрессом»." : "Карта и история прогресса обновляются автоматически по той же ссылке."} /></p>
             <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareProgressVisible} onChange={(event) => updateShareSettings({ showProgress: event.target.checked })} /><span>Показывать прогресс</span></label>
             <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareActivityVisible} onChange={(event) => updateShareSettings({ showActivity: event.target.checked })} /><span>Показывать дату последнего изменения</span></label>
             <label className="feature-toggle"><input type="checkbox" disabled={["saving", "loading", "load-error"].includes(shareStatus)} checked={shareHistoryVisible} onChange={(event) => updateShareSettings({ showHistory: event.target.checked })} /><span>Показывать историю прогресса</span></label>
