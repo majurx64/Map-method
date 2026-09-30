@@ -5,6 +5,8 @@ import { supabase } from "./lib/supabase";
 import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
 import AnimatedEditorPanel from './AnimatedEditorPanel';
+import EditorColorPicker from './EditorColorPicker';
+import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
@@ -996,7 +998,7 @@ function normalizeMap(map = {}) {
             .filter((i) => type === "image" || draftDrawing.has(i))
         ),
       ],
-      colors: Array.isArray(draft.colors) ? draft.colors.slice(0, mapLimit) : [],
+      colors: type === 'free' ? stableDrawingColors(draftDrawing, Array.isArray(draft.colors) ? draft.colors.slice(0, mapLimit) : [], normalizeHexColor(map.drawColor) || BASIC_COLORS[0]) : Array.isArray(draft.colors) ? draft.colors.slice(0, mapLimit) : [],
       imageOffset: normalizeImageOffset(draft.imageOffset),
       showImage: type === "image" && draft.showImage !== false,
     };
@@ -1025,7 +1027,7 @@ function normalizeMap(map = {}) {
     // Прогресс не должен выходить за пределы самой карты.
     progressExtra: 0,
     image: typeof map.image === "string" ? map.image : null,
-    colors: Array.isArray(map.colors) ? map.colors.slice(0, mapLimit) : [],
+    colors: map.mapType !== 'image' ? stableDrawingColors(drawing, Array.isArray(map.colors) ? map.colors.slice(0, mapLimit) : [], normalizeHexColor(map.drawColor) || BASIC_COLORS[0]) : Array.isArray(map.colors) ? map.colors.slice(0, mapLimit) : [],
     customColors: custom,
     drawColor: normalizeHexColor(map.drawColor) || BASIC_COLORS[0],
     imageRatio: Number(map.imageRatio) > 0 ? Number(map.imageRatio) : 1,
@@ -1691,6 +1693,7 @@ export default function App() {
   const [appInstalled, setAppInstalled] = useState(false);
   const [appHelpOpen, setAppHelpOpen] = useState(false);
   const [windowsInstallHelp, setWindowsInstallHelp] = useState(false);
+  const [editorColorOpen, setEditorColorOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [latestSiteVersion, setLatestSiteVersion] = useState("");
@@ -4707,7 +4710,7 @@ export default function App() {
         mode: cellMode,
         color:
           cellMode === "erase"
-            ? colorsRef.current[index] || drawColorRef.current
+            ? colorsRef.current[index] || "#111111"
             : null,
       });
     });
@@ -5340,10 +5343,10 @@ export default function App() {
           ? !drawingActive
             ? "#eeeeee"
             : active
-              ? colors[i] || drawColorRef.current
+              ? colors[i] || "#111111"
               : "#deded8"
           : active
-            ? colors[i] || drawColorRef.current
+            ? colors[i] || "#111111"
             : "#eeeeee";
       } else {
         fill = active
@@ -10162,7 +10165,7 @@ export default function App() {
 
                     const color =
                       colors[i] ||
-                      "#e5e5e5";
+                      (mapType === "free" ? "#111111" : "#e5e5e5");
                     const utilityCell = mapType === "free" && normalizeHexColor(colors[i]) === UTILITY_COLOR;
 
                     const showGuide = (mapType === "image" && showImage && image)
@@ -10193,11 +10196,7 @@ export default function App() {
                   <AnimatedPercent value={displayedProgress} />
                 </strong>
 
-                <span>
-                  {t(
-                    "filled"
-                  )}
-                </span>
+
               </div>
 
               <div className="preview-bar">
@@ -10273,11 +10272,7 @@ export default function App() {
                         )}
                       </div>
 
-                      <div className="color-palette-subtitle">
-                        {t(
-                          "newCells"
-                        )}
-                      </div>
+
                     </div>
 
                     <div
@@ -10403,27 +10398,10 @@ export default function App() {
                   </div>
 
                   <div className="custom-color-create">
-                    <label className="color-picker-wrap" htmlFor="new-color-picker">
-                      <input
-                        id="new-color-picker"
-                        type="color"
-                        value={
-                          normalizeHexColor(newColor) || "#111111"
-                        }
-                        onChange={(
-                          e
-                        ) =>
-                          setNewColor(
-                            e.target
-                              .value
-                          )
-                        }
-                      />
-
-                      <span className="color-picker-value">
-                        {newColor.toUpperCase()}
-                      </span>
-                    </label>
+                    <button type="button" className="color-picker-wrap editor-picker-trigger" onClick={() => setEditorColorOpen(true)} aria-label="Выбрать свой цвет">
+                      <i style={{backgroundColor:normalizeHexColor(newColor)||'#111111'}} />
+                      <span className="color-picker-value">{newColor.toUpperCase()}</span>
+                    </button>
 
                     <button
                       disabled={!normalizeHexColor(newColor)}
@@ -10874,6 +10852,7 @@ export default function App() {
         </div>
       )}
 
+      <EditorColorPicker open={editorColorOpen} value={normalizeHexColor(newColor)||'#111111'} onChange={setNewColor} onClose={() => setEditorColorOpen(false)} />
       {windowsInstallHelp && (
         <div className={`modal-overlay feature-modal-overlay${closingModal === "windows-install" ? " is-closing" : ""}`} onMouseDown={() => closeModal("windows-install")}>
           <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="windows-install-title" onMouseDown={(event) => event.stopPropagation()}>

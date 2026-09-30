@@ -175,3 +175,20 @@ test('Moving an image region leaves white source pixels and retains the edited m
   assert.deepEqual(moved.colors, ['#ffffff','red','green']);
   assert.equal(normalizeImageOffset(JSON.parse(JSON.stringify({x:0,y:0,cellsEdited:true}))).cellsEdited, true);
 });
+import { stableDrawingColors, hexToHsv, hsvToHex } from '../src/lib/drawingColors.js';
+
+test('legacy drawing colours are captured once and remain unchanged when the brush changes', () => {
+  const original = [];
+  const captured = stableDrawingColors([0, 3], original, '#b11b1b');
+  assert.equal(original.length, 0);
+  assert.equal(captured[0], '#b11b1b');
+  assert.equal(captured[3], '#b11b1b');
+  assert.deepEqual(stableDrawingColors([0, 3], captured, '#ff9900'), captured);
+});
+
+test('colour picker preserves RGB colours through HSV conversion', () => {
+  for (const hex of ['#000000', '#ffffff', '#111111', '#ff0000', '#00ff00', '#0000ff', '#cf3030', '#b11b1b']) {
+    const { h, s, v } = hexToHsv(hex);
+    assert.equal(hsvToHex(h, s, v), hex);
+  }
+});
