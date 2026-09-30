@@ -4,7 +4,7 @@ import "./App.css";
 import { supabase } from "./lib/supabase";
 import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
-import AnimatedEditorPanel from './AnimatedEditorPanel';
+import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPanel';
 import EditorColorPicker from './EditorColorPicker';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
@@ -1694,6 +1694,7 @@ export default function App() {
   const [appHelpOpen, setAppHelpOpen] = useState(false);
   const [windowsInstallHelp, setWindowsInstallHelp] = useState(false);
   const [editorColorOpen, setEditorColorOpen] = useState(false);
+  const editorColorAnchorRef = useRef(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [latestSiteVersion, setLatestSiteVersion] = useState("");
@@ -3707,7 +3708,7 @@ export default function App() {
         const merged = mergeLiveMaps(data.map(mapFromSupabaseRow), local, pending, dirtyMapsRef.current, blocked);
         const nextMaps = merged.filter((map) => !map.privateLibraryItem).map((map) =>
           map.id === current.activeMapId && current.editor
-            ? { ...map, isGameMode: current.editor.isGameMode } : map);
+            ? { ...map, isGameMode: current.editor.isGameMode, gridMode: current.editor.gridMode } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
         const mapsChanged = JSON.stringify(current.maps) !== JSON.stringify(nextMaps);
         const libraryChanged = JSON.stringify(current.personalLibrary) !== JSON.stringify(nextLibrary);
@@ -9919,8 +9920,8 @@ export default function App() {
                     <span>{t("redo")}</span>
                   </button>
                 </div>
-                <button className="clear-btn" onClick={clearProgress}>{t("clearProgress")}</button>
                 {!isGameMode && <button className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
+                <button className="clear-btn" onClick={clearProgress}>{t("clearProgress")}</button>
 
                 {mapType ===
                   "image" && (
@@ -10245,7 +10246,7 @@ export default function App() {
               )}
 
             </section>
-            <AnimatedEditorPanel viewKey={mapType === "free" && !isGameMode ? "palette" : "no-palette"}>
+            <AnimatedEditorPresence visible={mapType === "free" && !isGameMode}>
             {mapType === "free" && !isGameMode && (
               <section className="sidebar-section palette-section">
                 <div className="section-heading">
@@ -10266,7 +10267,7 @@ export default function App() {
 
                     </div>
 
-                    <div
+                    <button type="button" onClick={() => setEditorColorOpen(true)} aria-label="Выбрать цвет кисти"
                       className="selected-color-preview"
                       style={{
                         backgroundColor:
@@ -10389,7 +10390,7 @@ export default function App() {
                   </div>
 
                   <div className="custom-color-create">
-                    <button type="button" className="color-picker-wrap editor-picker-trigger" onClick={() => setEditorColorOpen(true)} aria-label="Выбрать свой цвет">
+                    <button ref={editorColorAnchorRef} type="button" className="color-picker-wrap editor-picker-trigger" onClick={() => setEditorColorOpen((open) => !open)} aria-expanded={editorColorOpen} aria-label="Выбрать свой цвет">
                       <i style={{backgroundColor:normalizeHexColor(newColor)||'#111111'}} />
                       <span className="color-picker-value">{newColor.toUpperCase()}</span>
                     </button>
@@ -10398,16 +10399,24 @@ export default function App() {
                       disabled={!normalizeHexColor(newColor)}
                       className="add-color-btn"
                       onClick={
-                        () => addCustomColor()
+                        () => {
+                          const color = normalizeHexColor(newColor);
+                          if (BASIC_COLORS.includes(color) || customColors.includes(color)) {
+                            setEditorColorOpen(true);
+                          } else {
+                            addCustomColor();
+                            setEditorColorOpen(false);
+                          }
+                        }
                       }
                     >
-                      + Добавить цвет
+                      {BASIC_COLORS.includes(normalizeHexColor(newColor)) || customColors.includes(normalizeHexColor(newColor)) ? "Выбрать цвет" : "+ Добавить цвет"}
                     </button>
                   </div>
                 </div>
               </section>
             )}
-            </AnimatedEditorPanel>
+            </AnimatedEditorPresence>
           </aside>
         </main>
       )}
@@ -10843,7 +10852,7 @@ export default function App() {
         </div>
       )}
 
-      <EditorColorPicker open={editorColorOpen} value={normalizeHexColor(newColor)||'#111111'} onChange={setNewColor} onPick={addCustomColor} onClose={() => setEditorColorOpen(false)} />
+      <EditorColorPicker open={editorColorOpen && mapType === 'free' && !isGameMode && screen === 'editor'} anchorRef={editorColorAnchorRef} value={normalizeHexColor(newColor)||'#111111'} onChange={setNewColor} onClose={() => setEditorColorOpen(false)} />
       {windowsInstallHelp && (
         <div className={`modal-overlay feature-modal-overlay${closingModal === "windows-install" ? " is-closing" : ""}`} onMouseDown={() => closeModal("windows-install")}>
           <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="windows-install-title" onMouseDown={(event) => event.stopPropagation()}>

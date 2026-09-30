@@ -1,4 +1,18 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+export function AnimatedEditorPresence({ visible, children }) {
+  const [mounted, setMounted] = useState(visible);
+  const lastContent = useRef(children);
+  if (visible) lastContent.current = children;
+  useEffect(() => {
+    if (visible) { setMounted(true); return; }
+    const timer = setTimeout(() => setMounted(false), 360);
+    return () => clearTimeout(timer);
+  }, [visible]);
+  return <div className={`editor-presence${visible ? ' is-visible' : ''}`} aria-hidden={!visible} inert={!visible}>
+    <div className="editor-presence-inner">{mounted || visible ? lastContent.current : null}</div>
+  </div>;
+}
 
 export default function AnimatedEditorPanel({ viewKey, children }) {
   const last = useRef({ key: viewKey, children });
