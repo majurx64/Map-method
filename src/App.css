@@ -3955,3 +3955,16 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .right-sidebar .utility-color-section { padding-bottom:0; }
 .right-sidebar .palette-section .color-palette { gap:4px; }
 .right-sidebar .custom-color-create { padding-top:3px; }
+.collaborative-share { margin: 12px 0 20px; padding: 16px; border: 1px solid #dcd5c8; border-radius: 14px; background: #f4f2ec; }
+.collaborative-share h3 { margin: 0 0 8px; }
+.collaborative-share p { font-size: 13px; line-height: 1.55; }
+.collaborative-contributions { display: grid; gap: 10px; margin: 16px 0; }
+.collaborative-contributions > div { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; padding: 12px; border: 1px solid #ded8cc; border-radius: 12px; }
+.collaborative-contributions progress { grid-column: 1 / -1; width: 100%; height: 8px; accent-color: #335f4e; }
+.collaborative-caption { color: #727a71; font-size: 12px; line-height: 1.5; }
+.collaborative-filter { display: grid; gap: 8px; margin: 18px 0; font-weight: 600; }
+.collaborative-filter select { padding: 10px; font: inherit; border: 1px solid #d7cfc1; border-radius: 9px; background: #fff; }
+.collaborative-events { max-height: 42vh; overflow: auto; animation: collaborative-content-in 200ms ease both; }
+.collaborative-template-locked { display: none; }
+@keyframes collaborative-content-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .collaborative-events { animation: none; } }

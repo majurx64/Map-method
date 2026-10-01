@@ -6,6 +6,8 @@ import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
 import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPanel';
 import EditorColorPicker from './EditorColorPicker';
+import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
+import { collaborativeRpc, loadCollaborativeMaps, mergeCollaborativeMaps, progressChanges } from './lib/collaboration';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
@@ -1013,7 +1015,8 @@ function normalizeMap(map = {}) {
     imageOffset: normalizeImageOffset(map.imageOffset),
     name: typeof map.name === "string" ? map.name : "Моя карта",
     mapType: map.mapType === "image" ? "image" : "free",
-    isGameMode: Boolean(map.isGameMode),
+    isGameMode: Boolean(map.isGameMode || map.collaboration),
+    collaboration: map.collaboration || null,
     gridMode: map.gridMode === "manual" ? "manual" : "auto",
     completed: [...drawing],
     progressCompleted: [
@@ -2101,6 +2104,7 @@ export default function App() {
   const hydratingRef = useRef(true);
   const saveTimerRef = useRef(null);
   const remoteSaveQueueRef = useRef(Promise.resolve());
+  const collaborativeSavedRef = useRef(new Map());
   const liveChannelRef = useRef(null);
   const dirtyMapsRef = useRef(new Map());
   const liveStateRef = useRef(null);
@@ -3469,7 +3473,12 @@ export default function App() {
       if (!error) {
         const pending = await pendingMapSaves(user.id).catch(() => []);
         if (cancelled) return;
-        const merged = mergePendingMaps([...loadedMaps, ...loadedLibrary], pending).map(normalizeMap);
+        const shared = await loadCollaborativeMaps().catch(async () => {
+          setSyncStatus('Совместные карты временно недоступны. Открыта сохранённая копия.');
+          return (await readAccountCache(user.id).catch(() => [])).filter((map) => map.collaboration);
+        });
+        if (cancelled) return;
+        const merged = mergePendingMaps(mergeCollaborativeMaps([...loadedMaps, ...loadedLibrary], shared), pending).map(normalizeMap);
         loadedMaps = merged.filter((map) => !map.privateLibraryItem);
         loadedLibrary = merged.filter((map) => map.privateLibraryItem);
         const localLibrary = Array.isArray(privateLibrary[user.id]) ? privateLibrary[user.id] : [];
@@ -3700,6 +3709,8 @@ export default function App() {
         const { data, error } = await supabase.from("maps")
           .select("id,user_id,name,data,created_at,updated_at")
           .eq("user_id", owner).order("created_at", { ascending: true });
+        if (error) return;
+        const shared = await loadCollaborativeMaps();
         const pending = await pendingMapSaves(owner);
         if (cancelled || latestOwnerRef.current !== owner || error) return;
         if (queue !== remoteSaveQueueRef.current || isDrawingRef.current || artworkDragRef.current || hydratingRef.current) {
@@ -3710,10 +3721,10 @@ export default function App() {
         const current = liveStateRef.current;
         const local = [...current.maps, ...current.personalLibrary];
         const blocked = new Set([...deletingIdsRef.current, ...pendingDeletesRef.current.map((entry) => entry.map.id)]);
-        const merged = mergeLiveMaps(data.map(mapFromSupabaseRow), local, pending, dirtyMapsRef.current, blocked);
+        const merged = mergeLiveMaps(mergeCollaborativeMaps(data.map(mapFromSupabaseRow), shared), local, pending, dirtyMapsRef.current, blocked);
         const nextMaps = merged.filter((map) => !map.privateLibraryItem).map((map) =>
           map.id === current.activeMapId && current.editor
-            ? { ...map, isGameMode: current.editor.isGameMode, gridMode: current.editor.gridMode } : map);
+            ? { ...map, isGameMode: map.collaboration ? true : current.editor.isGameMode, gridMode: current.editor.gridMode } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
         const mapsChanged = JSON.stringify(current.maps) !== JSON.stringify(nextMaps);
         const libraryChanged = JSON.stringify(current.personalLibrary) !== JSON.stringify(nextLibrary);
@@ -3757,6 +3768,7 @@ export default function App() {
     // Broadcast carries only an invalidation signal; map contents remain behind account RLS.
     const channel = supabase.channel(`account-maps:${owner}`)
       .on("broadcast", { event: "maps-changed" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "collaborative_maps" }, refresh)
       .subscribe((status) => {
         channelReady = status === "SUBSCRIBED";
         if (channelReady) void refresh();
@@ -3835,6 +3847,17 @@ export default function App() {
           return new Error("offline");
         }
         try {
+          if (map.collaboration) {
+            const key = `${user.id}:${map.collaboration.id}`;
+            const saved = collaborativeSavedRef.current.get(key);
+            const before = saved && saved.revision === map.collaboration.revision ? saved.progress : map.collaboration.baseProgress;
+            await collaborativeRpc('apply_collaborative_progress', { team_id: map.collaboration.id, cell_changes: progressChanges(before, map.progressCompleted) });
+            collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted });
+            if (pending) await acknowledgeMapSave(pending);
+            if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
+            setSyncStatus('');
+            return null;
+          }
           const { error } =
             await supabase
               .from("maps")
@@ -3892,6 +3915,7 @@ export default function App() {
           setSyncStatus("");
           return null;
         } catch (error) {
+          if (map.collaboration) setSyncStatus('Сохранено на устройстве. Совместный прогресс отправится после восстановления связи.');
           console.error(
             "Ошибка автосохранения:",
             error
@@ -5839,7 +5863,7 @@ export default function App() {
   function handleMapTypeChange(
     type
   ) {
-    if (type === mapType) return;
+    if (activeMap?.collaboration || type === mapType) return;
 
     finishStroke();
     setSelection(null);
@@ -5890,6 +5914,7 @@ export default function App() {
   }
 
   function resizeGrid(total, mode, nextRows = manualRows, nextCols = manualCols, sides = null) {
+    if (activeMap?.collaboration) return;
     finishStroke();
     setSelection(null);
     const count = Number(total);
@@ -6381,7 +6406,7 @@ export default function App() {
     setProgressCompleted(m.progressCompleted);
     progressExtraRef.current = m.progressExtra;
     setProgressExtra(m.progressExtra);
-    if (!preserveViewport) setIsGameMode(m.isGameMode);
+    if (!preserveViewport || m.collaboration) setIsGameMode(m.isGameMode);
 
     imageProcessingRef.current += 1;
     setImage(m.image);
@@ -6463,6 +6488,7 @@ export default function App() {
   function openRenameModal(
     map
   ) {
+    if (map.collaboration) return;
     setClosingModal("");
     setRenameValue(
       map.name || ""
@@ -6552,6 +6578,7 @@ export default function App() {
   function openDeleteModal(
     map
   ) {
+    if (map.collaboration) return;
     setClosingModal("");
     setMapToDelete(map);
     setIsDeleteOpen(true);
@@ -7676,6 +7703,11 @@ export default function App() {
 
   return (
     <div className="app">
+      <CollaborativeInvite user={user} ready={isMapInitialized && !mapsLoading} onLogin={() => setScreen('auth')} onJoined={(map) => {
+        const next = normalizeMap(map);
+        setMaps((current) => mergeCollaborativeMaps(current, [next]));
+        openMap(next); setScreen('editor');
+      }} />
       {syncStatus && <div className="sync-status" role="status">{syncStatus}</div>}
       {showVictory && (
         <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status" onPointerDown={dismissVictory}>
@@ -9615,7 +9647,7 @@ export default function App() {
               </div>
             </section>
 
-            <section className="sidebar-section">
+            <section className={`sidebar-section${activeMap?.collaboration ? ' collaborative-template-locked' : ''}`}>
               <div className="section-heading">
                 {t(
                   "canvasSize"
@@ -9864,7 +9896,7 @@ export default function App() {
 
               <div className="tool-stack">
 
-                <div className="map-type tool-type">
+                <div className={`map-type tool-type${activeMap?.collaboration ? ' collaborative-template-locked' : ''}`}>
                   <button
                     className={`map-type-btn ${
                       mapType ===
@@ -9904,7 +9936,7 @@ export default function App() {
 
                   <>
                     <div className={`map-mode-switch${isGameMode ? " is-game" : ""}`} role="group" aria-label="Режим карты">
-                      <button className={!isGameMode ? "active" : ""} onClick={() => setIsGameMode(false)}>Рисование</button>
+                      <button disabled={Boolean(activeMap?.collaboration)} className={!isGameMode ? "active" : ""} onClick={() => setIsGameMode(false)}>Рисование</button>
                       <button
                         className={isGameMode ? "active" : ""}
                         disabled={mapType === "free" ? !completed.length : !image}
@@ -10339,7 +10371,6 @@ export default function App() {
                               ? "white"
                               : ""
                           }`}
-                          title={c}
                           onClick={() =>
                             selectDrawColor(
                               c
@@ -10389,9 +10420,6 @@ export default function App() {
                                     ? "selected"
                                     : ""
                                 }`}
-                                title={
-                                  c
-                                }
                                 onClick={() =>
                                   selectDrawColor(
                                     c
@@ -10433,7 +10461,6 @@ export default function App() {
                     </div>
                     <button
                       className={`color-item utility-color${drawColor === UTILITY_COLOR ? " selected" : ""}`}
-                      title={`${UTILITY_COLOR} — служебные клетки`}
                       onClick={() => selectDrawColor(UTILITY_COLOR)}
                       style={{ "--color": UTILITY_COLOR }}
                     >
@@ -10954,7 +10981,8 @@ export default function App() {
         </div>
       )}
 
-      {historyMap && (
+      {historyMap?.collaboration && <CollaborativeHistory key={historyMap.id} map={historyMap} closing={historyClosing} onClose={closeHistoryModal} />}
+      {historyMap && !historyMap.collaboration && (
         <div className={`modal-overlay feature-modal-overlay history-overlay${versionUndoNotice ? " has-version-undo" : ""}${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
           <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ВСЕ ВЕРСИИ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
@@ -11008,7 +11036,14 @@ export default function App() {
       {shareMap && (
         <div className={`modal-overlay feature-modal-overlay${shareClosing ? " is-closing" : ""}`} onMouseDown={closeShareDialog}>
           <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><span className="account-eyebrow">ТОЛЬКО ПРОСМОТР</span><h2 id="share-modal-title">{shareStatus === "revoked" ? "Ссылка отключена" : "Публичная ссылка"}</h2></div><button type="button" className="modal-close" disabled={shareStatus === "saving"} onClick={closeShareDialog}>×</button></div>
+            <div className="modal-header"><div><span className="account-eyebrow">ПОДЕЛИТЬСЯ</span><h2 id="share-modal-title">{shareMap.collaboration ? 'Совместная карта' : shareStatus === "revoked" ? "Ссылка отключена" : "Публичная ссылка"}</h2></div><button type="button" className="modal-close" disabled={shareStatus === "saving"} onClick={closeShareDialog}>×</button></div>
+            <CollaborativeShare key={shareMap.id} map={shareMap} user={user} save={remoteSave} onCreated={(map) => {
+              const next = normalizeMap(map);
+              setMaps((current) => mergeCollaborativeMaps(current, [next]));
+              setShareMap(next); shareDialogRef.current = next;
+              if (activeMapId === next.id) openMap(next);
+            }} />
+            {!shareMap.collaboration && <>
             {shareStatus === "revoked" ? <div className="share-revoked" role="status"><span className="share-revoked-icon" aria-hidden="true">✓</span><p>Теперь по этой ссылке люди не увидят карту. Ваша карта сохранена и доступна Вам.</p><button type="button" className="feature-primary" onClick={closeShareDialog}>Понятно</button></div> : <>
             <p className="feature-modal-intro">Посетитель сможет посмотреть карту и выбранные данные без возможности их изменить.</p>
             <div className={`share-mode-switch history-view-switch is-${shareMode === "live" ? "days" : "changes"}`} role="group" aria-label="Режим публичной ссылки">
@@ -11022,6 +11057,7 @@ export default function App() {
             {shareMap.shareUrl && <div className="share-link"><input readOnly aria-label="Публичная ссылка на карту" value={shareMap.shareUrl} /><button type="button" className={shareCopyStatus === "copied" ? "is-copied" : ""} onClick={() => copyShareLink()}><CrossfadeText value={shareCopyStatus === "copied" ? "✓ Скопировано" : "Копировать"} /></button></div>}
             <div className="share-status" role="status" aria-live="polite"><CrossfadeText as="p" value={shareCopyStatus === "error" ? "Не удалось скопировать. Выделите ссылку и скопируйте вручную." : shareStatus === "error" ? "Не удалось создать ссылку. Попробуйте ещё раз." : shareStatus === "revoke-error" ? "Не удалось отключить ссылку. Попробуйте ещё раз." : shareStatus === "sync-error" ? "Настройки сохранены на устройстве. Ссылка обновится после восстановления связи." : shareStatus === "load-error" ? "Не удалось загрузить настройки ссылки. Откройте это окно повторно." : shareStatus === "loading" ? "Загружаем настройки…" : shareStatus === "saving" ? "Сохраняем…" : shareCopyStatus === "copied" ? "Ссылка скопирована." : shareMap.shareUrl ? (shareMode === "snapshot" ? "Ссылка активна. Текущий этап сохранён." : "Ссылка активна. Изменения обновляются автоматически.") : ""} /></div>
             <div className="history-actions">{!shareMap.shareId && <button type="button" className="feature-primary" disabled={shareStatus === "saving"} onClick={publishShare}>{shareStatus === "saving" ? "Создаём…" : "Создать и скопировать ссылку"}</button>}{shareMap.shareId && <button type="button" className="danger-action share-revoke-button" data-tooltip="Закроет доступ к карте по этой ссылке" aria-description="Закроет доступ к карте по этой ссылке" disabled={["saving", "loading"].includes(shareStatus)} onClick={revokeShare}>Отключить ссылку</button>}</div>
+            </>}
             </>}
           </div>
         </div>

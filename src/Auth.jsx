@@ -1,9 +1,17 @@
 import { useState } from "react";
 import { supabase } from "./lib/supabase";
+  import { INVITE_KEY } from "./lib/collaboration";
 
 const AUTH_REDIRECT_URL = import.meta.env.PROD
   ? "https://www.mapmethod.ru/"
   : window.location.origin;
+
+  function authRedirectUrl() {
+    const url = new URL(AUTH_REDIRECT_URL);
+    const invitation = localStorage.getItem(INVITE_KEY);
+    if (invitation) url.searchParams.set('collaborate', invitation);
+    return url.href;
+  }
 
 export default function Auth({ onAuth, language = "ru" }) {
   const [mode, setMode] = useState("login");
@@ -36,7 +44,7 @@ export default function Auth({ onAuth, language = "ru" }) {
         email,
         password,
         options: {
-          emailRedirectTo: AUTH_REDIRECT_URL,
+          emailRedirectTo: authRedirectUrl(),
           data: { locale: language || navigator.language || "ru" },
         },
       });
@@ -64,7 +72,7 @@ export default function Auth({ onAuth, language = "ru" }) {
     const { error } = await supabase.auth.resend({
       type: "signup",
       email: email.trim(),
-      options: { emailRedirectTo: AUTH_REDIRECT_URL },
+      options: { emailRedirectTo: authRedirectUrl() },
     });
     setMessage(error ? error.message : "Письмо с подтверждением отправлено повторно. Проверьте входящие и папку «Спам».");
     setResending(false);
