@@ -1792,6 +1792,8 @@ export default function App() {
   const [movingArtwork, setMovingArtwork] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 600, height: 500 });
   const zoomAnchorRef = useRef(null);
+  const zoomVisualSizeRef = useRef(null);
+  const zoomTransitionRef = useRef(null);
   const [colors, setColors] = useState([]);
   const [imageRatio, setImageRatio] = useState(1);
 
@@ -5278,8 +5280,8 @@ export default function App() {
 
     if (!c) return;
 
-    const rect =
-      c.getBoundingClientRect();
+    // Draw at the final layout size while the compositor animates visual zoom.
+    const rect = { width: c.clientWidth, height: c.clientHeight };
 
     const dpr =
       Math.min(window.devicePixelRatio || 1, 4096 / Math.max(rect.width, rect.height));
@@ -5558,17 +5560,34 @@ export default function App() {
     const viewport = viewportRef.current;
     const canvas = canvasRef.current;
     if (!viewport || !canvas) return;
+    const stage = canvas.parentElement;
+    const previous = zoomVisualSizeRef.current;
+    const next = { width: canvasWidth, height: canvasHeight, mapId: activeMapId };
+    const resizing = previous && (previous.width !== next.width || previous.height !== next.height);
+    let visualScale = { a: 1, d: 1 };
+    if (resizing && zoomTransitionRef.current) {
+      visualScale = new DOMMatrixReadOnly(getComputedStyle(stage).transform);
+    }
+    if (resizing) zoomTransitionRef.current?.cancel();
+    zoomVisualSizeRef.current = next;
     if (!anchor) {
       viewport.scrollLeft = (viewport.scrollWidth - viewport.clientWidth) / 2;
       viewport.scrollTop = (viewport.scrollHeight - viewport.clientHeight) / 2;
-      return;
+    } else {
+      const rect = canvas.getBoundingClientRect();
+      const delta = zoomScrollDelta(rect, anchor);
+      viewport.scrollLeft += delta.x;
+      viewport.scrollTop += delta.y;
+      zoomAnchorRef.current = null;
     }
-    const rect = canvas.getBoundingClientRect();
-    const delta = zoomScrollDelta(rect, anchor);
-    viewport.scrollLeft += delta.x;
-    viewport.scrollTop += delta.y;
-    zoomAnchorRef.current = null;
-  }, [mapZoom, canvasWidth, canvasHeight, screen, viewportSize]);
+    if (resizing && previous.mapId === activeMapId && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const transformOrigin = anchor ? `${anchor.x * 100}% ${anchor.y * 100}%` : '50% 50%';
+      zoomTransitionRef.current = stage.animate([
+        { transform: `scale(${previous.width * visualScale.a / next.width}, ${previous.height * visualScale.d / next.height})`, transformOrigin },
+        { transform: 'scale(1)', transformOrigin },
+      ], { duration: 220, easing: 'cubic-bezier(.22,1,.36,1)' });
+    }
+  }, [mapZoom, canvasWidth, canvasHeight, screen, viewportSize, activeMapId]);
 
   useEffect(() => {
     if (screen !== "editor") return;
@@ -9895,6 +9914,7 @@ export default function App() {
                         Игра
                       </button>
                     </div>
+                    <AnimatedEditorPresence visible={isGameMode}>
                     {isGameMode && (
                       <div className="game-fill-control">
                         <button className="game-fill-btn" onClick={() => setIsGameFillOpen((open) => !open)}>
@@ -9912,6 +9932,7 @@ export default function App() {
                         )}
                       </div>
                     )}
+                    </AnimatedEditorPresence>
                   </>
 
                   <div className="tool-actions">
@@ -9935,7 +9956,9 @@ export default function App() {
                     <span>{t("redo")}</span>
                   </button>
                 </div>
-                {!isGameMode && <button className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
+                <AnimatedEditorPresence visible={!isGameMode}>
+                  {!isGameMode && <button className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
+                </AnimatedEditorPresence>
                 <button className="clear-btn" onClick={clearProgress}>{t("clearProgress")}</button>
 
                 {mapType ===
@@ -10252,6 +10275,7 @@ export default function App() {
                 </strong>
               </div>
 
+              <AnimatedEditorPresence visible={isGameMode}>
               {isGameMode && (
                 <div className="milestone-list" aria-label="Вехи карты">
                   {[25, 50, 75, 100].map((milestone) => (
@@ -10259,6 +10283,7 @@ export default function App() {
                   ))}
                 </div>
               )}
+              </AnimatedEditorPresence>
 
             </section>
             <AnimatedEditorPresence visible={mapType === "free" && !isGameMode}>

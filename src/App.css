@@ -3930,3 +3930,13 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 @keyframes editor-color-popover-in { from { opacity:0; transform:translateY(8px) scale(.97); } to { opacity:1; transform:translateY(0) scale(1); } }
 @keyframes editor-color-popover-out { from { opacity:1; transform:translateY(0) scale(1); } to { opacity:0; transform:translateY(8px) scale(.97); } }
 @media (prefers-reduced-motion:reduce) { .editor-presence,.editor-presence-inner { transition:none; } .editor-color-popover { animation:none !important; } }
+.right-sidebar .selected-color-preview,.editor-picker-trigger > i { transition:background-color 240ms ease; }
+.right-sidebar .color-item { transition:border-color 240ms ease,box-shadow 240ms ease,transform 240ms ease; }
+.right-sidebar .color-item.selected { transform:scale(1.06); }
+.map-select-control .animated-select-trigger { font-family:inherit; font-size:14px; font-weight:500; }
+.grid-fill-hint { font-size:13px; line-height:1.5; }
+.grid-fill-hint strong { font-size:inherit; font-weight:600; }
+.left-sidebar .editor-presence .map-type-btn { width:100%; }
+.editor-presence .game-fill-control { animation:none; }
+.map-zoom-toolbar .tool-btn:last-child { width:auto; min-width:54px; padding-inline:10px; }
+@media (prefers-reduced-motion:reduce) { .right-sidebar .selected-color-preview,.editor-picker-trigger > i,.right-sidebar .color-item { transition:none; } }
