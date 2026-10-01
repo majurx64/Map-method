@@ -29,6 +29,19 @@ test('hiding a shared version does not remove its changes from later history', (
   assert.deepEqual(versions.at(-1).progressCompleted, [0, 1]);
 });
 
+test('shared history preserves dimensions and cropped cells across grid resizing', () => {
+  const before = { mapType: 'free', gridMode: 'manual', totalCells: '4', manualRows: '2', manualCols: '2', completed: [0, 3], progressCompleted: [3], colors: ['#ff0000', null, null, '#0000ff'] };
+  const after = { ...before, totalCells: '9', manualRows: '3', manualCols: '3', completed: [4, 8], progressCompleted: [8], colors: Array.from({ length: 9 }, (_, i) => i === 4 ? '#ff0000' : i === 8 ? '#0000ff' : null) };
+  const versions = collaborativeVersions(after, { id: 'team', members: [], events: [{ id: 1, kind: 'grid', changes: [{ mode: 'grid', before, after }] }] });
+  assert.equal(versions[0].manualCols, '2');
+  assert.deepEqual(versions[0].completed, [0, 3]);
+  assert.deepEqual(versions[0].progressCompleted, [3]);
+  assert.equal(versions[0].colors[3], '#0000ff');
+  assert.equal(versions[1].manualCols, '3');
+  assert.deepEqual(versions[1].completed, [4, 8]);
+  assert.deepEqual(versions[1].cellSequence, []);
+});
+
 test('another session updates clean maps without replacing unsaved or offline edits', () => {
   const remote = [{ id: 'clean', value: 2 }, { id: 'dirty', value: 1 }, { id: 'offline', value: 1 }];
   const local = [{ id: 'clean', value: 1 }, { id: 'dirty', value: 3 }, { id: 'removed' }];

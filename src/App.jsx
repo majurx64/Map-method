@@ -1766,6 +1766,8 @@ export default function App() {
   const [image, setImage] = useState(null);
   const [imageOffset, setImageOffset] = useState({ x: 0, y: 0 });
   const [gridError, setGridError] = useState("");
+  const [collaborativeGridBusy, setCollaborativeGridBusy] = useState(false);
+  const collaborativeGridBusyRef = useRef(false);
   const [rowAddSide, setRowAddSide] = useState(() => localStorage.getItem("mm-row-add-side") === "top" ? "top" : "bottom");
   const [colAddSide, setColAddSide] = useState(() => localStorage.getItem("mm-col-add-side") === "left" ? "left" : "right");
   useEffect(() => {
@@ -3730,7 +3732,7 @@ export default function App() {
         const shared = await loadCollaborativeMaps();
         const pending = await pendingMapSaves(owner);
         if (cancelled || latestOwnerRef.current !== owner || error) return;
-        if (queue !== remoteSaveQueueRef.current || isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current) {
+        if (queue !== remoteSaveQueueRef.current || isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current) {
           clearTimeout(retryTimer);
           retryTimer = setTimeout(refresh, 500);
           return;
@@ -3741,7 +3743,8 @@ export default function App() {
         const merged = mergeLiveMaps(mergeCollaborativeMaps(data.map(mapFromSupabaseRow), shared), local, pending, dirtyMapsRef.current, blocked);
         const nextMaps = merged.filter((map) => !map.privateLibraryItem).map((map) =>
           map.id === current.activeMapId && current.editor
-            ? { ...map, isGameMode: current.editor.isGameMode, gridMode: current.editor.gridMode,
+            ? { ...map, isGameMode: current.editor.isGameMode,
+                ...(!map.collaboration ? { gridMode: current.editor.gridMode } : {}),
                 drawColor: current.editor.drawColor, customColors: current.editor.customColors } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
         const mapsChanged = JSON.stringify(current.maps) !== JSON.stringify(nextMaps);
@@ -3870,7 +3873,7 @@ export default function App() {
             const saved = collaborativeSavedRef.current.get(key);
             const before = saved && saved.revision === map.collaboration.revision ? saved.progress : map.collaboration.baseProgress;
             const beforeDrawing = (saved && saved.revision === map.collaboration.revision ? saved.drawing : map.collaboration.baseDrawing) || { completed: map.completed, colors: map.colors };
-            await collaborativeRpc('apply_collaborative_changes', { team_id: map.collaboration.id, cell_changes: [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)] });
+            await collaborativeRpc('apply_collaborative_grid_changes', { team_id: map.collaboration.id, expected_revision: map.collaboration.revision, expected_grid: getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols), cell_changes: [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)] });
             collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted, drawing: { completed: map.completed, colors: map.colors } });
             if (pending) await acknowledgeMapSave(pending);
             if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
@@ -3980,6 +3983,7 @@ export default function App() {
       hydratingRef.current ||
       isDrawingRef.current ||
       gameFillAnimationRef.current ||
+      collaborativeGridBusyRef.current ||
       !activeMapId ||
       !user ||
       publicLibraryEditContext
@@ -4713,6 +4717,7 @@ export default function App() {
   }
 
   function undo() {
+    if (collaborativeGridBusyRef.current) return;
     if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) {
       return;
     }
@@ -4722,12 +4727,14 @@ export default function App() {
       undoStackRef.current.pop();
 
     if (!a) return;
+    if (a.target === 'collaborative-grid') { void restoreCollaborativeGridAction(a, true); return; }
 
     redoStackRef.current.push(a);
     setSnapshot(historyActionSnapshot(a, true), a.target, a.sequence || [], true);
   }
 
   function redo() {
+    if (collaborativeGridBusyRef.current) return;
     if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) {
       return;
     }
@@ -4737,6 +4744,7 @@ export default function App() {
       redoStackRef.current.pop();
 
     if (!a) return;
+    if (a.target === 'collaborative-grid') { void restoreCollaborativeGridAction(a, false); return; }
 
     undoStackRef.current.push(a);
     setSnapshot(historyActionSnapshot(a), a.target, a.sequence);
@@ -5068,6 +5076,7 @@ export default function App() {
 
   function handlePointerDown(e) {
     e.preventDefault();
+    if (collaborativeGridBusyRef.current) return;
     if (e.button !== 0 && e.button !== 2) return;
     if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) return;
     const i = getCellFromPointerEvent(e);
@@ -5985,8 +5994,71 @@ export default function App() {
     }
   }
 
+  function acceptCollaborativeGrid(data) {
+    const editor = buildCurrentMap();
+    const map = normalizeMap({ ...collaborativeMap(data), isGameMode: editor?.isGameMode,
+      drawColor: editor?.drawColor, customColors: editor?.customColors });
+    clearTimeout(saveTimerRef.current);
+    hydratingRef.current = true;
+    dirtyMapsRef.current.delete(map.id);
+    collaborativeSavedRef.current.delete(`${user.id}:${map.collaboration.id}`);
+    openMap(map, { preserveViewport: true });
+    setMaps((stored) => stored.map((item) => item.id === map.id ? map : item));
+    clearTimeout(hydrationReleaseTimerRef.current);
+    hydrationReleaseTimerRef.current = setTimeout(() => { hydratingRef.current = false; }, 0);
+    return map;
+  }
+
+  async function resizeCollaborativeGrid(total, mode, nextRows, nextCols, sides) {
+    if (collaborativeGridBusyRef.current) return;
+    const count = Number(total), rowCount = Number(nextRows), colCount = Number(nextCols);
+    if (!Number.isInteger(count) || count < 1 || count > MAX_CELLS || (mode === 'manual' &&
+      (!Number.isInteger(rowCount) || !Number.isInteger(colCount) || rowCount < 1 || colCount < 1 || rowCount * colCount > MAX_CELLS))) {
+      setGridError('Введите целое число от 1 до 10000'); return;
+    }
+    finishStroke(); stopProgressSequence(); clearTimeout(saveTimerRef.current);
+    const current = buildCurrentMap();
+    collaborativeGridBusyRef.current = true; setCollaborativeGridBusy(true); setGridError('');
+    try {
+      const error = await remoteSave(normalizeMap(current));
+      if (error) throw error;
+      const latest = await collaborativeRpc('get_collaborative_map', { team_id: current.collaboration.id });
+      const latestDimensions = getGridDimensions(latest.map_data.totalCells, latest.map_data.imageRatio, latest.map_data.gridMode, latest.map_data.manualRows, latest.map_data.manualCols);
+      if (latestDimensions.rows !== rows || latestDimensions.cols !== cols || latestDimensions.actualTotal !== actualTotal) {
+        acceptCollaborativeGrid(latest); setGridError('Другой участник изменил сетку. Она обновлена — повторите изменение.'); return;
+      }
+      const dimensions = getGridDimensions(count, current.imageRatio, mode, rowCount, colCount);
+      const data = await collaborativeRpc('resize_collaborative_grid', { team_id: current.collaboration.id, expected_revision: latest.revision,
+        layout: { gridMode: mode, totalCells: String(count), manualRows: String(dimensions.rows), manualCols: String(dimensions.cols), rowSide: sides?.rows || 'bottom', colSide: sides?.cols || 'right' } });
+      const map = acceptCollaborativeGrid(data);
+      if (data.revision !== latest.revision) {
+        undoStackRef.current.push({ target: 'collaborative-grid', eventId: map.collaboration.events.at(-1).id, revision: data.revision });
+        redoStackRef.current = [];
+      }
+    } catch (error) {
+      setGridError(error.message?.includes('map-changed') ? 'Карта уже изменилась у другого участника. Повторите изменение.' : 'Не удалось изменить общую сетку. Проверьте подключение.');
+    } finally { collaborativeGridBusyRef.current = false; setCollaborativeGridBusy(false); }
+  }
+
+  async function restoreCollaborativeGridAction(action, reverse) {
+    collaborativeGridBusyRef.current = true; setCollaborativeGridBusy(true);
+    try {
+      clearTimeout(saveTimerRef.current);
+      const error = await remoteSave(normalizeMap(buildCurrentMap()));
+      if (error) throw error;
+      const data = await collaborativeRpc('resize_collaborative_grid', { team_id: activeMapRef.current.collaboration.id,
+        expected_revision: action.revision, restore_event: action.eventId, reverse });
+      acceptCollaborativeGrid(data); action.revision = data.revision;
+      (reverse ? redoStackRef : undoStackRef).current.push(action);
+      setGridError('');
+    } catch (error) {
+      (reverse ? undoStackRef : redoStackRef).current.push(action);
+      setGridError(error.message?.includes('map-changed') ? 'После изменения сетки появились новые правки. Отмена сетки не выполнена, чтобы сохранить их.' : 'Не удалось восстановить сетку. Проверьте подключение.');
+    } finally { collaborativeGridBusyRef.current = false; setCollaborativeGridBusy(false); }
+  }
+
   function resizeGrid(total, mode, nextRows = manualRows, nextCols = manualCols, sides = null) {
-    if (activeMap?.collaboration) return;
+    if (activeMap?.collaboration) { void resizeCollaborativeGrid(total, mode, nextRows, nextCols, sides); return; }
     finishStroke();
     setSelection(null);
     const count = Number(total);
@@ -7525,6 +7597,26 @@ export default function App() {
     try {
     const current = map.id === activeMapId ? buildCurrentMap() || map : map;
     if (current.collaboration) {
+      const error = await remoteSave(normalizeMap(current));
+      if (error) throw error;
+      let data = await collaborativeRpc('get_collaborative_map', { team_id: current.collaboration.id });
+      const event = data.events.find((entry) => entry.id === snapshot.eventId && entry.kind === 'grid');
+      const beforeGrid = getGridDimensions(data.map_data.totalCells, data.map_data.imageRatio, data.map_data.gridMode, data.map_data.manualRows, data.map_data.manualCols);
+      const targetGrid = getGridDimensions(snapshot.totalCells, snapshot.imageRatio, snapshot.gridMode, snapshot.manualRows, snapshot.manualCols);
+      if (event || data.map_data.gridMode !== snapshot.gridMode || Object.keys(beforeGrid).some((key) => beforeGrid[key] !== targetGrid[key])) {
+        data = await collaborativeRpc('resize_collaborative_grid', { team_id: current.collaboration.id, expected_revision: data.revision,
+          ...(event ? { restore_event: event.id } : { layout: { gridMode: snapshot.gridMode, totalCells: snapshot.totalCells, manualRows: String(targetGrid.rows), manualCols: String(targetGrid.cols) } }) });
+      }
+      const base = normalizeMap(collaborativeMap(data));
+      const restored = normalizeMap(restoreSnapshot(base, snapshot));
+      const saveError = await remoteSave(restored);
+      if (saveError) throw saveError;
+      const canonical = await collaborativeRpc('get_collaborative_map', { team_id: current.collaboration.id });
+      if (map.id === activeMapId) acceptCollaborativeGrid(canonical);
+      else setMaps((stored) => stored.map((item) => item.id === map.id ? normalizeMap(collaborativeMap(canonical)) : item));
+      setFeatureStatus('Версия восстановлена'); setHistoryPlaying(false); return;
+    }
+    if (current.collaboration) {
       const error = await remoteSave(current);
       if (error) { setFeatureStatus('Не удалось сохранить версию. Попробуйте ещё раз.'); return; }
       const data = await collaborativeRpc('apply_collaborative_changes', { team_id: current.collaboration.id, cell_changes: [], save_version: true });
@@ -7538,7 +7630,8 @@ export default function App() {
     await persistFeatureMap(versioned);
     setHistoryMapId(versioned.id);
     setHistoryPreviewIndex(versioned.versions.length - 1);
-    } finally { featureBusyRef.current = false; }
+    } catch { setFeatureStatus('Не удалось восстановить версию. Повторите после обновления карты.'); }
+    finally { featureBusyRef.current = false; }
   }
 
   async function restoreMapVersion(map, snapshot) {
@@ -9754,7 +9847,7 @@ export default function App() {
               </div>
             </section>
 
-            <section className={`sidebar-section${activeMap?.collaboration ? ' collaborative-template-locked' : ''}`}>
+            <section className="sidebar-section" inert={collaborativeGridBusy ? true : undefined} aria-busy={collaborativeGridBusy}>
               <div className="section-heading">
                 {t(
                   "canvasSize"

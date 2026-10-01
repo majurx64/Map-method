@@ -4,7 +4,16 @@ import { getMapStats } from './grid.js';
 export function collaborativeVersions(map, team) {
   const drawing = new Set(map.completed || []), progress = new Set(map.progressCompleted || []);
   const colors = [...(map.colors || [])];
+  let layout = { ...map };
   function apply(change, reverse) {
+    if (change.mode === 'grid') {
+      const state = reverse ? change.before : change.after;
+      layout = { ...layout, ...state };
+      drawing.clear(); (state.completed || []).forEach((index) => drawing.add(index));
+      progress.clear(); (state.progressCompleted || []).forEach((index) => progress.add(index));
+      colors.length = 0; colors.push(...(state.colors || []));
+      return;
+    }
     const i = change.index;
     const filled = reverse ? (change.previous_filled ?? !change.filled) : change.filled;
     if (change.mode === 'drawing') {
@@ -16,14 +25,14 @@ export function collaborativeVersions(map, team) {
   }
   [...team.events].reverse().forEach((event) => [...event.changes].reverse().forEach((change) => apply(change, true)));
   function snapshot(event) {
-    const state = { ...map, completed: [...drawing], progressCompleted: [...progress], colors: [...colors] };
+    const state = { ...layout, completed: [...drawing], progressCompleted: [...progress], colors: [...colors] };
     const stats = getMapStats(state);
     return { ...state, collaboration: undefined, versions: undefined,
       id: `team-${team.id}-${event?.id || 'initial'}`, eventId: event?.id || null, actorId: event?.actor_id || null,
       createdAt: event?.created_at || map.createdAt || new Date().toISOString(), filled: stats.filled, total: stats.total,
-      label: event ? `${team.members.find((member) => member.id === event.actor_id)?.name || 'Участник'} · ${event.kind === 'version' ? 'Сохранённая версия' : event.kind === 'drawing' ? 'Рисование' : 'Изменение'}` : 'Начало совместной работы',
+      label: event ? `${team.members.find((member) => member.id === event.actor_id)?.name || 'Участник'} · ${event.kind === 'grid' ? 'Размер сетки' : event.kind === 'version' ? 'Сохранённая версия' : event.kind === 'drawing' ? 'Рисование' : 'Изменение'}` : 'Начало совместной работы',
       isGameMode: event?.kind !== 'drawing',
-      cellSequence: (event?.changes || []).filter((change) => event.kind === 'drawing' ? change.mode === 'drawing' : change.mode !== 'drawing').map((change) => change.filled ? change.index : -(change.index + 1)),
+      cellSequence: (event?.changes || []).filter((change) => change.mode !== 'grid' && (event.kind === 'drawing' ? change.mode === 'drawing' : change.mode !== 'drawing')).map((change) => change.filled ? change.index : -(change.index + 1)),
     };
   }
   const versions = [snapshot(null)];
