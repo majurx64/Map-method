@@ -20,6 +20,10 @@ self.addEventListener("fetch", (event) => {
       const timer = setTimeout(() => controller.abort(), 5000);
       try {
         // Install the new HTML and its matching bundles together, never cache mismatched versions.
+        if (url.searchParams.has('site-update')) {
+          const staged = await cache.match('/');
+          if (staged) return staged;
+        }
         const response = await fetch(event.request, { signal: controller.signal, cache: "no-store" });
         return response.ok ? response : (await cache.match("/")) || response;
       } catch {

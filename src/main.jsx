@@ -5,6 +5,11 @@ import App from './App.jsx'
 
 // Allow a direct diagnostic visit without changing the normal canonical URL.
 const directCheck = new URLSearchParams(window.location.search).get('mm_direct') === '1'
+const updateUrl = new URL(window.location.href)
+if (updateUrl.searchParams.has('site-update')) {
+  updateUrl.searchParams.delete('site-update')
+  window.history.replaceState(window.history.state, '', updateUrl.href)
+}
 
 if (window.location.hostname === 'map-method-chi.vercel.app' && !directCheck) {
   window.location.replace(

@@ -11,6 +11,7 @@ import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { liveCellChanges, mergeLiveMaps } from "./lib/liveMaps";
+import { stageSiteUpdate } from "./lib/siteUpdate";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, publicSharedSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
 
@@ -7625,6 +7626,9 @@ export default function App() {
       if (current && user?.id) {
         await queueMapSave(user.id, normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current)));
         pendingVersionSequenceRef.current = [];
+      }
+      if (navigator.serviceWorker?.controller && window.caches) {
+        await stageSiteUpdate({ assetBase: import.meta.env.BASE_URL, version: latestSiteVersion, origin: window.location.origin });
       }
       // A failed worker check must not block loading an already published site.
       let workerTimer;
