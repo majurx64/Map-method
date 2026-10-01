@@ -3860,7 +3860,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .right-sidebar .palette-section { padding:0; margin:0; border:0; }
 .right-sidebar .palette-section .color-palette { padding:10px; gap:8px; }
 .right-sidebar .color-list { grid-template-columns:repeat(5,minmax(0,1fr)); gap:7px; }
-.right-sidebar .color-item,.right-sidebar .custom-color-wrapper { max-height:28px; }
+.right-sidebar .color-item,.right-sidebar .custom-color-wrapper { max-height:32px; }
 .right-sidebar .color-palette-header { margin-bottom:5px; }
 .right-sidebar .utility-color-copy span { font-size:10px; line-height:1.35; }
 .right-sidebar .utility-color-section { padding-block:7px; }
@@ -3946,8 +3946,11 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .right-sidebar .color-palette .editor-panel-transition { padding-inline:5px; margin-inline:-5px; }
 .right-sidebar .color-palette .editor-panel-transition > div:last-child:has(.color-palette-section) { padding-bottom:5px; }
 .right-sidebar .custom-color-wrapper > .color-item { display:block; width:100%; height:100%; aspect-ratio:auto; }
-.right-sidebar .custom-color-wrapper .delete-color-btn { top:1px; right:1px; transition:opacity 160ms ease; }
+.right-sidebar .custom-color-wrapper .delete-color-btn { top:-5px; right:-5px; transition:opacity 160ms ease; }
 .left-sidebar .tool-stack { display:flex; flex-direction:column; }
 .left-sidebar .tool-actions,.left-sidebar .tool-actions .tool-btn { margin-top:0; }
 .mini-preview span { transition:background-color 320ms ease,opacity 320ms ease; }
 @media (prefers-reduced-motion:reduce) { .mini-preview span { transition:none; } }
+.right-sidebar .utility-color-section { padding-bottom:0; }
+.right-sidebar .palette-section .color-palette { gap:4px; }
+.right-sidebar .custom-color-create { padding-top:3px; }

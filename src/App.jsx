@@ -4437,17 +4437,19 @@ export default function App() {
   }
 
   function deleteCustomColor(c) {
-    if (BASIC_COLORS.includes(c)) return;
-
-    setCustomColors((p) =>
-      p.filter((x) => x !== c)
-    );
-
-    if (drawColor === c) {
-      selectDrawColor(
-        BASIC_COLORS[0]
-      );
-    }
+    if (BASIC_COLORS.includes(c) || !customColors.includes(c)) return;
+    finishStroke();
+    const nextColors = customColors.filter((color) => color !== c);
+    const nextBrush = drawColor === c ? BASIC_COLORS[0] : drawColor;
+    undoStackRef.current.push({
+      target: "palette",
+      before: { customColors: [...customColors], drawColor },
+      after: { customColors: nextColors, drawColor: nextBrush },
+    });
+    if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    setCustomColors(nextColors);
+    if (drawColor === c) selectDrawColor(nextBrush);
   }
 
   function clearHistory() {
@@ -4574,6 +4576,11 @@ export default function App() {
 
   function setSnapshot(s, target = "drawing", sequence = [], reverseSequence = false) {
     setSelection(null);
+    if (target === "palette") {
+      setCustomColors([...s.customColors]);
+      selectDrawColor(s.drawColor);
+      return;
+    }
     if (target === "grid") {
       gridRestoreRef.current = null;
       setGridMode(s.gridMode);
