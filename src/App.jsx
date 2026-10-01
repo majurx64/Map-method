@@ -9501,6 +9501,7 @@ export default function App() {
                             </button>
 
                             <button
+                              disabled={Boolean(map.collaboration)}
                               className="tool-btn"
                               onClick={(
                                 e
@@ -9552,6 +9553,7 @@ export default function App() {
                             </button>
 
                             <button
+                              disabled={Boolean(map.collaboration)}
                               className="tool-btn danger-action"
                               onClick={(
                                 e
