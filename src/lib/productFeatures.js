@@ -119,6 +119,8 @@ export function normalizeVersions(versions) {
     if (!version || typeof version !== "object" || !Array.isArray(version.completed)) return [];
     return [{
       id: String(version.id || `${Date.now()}-${Math.random()}`),
+      actorId: version.actorId || null,
+      eventId: version.eventId || null,
       createdAt: Number.isFinite(Date.parse(version.createdAt)) ? version.createdAt : new Date().toISOString(),
       label: String(version.label || "Версия").slice(0, 80),
       filled: Math.max(0, Number(version.filled) || 0),

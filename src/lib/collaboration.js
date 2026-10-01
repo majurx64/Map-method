@@ -1,4 +1,6 @@
 import { supabase } from './supabase';
+import { collaborativeVersions } from './collaborativeHistory.js';
+import { stableDrawingColors } from './drawingColors.js';
 
 export const INVITE_KEY = 'mm-collaborative-invite';
 export const JOIN_KEY = 'mm-collaborative-join';
@@ -11,12 +13,21 @@ export function rememberCollaborativeInvite() {
 }
 
 export function collaborativeMap(data) {
-  return { ...data.map_data, isGameMode: true, versions: [], collaboration: {
+  const map = { ...data.map_data, colors: data.map_data.mapType === 'image' ? data.map_data.colors || [] : stableDrawingColors(data.map_data.completed || [], data.map_data.colors || [], data.map_data.drawColor || '#111111') };
+  const team = {
     id: data.id, ownerId: data.owner_id, inviteToken: data.invite_token,
     members: data.members || [], claims: data.claims || {}, events: data.events || [],
     revision: data.revision, baseProgress: data.map_data.progressCompleted || [],
     hidden: Boolean(data.hidden),
-  } };
+    baseDrawing: { completed: map.completed || [], colors: map.colors },
+  };
+  return { ...map, isGameMode: true, versions: collaborativeVersions(map, team), collaboration: team };
+}
+
+export function drawingChanges(before, after) {
+  const old = new Set(before.completed), next = new Set(after.completed);
+  return [...new Set([...old, ...next])].filter((i) => old.has(i) !== next.has(i) || (next.has(i) && before.colors[i] !== after.colors[i]))
+    .map((index) => ({ index, filled: next.has(index), mode: 'drawing', color: after.colors[index] || '#111111' }));
 }
 
 export function progressChanges(before, after) {

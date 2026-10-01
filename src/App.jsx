@@ -7,7 +7,7 @@ import Auth from "./Auth";
 import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPanel';
 import EditorColorPicker from './EditorColorPicker';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
-import { collaborativeRpc, loadCollaborativeMaps, mergeCollaborativeMaps, progressChanges, INVITE_KEY } from './lib/collaboration';
+import { collaborativeMap, collaborativeRpc, loadCollaborativeMaps, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
@@ -1015,7 +1015,7 @@ function normalizeMap(map = {}) {
     imageOffset: normalizeImageOffset(map.imageOffset),
     name: typeof map.name === "string" ? map.name : "Моя карта",
     mapType: map.mapType === "image" ? "image" : "free",
-    isGameMode: Boolean(map.isGameMode || map.collaboration),
+    isGameMode: Boolean(map.isGameMode),
     collaboration: map.collaboration || null,
     gridMode: map.gridMode === "manual" ? "manual" : "auto",
     completed: [...drawing],
@@ -1236,7 +1236,8 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       if (canvas.height !== height) canvas.height = height;
       const context = canvas.getContext("2d", { alpha: true });
       context.clearRect(0, 0, width, height);
-      const cellSize = Math.min(width / visibleCols, height / visibleRows);
+      const availableCellSize = Math.min(width / visibleCols, height / visibleRows);
+      const cellSize = availableCellSize >= 1 ? Math.floor(availableCellSize) : availableCellSize;
       const gridWidth = cellSize * visibleCols;
       const gridHeight = cellSize * visibleRows;
       const offsetX = Math.max(0, Math.round((width - gridWidth) / 2));
@@ -1701,6 +1702,7 @@ export default function App() {
   const editorColorAnchorRef = useRef(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
+  const [historyParticipant, setHistoryParticipant] = useState('all');
   const [latestSiteVersion, setLatestSiteVersion] = useState("");
   const [siteUpdateStatus, setSiteUpdateStatus] = useState("");
   useEffect(() => {
@@ -2397,12 +2399,13 @@ export default function App() {
   const historyReadOnly = historyMapId === "public-share";
   const historyMap = historyReadOnly ? (sharedView?.settings?.showHistory ? sharedView.map : null) : maps.find((map) => map.id === historyMapId) || null;
   const historyVersionEntries = useMemo(() => {
-    const entries = (historyMap?.versions || []).map((version, index) => ({ version, index }));
+    const entries = (historyMap?.versions || []).map((version, index) => ({ version, index }))
+      .filter(({ version }) => !historyMap?.collaboration || historyParticipant === 'all' || version.actorId === historyParticipant);
     if (historyViewMode === "changes") return entries;
     const latestByDay = new Map();
     entries.forEach((entry) => latestByDay.set(getActivityDate(new Date(entry.version.createdAt)), entry));
     return [...latestByDay.values()];
-  }, [historyMap?.versions, historyViewMode]);
+  }, [historyMap?.versions, historyViewMode, historyParticipant, historyMap?.collaboration]);
   const historyPlaybackEntries = useMemo(() => {
     if (historyPreviewMode !== "cells") return historyVersionEntries;
     const gameStart = historyVersionEntries.findIndex(({ version }) => version.isGameMode);
@@ -3713,7 +3716,7 @@ export default function App() {
         const shared = await loadCollaborativeMaps();
         const pending = await pendingMapSaves(owner);
         if (cancelled || latestOwnerRef.current !== owner || error) return;
-        if (queue !== remoteSaveQueueRef.current || isDrawingRef.current || artworkDragRef.current || hydratingRef.current) {
+        if (queue !== remoteSaveQueueRef.current || isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current) {
           clearTimeout(retryTimer);
           retryTimer = setTimeout(refresh, 500);
           return;
@@ -3724,7 +3727,8 @@ export default function App() {
         const merged = mergeLiveMaps(mergeCollaborativeMaps(data.map(mapFromSupabaseRow), shared), local, pending, dirtyMapsRef.current, blocked);
         const nextMaps = merged.filter((map) => !map.privateLibraryItem).map((map) =>
           map.id === current.activeMapId && current.editor
-            ? { ...map, isGameMode: map.collaboration ? true : current.editor.isGameMode, gridMode: current.editor.gridMode } : map);
+            ? { ...map, isGameMode: current.editor.isGameMode, gridMode: current.editor.gridMode,
+                drawColor: current.editor.drawColor, customColors: current.editor.customColors } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
         const mapsChanged = JSON.stringify(current.maps) !== JSON.stringify(nextMaps);
         const libraryChanged = JSON.stringify(current.personalLibrary) !== JSON.stringify(nextLibrary);
@@ -3851,8 +3855,9 @@ export default function App() {
             const key = `${user.id}:${map.collaboration.id}`;
             const saved = collaborativeSavedRef.current.get(key);
             const before = saved && saved.revision === map.collaboration.revision ? saved.progress : map.collaboration.baseProgress;
-            await collaborativeRpc('apply_collaborative_progress', { team_id: map.collaboration.id, cell_changes: progressChanges(before, map.progressCompleted) });
-            collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted });
+            const beforeDrawing = (saved && saved.revision === map.collaboration.revision ? saved.drawing : map.collaboration.baseDrawing) || { completed: map.completed, colors: map.colors };
+            await collaborativeRpc('apply_collaborative_changes', { team_id: map.collaboration.id, cell_changes: [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)] });
+            collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted, drawing: { completed: map.completed, colors: map.colors } });
             if (pending) await acknowledgeMapSave(pending);
             if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
             setSyncStatus('');
@@ -3960,6 +3965,7 @@ export default function App() {
       !isMapInitialized ||
       hydratingRef.current ||
       isDrawingRef.current ||
+      gameFillAnimationRef.current ||
       !activeMapId ||
       !user ||
       publicLibraryEditContext
@@ -4565,11 +4571,12 @@ export default function App() {
     const cadence = Math.max(8, Math.min(38, 1800 / ordered.length));
     const startedAt = performance.now();
     let cursor = 0;
+    let lastUiUpdate = 0;
 
     const advance = (now) => {
       const nextCursor = Math.min(
         ordered.length,
-        Math.max(cursor + 1, Math.floor((now - startedAt) / cadence) + 1)
+        Math.floor((now - startedAt) / cadence) + 1
       );
       const animations = [];
       while (cursor < nextCursor) {
@@ -4581,9 +4588,8 @@ export default function App() {
         cursor += 1;
       }
       animateCells(animations);
-      recordVersionCellChanges(animations);
       progressCompletedRef.current = new Set(working);
-      setProgressCompleted([...working]);
+      if (now - lastUiUpdate >= 100) { setProgressCompleted([...working]); lastUiUpdate = now; }
 
       if (cursor < ordered.length) {
         gameFillAnimationRef.current = window.requestAnimationFrame(advance);
@@ -4592,6 +4598,8 @@ export default function App() {
       gameFillAnimationRef.current = null;
       progressCompletedRef.current = target;
       setProgressCompleted([...target]);
+      recordVersionCellChanges(ordered.map((index) => ({ index, mode: target.has(index) ? 'draw' : 'erase' })));
+      recordPaintedCells(target.size - current.size);
       onComplete?.();
     };
 
@@ -4648,6 +4656,7 @@ export default function App() {
     if (target === "progress") {
       progressCompletedRef.current = next;
       setProgressCompleted([...s.completed]);
+      recordPaintedCells(next.size - current.size);
       return;
     }
 
@@ -4666,6 +4675,31 @@ export default function App() {
     ]);
   }
 
+  function historyActionSnapshot(action, reverse = false) {
+    const target = reverse ? action.before : action.after;
+    if (!activeMapRef.current?.collaboration || !['drawing', 'progress'].includes(action.target)) return target;
+    const before = new Set(action.before.completed), after = new Set(action.after.completed);
+    const desired = new Set(target.completed);
+    const merged = new Set(action.target === 'progress' ? progressCompletedRef.current : completedRef.current);
+    const nextColors = [...colorsRef.current];
+    for (const i of new Set([...before, ...after])) {
+      if (before.has(i) !== after.has(i) || (action.target === 'drawing' && action.before.colors[i] !== action.after.colors[i])) {
+        if (desired.has(i)) merged.add(i); else merged.delete(i);
+        if (action.target === 'drawing') nextColors[i] = target.colors[i];
+      }
+    }
+    const snapshot = { ...target, completed: [...merged], colors: nextColors };
+    if (action.target === 'drawing' && target.progressCompleted) {
+      const oldProgress = new Set(action.before.progressCompleted || []), newProgress = new Set(action.after.progressCompleted || []);
+      const desiredProgress = new Set(target.progressCompleted), mergedProgress = new Set(progressCompletedRef.current);
+      for (const i of new Set([...oldProgress, ...newProgress])) if (oldProgress.has(i) !== newProgress.has(i)) {
+        if (desiredProgress.has(i)) mergedProgress.add(i); else mergedProgress.delete(i);
+      }
+      snapshot.progressCompleted = [...mergedProgress];
+    }
+    return snapshot;
+  }
+
   function undo() {
     if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) {
       return;
@@ -4678,7 +4712,7 @@ export default function App() {
     if (!a) return;
 
     redoStackRef.current.push(a);
-    setSnapshot(a.before, a.target, a.sequence || [], true);
+    setSnapshot(historyActionSnapshot(a, true), a.target, a.sequence || [], true);
   }
 
   function redo() {
@@ -4693,7 +4727,7 @@ export default function App() {
     if (!a) return;
 
     undoStackRef.current.push(a);
-    setSnapshot(a.after, a.target, a.sequence);
+    setSnapshot(historyActionSnapshot(a), a.target, a.sequence);
   }
 
   function getCellFromPointerEvent(e) {
@@ -4753,7 +4787,10 @@ export default function App() {
             : null,
       });
     });
-    setCellAnimationTick((tick) => tick + 1);
+    if (!canvasAnimationFrameRef.current) canvasAnimationFrameRef.current = requestAnimationFrame(() => {
+      canvasAnimationFrameRef.current = null;
+      drawCanvasRef.current?.();
+    });
 
     window.clearTimeout(cellAnimationTimerRef.current);
     cellAnimationTimerRef.current = window.setTimeout(() => {
@@ -4764,6 +4801,7 @@ export default function App() {
 
   function recordPaintedCells(count) {
     if (!count) return;
+    if (activeMapRef.current?.collaboration && !isGameMode) return;
 
     const now = new Date();
     const date = getActivityDate(now);
@@ -5863,7 +5901,7 @@ export default function App() {
   function handleMapTypeChange(
     type
   ) {
-    if (activeMap?.collaboration || type === mapType) return;
+    if (type === mapType) return;
 
     finishStroke();
     setSelection(null);
@@ -6055,7 +6093,7 @@ export default function App() {
       pushHistory(before, after, [], [], "progress", added);
       redoStackRef.current = [];
     }
-    if (added.length) runProgressSequence(added, after, () => recordPaintedCells(added.length));
+    if (added.length) runProgressSequence(added, after);
     setIsGameFillOpen(false);
   }
 
@@ -6406,7 +6444,7 @@ export default function App() {
     setProgressCompleted(m.progressCompleted);
     progressExtraRef.current = m.progressExtra;
     setProgressExtra(m.progressExtra);
-    if (!preserveViewport || m.collaboration) setIsGameMode(m.isGameMode);
+    if (!preserveViewport) setIsGameMode(m.isGameMode);
 
     imageProcessingRef.current += 1;
     setImage(m.image);
@@ -6475,9 +6513,7 @@ export default function App() {
     activityLogRef.current = m.activityLog;
     setActivityLog(m.activityLog);
 
-    clearHistory();
-
-    if (!preserveViewport) setMapZoom(1);
+    if (!preserveViewport) { clearHistory(); setMapZoom(1); }
 
     localStorage.setItem(
       ACTIVE_MAP_KEY,
@@ -6749,7 +6785,7 @@ export default function App() {
     if (from === safeTargetIndex) return;
     prepareCardLayoutTransition("reorder", id);
     const rearranged = [...visible];
-    [rearranged[from], rearranged[safeTargetIndex]] = [rearranged[safeTargetIndex], rearranged[from]];
+    rearranged.splice(safeTargetIndex, 0, rearranged.splice(from, 1)[0]);
     let visibleIndex = 0;
     const next = ordered.map((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter ? rearranged[visibleIndex++] : map)
       .map((map, order) => ({ ...map, order }));
@@ -7279,6 +7315,7 @@ export default function App() {
   }
 
   function openHistoryModal(map) {
+    setHistoryParticipant('all');
     window.clearTimeout(historyCloseTimerRef.current);
     setHistoryClosing(false);
     setHistoryViewMode("changes");
@@ -7358,6 +7395,10 @@ export default function App() {
         return;
       }
       const nextVersions = current.versions.filter((item) => item.id !== version.id);
+      if (current.collaboration && version.eventId) {
+        try { await collaborativeRpc('set_collaborative_version_visibility', { team_id: current.collaboration.id, event_id: version.eventId, hide: true }); }
+        catch { setFeatureStatus('Не удалось удалить версию. Попробуйте ещё раз.'); setDeletingVersionId(''); return; }
+      }
       deletedVersionsRef.current = [{ mapId: current.id, version, index }, ...deletedVersionsRef.current].slice(0, 20);
       await persistFeatureMap({ ...current, versions: nextVersions });
       setHistoryPreviewIndex(nextVersions.length ? Math.min(index, nextVersions.length - 1) : 0);
@@ -7387,6 +7428,10 @@ export default function App() {
       return;
     }
     const versions = [...(map.versions || [])];
+    if (map.collaboration && deleted.version.eventId) {
+      try { await collaborativeRpc('set_collaborative_version_visibility', { team_id: map.collaboration.id, event_id: deleted.version.eventId, hide: false }); }
+      catch { deletedVersionsRef.current.unshift(deleted); setFeatureStatus('Не удалось вернуть версию. Попробуйте ещё раз.'); return; }
+    }
     if (!versions.some((version) => version.id === deleted.version.id)) {
       versions.splice(Math.min(deleted.index, versions.length), 0, deleted.version);
     }
@@ -7445,6 +7490,16 @@ export default function App() {
     setFeatureStatus("Сохраняем…");
     try {
     const current = map.id === activeMapId ? buildCurrentMap() || map : map;
+    if (current.collaboration) {
+      const error = await remoteSave(current);
+      if (error) { setFeatureStatus('Не удалось сохранить версию. Попробуйте ещё раз.'); return; }
+      const data = await collaborativeRpc('apply_collaborative_changes', { team_id: current.collaboration.id, cell_changes: [], save_version: true });
+      const next = normalizeMap(collaborativeMap(data));
+      setMaps((items) => mergeCollaborativeMaps(items, [next]));
+      setHistoryMapId(next.id); setHistoryPreviewIndex(next.versions.length - 1);
+      setFeatureStatus('');
+      return;
+    }
     const versioned = normalizeMap({ ...current, versions: [...(current.versions || []), createMapSnapshot(current, label)] });
     await persistFeatureMap(versioned);
     setHistoryMapId(versioned.id);
@@ -9954,7 +10009,7 @@ export default function App() {
 
                   <>
                     <div className={`map-mode-switch${isGameMode ? " is-game" : ""}`} role="group" aria-label="Режим карты">
-                      <button disabled={Boolean(activeMap?.collaboration)} className={!isGameMode ? "active" : ""} onClick={() => setIsGameMode(false)}>Рисование</button>
+                      <button className={!isGameMode ? "active" : ""} onClick={() => setIsGameMode(false)}>Рисование</button>
                       <button
                         className={isGameMode ? "active" : ""}
                         disabled={mapType === "free" ? !completed.length : !image}
@@ -10999,12 +11054,12 @@ export default function App() {
         </div>
       )}
 
-      {historyMap?.collaboration && <CollaborativeHistory key={historyMap.id} map={historyMap} closing={historyClosing} onClose={closeHistoryModal} Select={AnimatedSelect} />}
-      {historyMap && !historyMap.collaboration && (
-        <div className={`modal-overlay feature-modal-overlay history-overlay${versionUndoNotice ? " has-version-undo" : ""}${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
-          <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+      {historyMap && (
+        <div className={`modal-overlay feature-modal-overlay history-overlay${historyMap.collaboration ? ' collaborative-history-overlay' : ''}${versionUndoNotice ? " has-version-undo" : ""}${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
+          <div className={`create-modal history-modal${historyMap.collaboration ? ' collaborative-history-modal' : ''}`} onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ВСЕ ВЕРСИИ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
             <p className="feature-modal-intro">{historyReadOnly ? "История прогресса опубликована владельцем. Выбирай этапы или включи воспроизведение." : "Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням."}</p>
+            {historyMap.collaboration && <CollaborativeHistory map={historyMap} Select={AnimatedSelect} participant={historyParticipant} onParticipant={(value) => { setHistoryParticipant(value); setHistoryPlaying(false); setHistoryPreviewIndex(0); }} />}
             <div className={`history-view-switch is-${historyViewMode}`} role="group" aria-label="Отображение истории">
               <button type="button" className={historyViewMode === "changes" ? "active" : ""} onClick={() => changeHistoryViewMode("changes")}>Все изменения</button>
               <button type="button" className={historyViewMode === "days" ? "active" : ""} onClick={() => changeHistoryViewMode("days")}>По дням</button>
@@ -11040,7 +11095,7 @@ export default function App() {
                   </div>
                 </div>
                 {!historyReadOnly && <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>}
-                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && <button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
+                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && (!historyMap.collaboration || version.eventId) && <button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
               </>;
             })() : <p className="feature-empty">{historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внесите изменение в карту или сохраните важный этап вручную."}</p>}
           </div>

@@ -99,25 +99,14 @@ export function CollaborativeInvite({ user, ready, onLogin, onJoined }) {
   </div>;
 }
 
-export function CollaborativeHistory({ map, closing, onClose, Select }) {
-  const [participant, setParticipant] = useState('all');
+export function CollaborativeHistory({ map, Select, participant, onParticipant }) {
   const team = map.collaboration;
   const stats = contributionStats(team);
   const overall = getMapStats(map);
-  const events = [...team.events].reverse().filter((event) => participant === 'all' || event.actor_id === participant);
-  return <div className={`modal-overlay feature-modal-overlay history-overlay collaborative-history-overlay${closing ? ' is-closing' : ''}`} onMouseDown={onClose}>
-    <div className="create-modal history-modal collaborative-history-modal" role="dialog" aria-modal="true" aria-label="История совместной карты" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="modal-header"><h2>История «{map.name}»</h2><button className="modal-close" onClick={onClose}>×</button></div>
-      <p>Общий прогресс: {overall.filled} / {overall.total} клеток · {overall.total ? (overall.filled / overall.total * 100).toFixed(1) : 0}%</p>
-      <div className="collaborative-contributions">{stats.map((member) => <div key={member.id}><span>{member.name}</span><strong>{member.percent.toFixed(1)}%</strong><small>{member.cells} клеток</small><progress max="100" value={member.percent} /></div>)}</div>
-      <p className="collaborative-caption">Доля вклада — доля участника среди закрашенных сейчас клеток. При стирании клетка вычитается из вклада её автора.</p>
-      <div className="collaborative-filter"><span>История прогресса</span><Select ariaLabel="История прогресса по участникам" value={participant} onChange={setParticipant} options={[{ value: 'all', label: 'Общий вклад' }, ...team.members.map((member) => ({ value: member.id, label: member.name }))]} /></div>
-      <div className="history-version-list collaborative-events" key={participant}>{events.map((event) => {
-        const added = event.changes.filter((change) => change.filled).length;
-        const removed = event.changes.length - added;
-        return <div className="history-version-row" key={event.id}><div className="history-version-select"><span>{team.members.find((member) => member.id === event.actor_id)?.name || 'Участник'} · {added ? `+${added} клеток` : ''}{added && removed ? ', ' : ''}{removed ? `−${removed} клеток` : ''}</span><small>{new Date(event.created_at).toLocaleString('ru-RU')}</small></div></div>;
-      })}{!events.length && <p>Изменений пока нет.</p>}</div>
-      {team.events.length >= 1000 && <p className="collaborative-caption">Показаны последние 1000 изменений. Доли вклада учитывают весь текущий прогресс.</p>}
-    </div>
-  </div>;
+  return <>
+    <p>Общий прогресс: {overall.filled} / {overall.total} клеток · {overall.percent}%</p>
+    <div className="collaborative-contributions">{stats.map((member) => <div key={member.id}><span>{member.name}</span><strong>{member.percent.toFixed(1)}%</strong><small>{member.cells} клеток</small><progress max="100" value={member.percent} /></div>)}</div>
+    <p className="collaborative-caption">Доля вклада — доля участника среди закрашенных сейчас клеток. При стирании клетка вычитается из вклада её автора.</p>
+    <div className="collaborative-filter"><span>История прогресса</span><Select ariaLabel="История прогресса по участникам" value={participant} onChange={onParticipant} options={[{ value: 'all', label: 'Общий вклад' }, ...team.members.map((member) => ({ value: member.id, label: member.name }))]} /></div>
+  </>;
 }
