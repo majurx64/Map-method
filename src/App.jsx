@@ -7626,9 +7626,21 @@ export default function App() {
         await queueMapSave(user.id, normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current)));
         pendingVersionSequenceRef.current = [];
       }
-      const registration = await navigator.serviceWorker?.getRegistration();
-      await registration?.update();
-      window.location.reload();
+      // A failed worker check must not block loading an already published site.
+      let workerTimer;
+      try {
+        await Promise.race([
+          (async () => {
+            const registration = await navigator.serviceWorker?.getRegistration();
+            await registration?.update();
+          })(),
+          new Promise((resolve) => { workerTimer = setTimeout(resolve, 4000); }),
+        ]);
+      } catch { /* Reload also works when the worker endpoint is unavailable. */ }
+      finally { clearTimeout(workerTimer); }
+      const url = new URL(window.location.href);
+      url.searchParams.set('site-update', `${latestSiteVersion}-${Date.now()}`);
+      window.location.replace(url.href);
     } catch { setSiteUpdateStatus('Не удалось обновить сайт. Повторите попытку.'); }
   }
 
