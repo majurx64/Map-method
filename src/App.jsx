@@ -10407,13 +10407,16 @@ export default function App() {
 
                               <button
                                 className="delete-color-btn"
+                                aria-label="Удалить цвет"
                                 onClick={() =>
                                   deleteCustomColor(
                                     c
                                   )
                                 }
                               >
-                                ×
+                                <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" style={{ display: "block", pointerEvents: "none" }}>
+                                  <path d="M3 3 13 13M13 3 3 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                                </svg>
                               </button>
                             </div>
                           )
