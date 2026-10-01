@@ -3562,6 +3562,7 @@ export default function App() {
     if (
       !isMapInitialized ||
       hydratingRef.current ||
+      isDrawingRef.current ||
       !activeMapId
     ) {
       return;
@@ -3622,6 +3623,7 @@ export default function App() {
     activityLog,
     drawColor,
     customColors,
+    isDrawing,
   ]);
 
   const buildCurrentMap = useCallback(
@@ -3930,6 +3932,7 @@ export default function App() {
     if (
       !isMapInitialized ||
       hydratingRef.current ||
+      isDrawingRef.current ||
       !activeMapId ||
       !user ||
       publicLibraryEditContext
@@ -3974,6 +3977,7 @@ export default function App() {
     drawColor,
     customColors,
     isMapInitialized,
+    isDrawing,
     user,
     activeMapId,
     buildCurrentMap,
@@ -5280,15 +5284,10 @@ export default function App() {
       Math.min(window.devicePixelRatio || 1, 4096 / Math.max(rect.width, rect.height));
     const physicalPixel = 1 / dpr;
 
-    c.width = Math.max(
-      1,
-      Math.round(rect.width * dpr)
-    );
-
-    c.height = Math.max(
-      1,
-      Math.round(rect.height * dpr)
-    );
+    const pixelWidth = Math.max(1, Math.round(rect.width * dpr));
+    const pixelHeight = Math.max(1, Math.round(rect.height * dpr));
+    if (c.width !== pixelWidth) c.width = pixelWidth;
+    if (c.height !== pixelHeight) c.height = pixelHeight;
 
     const ctx =
       c.getContext("2d");
@@ -5301,6 +5300,7 @@ export default function App() {
       0,
       0
     );
+    ctx.clearRect(0, 0, rect.width, rect.height);
 
     // Одинаковый фильтр сохраняет один оттенок пустых клеток в обоих режимах.
     ctx.filter = "none";
@@ -5448,8 +5448,12 @@ export default function App() {
     }
 
     if (hasActiveAnimations) {
-      window.cancelAnimationFrame(canvasAnimationFrameRef.current);
-      canvasAnimationFrameRef.current = window.requestAnimationFrame(drawCanvas);
+      if (!canvasAnimationFrameRef.current) {
+        canvasAnimationFrameRef.current = window.requestAnimationFrame(() => {
+          canvasAnimationFrameRef.current = null;
+          drawCanvasRef.current?.();
+        });
+      }
     }
 
     for (
@@ -5475,17 +5479,12 @@ export default function App() {
     if (screen !== "editor")
       return;
 
-    drawCanvas();
-    let secondFrame = 0;
-    const firstFrame = requestAnimationFrame(() => {
-      drawCanvas();
-      secondFrame = requestAnimationFrame(drawCanvas);
-    });
-
-    return () => {
-      cancelAnimationFrame(firstFrame);
-      cancelAnimationFrame(secondFrame);
-    };
+    if (!canvasAnimationFrameRef.current) {
+      canvasAnimationFrameRef.current = requestAnimationFrame(() => {
+        canvasAnimationFrameRef.current = null;
+        drawCanvasRef.current?.();
+      });
+    }
   }, [
     screen,
     rows,
@@ -10852,7 +10851,7 @@ export default function App() {
         </div>
       )}
 
-      <EditorColorPicker open={editorColorOpen && mapType === 'free' && !isGameMode && screen === 'editor'} anchorRef={editorColorAnchorRef} value={normalizeHexColor(newColor)||'#111111'} onChange={setNewColor} onClose={() => setEditorColorOpen(false)} />
+      <EditorColorPicker open={editorColorOpen && mapType === 'free' && !isGameMode && screen === 'editor'} anchorRef={editorColorAnchorRef} value={normalizeHexColor(newColor)||'#111111'} onChange={setNewColor} onClose={() => { if (editorColorOpen) addCustomColor(); setEditorColorOpen(false); }} />
       {windowsInstallHelp && (
         <div className={`modal-overlay feature-modal-overlay${closingModal === "windows-install" ? " is-closing" : ""}`} onMouseDown={() => closeModal("windows-install")}>
           <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="windows-install-title" onMouseDown={(event) => event.stopPropagation()}>
