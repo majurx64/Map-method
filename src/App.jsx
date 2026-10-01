@@ -2070,6 +2070,7 @@ export default function App() {
   const heroNotePointerRef = useRef(null);
   const heroNoteModeRef = useRef("draw");
   const suppressContextMenuRef = useRef(false);
+  const rightButtonNavigationGuardRef = useRef(0);
   const suppressHeroContextMenuRef = useRef(false);
   const wasGameCompleteRef = useRef(false);
   const gameVictoryBaselineMapRef = useRef(null);
@@ -2080,6 +2081,7 @@ export default function App() {
   const cellAnimationTimerRef = useRef(null);
   const canvasAnimationFrameRef = useRef(null);
   const drawCanvasRef = useRef(null);
+  const canvasPaintStateRef = useRef(null);
   const analyticsSessionTrackedRef = useRef(false);
 
   const isDrawingRef = useRef(false);
@@ -2938,7 +2940,19 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
+    let restoringRightButtonNavigation = false;
     const handlePopState = (event) => {
+      if (restoringRightButtonNavigation) {
+        restoringRightButtonNavigation = false;
+        return;
+      }
+      // Some browsers interpret a right-button drawing stroke as Back.
+      // Restore that history entry without leaving the editor or losing the stroke.
+      if (performance.now() < rightButtonNavigationGuardRef.current) {
+        restoringRightButtonNavigation = true;
+        window.history.go(1);
+        return;
+      }
       const availableScreens = ["home", "maps", "editor", "account", "library", "feedback-inbox", "analytics", "shared", "auth"];
       const previousScreen = event.state?.mapMethod && availableScreens.includes(event.state.screen)
         ? event.state.screen
@@ -3199,7 +3213,7 @@ export default function App() {
   }, [completed]);
 
   useEffect(() => {
-    progressCompletedRef.current = new Set(progressCompleted);
+    if (!gameFillAnimationRef.current) progressCompletedRef.current = new Set(progressCompleted);
   }, [progressCompleted]);
 
   useEffect(() => {
@@ -4571,7 +4585,6 @@ export default function App() {
     const cadence = Math.max(8, Math.min(38, 1800 / ordered.length));
     const startedAt = performance.now();
     let cursor = 0;
-    let lastUiUpdate = 0;
 
     const advance = (now) => {
       const nextCursor = Math.min(
@@ -4589,7 +4602,6 @@ export default function App() {
       }
       animateCells(animations);
       progressCompletedRef.current = new Set(working);
-      if (now - lastUiUpdate >= 100) { setProgressCompleted([...working]); lastUiUpdate = now; }
 
       if (cursor < ordered.length) {
         gameFillAnimationRef.current = window.requestAnimationFrame(advance);
@@ -5060,6 +5072,7 @@ export default function App() {
     if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) return;
     const i = getCellFromPointerEvent(e);
     if (i === null) return;
+    if (e.button === 2) rightButtonNavigationGuardRef.current = Infinity;
     canvasRef.current?.focus({ preventScroll: true });
     canvasRef.current?.setPointerCapture(e.pointerId);
     const currentSet = isGameMode ? progressCompletedRef.current : completedRef.current;
@@ -5151,6 +5164,7 @@ export default function App() {
   }
 
   function handlePointerMove(e) {
+    if (e.buttons & 2) e.preventDefault();
     const pan = panGestureRef.current;
     if (pan?.pointerId === e.pointerId) {
       viewportRef.current.scrollLeft = pan.left + pan.x - e.clientX;
@@ -5217,6 +5231,10 @@ export default function App() {
   }
 
   function handlePointerUp(e) {
+    if (e.button === 2) {
+      e.preventDefault();
+      rightButtonNavigationGuardRef.current = performance.now() + 350;
+    }
     if (panGestureRef.current?.pointerId === e.pointerId || selectionGestureRef.current?.pointerId === e.pointerId) {
       handlePointerMove(e);
       if (selectionGestureRef.current?.pointerId === e.pointerId) setSelectionReady(true);
@@ -5264,6 +5282,7 @@ export default function App() {
   }
 
   function handlePointerCancel() {
+    if (rightButtonNavigationGuardRef.current === Infinity) rightButtonNavigationGuardRef.current = performance.now() + 350;
     panGestureRef.current = null;
     if (selectionGestureRef.current) {
       setSelection(null);
@@ -5372,7 +5391,25 @@ export default function App() {
       0,
       0
     );
-    ctx.clearRect(0, 0, rect.width, rect.height);
+    const paintKey = [c, pixelWidth, pixelHeight, dpr, cols, rows, actualTotal, mapType, isGameMode, showImage, image];
+    const previousPaint = canvasPaintStateRef.current;
+    const fullRepaint = !previousPaint || paintKey.some((value, index) => value !== previousPaint.key[index]);
+    const drawingCells = completedRef.current;
+    const activeCells = isGameMode ? progressCompletedRef.current : drawingCells;
+    const paintColors = colorsRef.current;
+    const dirtyCells = new Set(cellAnimationsRef.current.keys());
+    if (fullRepaint) {
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      for (let index = 0; index < actualTotal; index++) dirtyCells.add(index);
+    } else {
+      previousPaint.animations.forEach((index) => dirtyCells.add(index));
+      if (previousPaint.drawing !== drawingCells || previousPaint.active !== activeCells || previousPaint.colors !== paintColors) {
+        for (let index = 0; index < actualTotal; index++) {
+          if (previousPaint.drawing.has(index) !== drawingCells.has(index) || previousPaint.active.has(index) !== activeCells.has(index) || previousPaint.colors[index] !== paintColors[index]) dirtyCells.add(index);
+        }
+      }
+    }
+    canvasPaintStateRef.current = { key: paintKey, drawing: drawingCells, active: activeCells, colors: paintColors, animations: [...cellAnimationsRef.current.keys()] };
 
     // Одинаковый фильтр сохраняет один оттенок пустых клеток в обоих режимах.
     ctx.filter = "none";
@@ -5386,22 +5423,19 @@ export default function App() {
     const now = performance.now();
     let hasActiveAnimations = false;
 
-    for (
-      let i = 0;
-      i < actualTotal;
-      i++
-    ) {
+    for (const i of dirtyCells) {
+      if (i < 0 || i >= actualTotal) continue;
       const r =
         Math.floor(i / cols);
 
       const col =
         i % cols;
 
-      const x =
-        col * cw;
+      const x = Math.round(col * cw * dpr) / dpr;
 
-      const y =
-        r * ch;
+      const y = Math.round(r * ch * dpr) / dpr;
+      const cellWidth = Math.round((col + 1) * cw * dpr) / dpr - x;
+      const cellHeight = Math.round((r + 1) * ch * dpr) / dpr - y;
 
       const drawingActive = completedRef.current.has(i);
       const active =
@@ -5416,14 +5450,14 @@ export default function App() {
           ? !drawingActive
             ? "#eeeeee"
             : active
-              ? colors[i] || "#111111"
+              ? paintColors[i] || "#111111"
               : "#deded8"
           : active
-            ? colors[i] || "#111111"
+            ? paintColors[i] || "#111111"
             : "#eeeeee";
       } else {
         fill = active
-          ? colors[i] || "#eeeeee"
+          ? paintColors[i] || "#eeeeee"
           : "#eeeeee";
       }
 
@@ -5444,14 +5478,14 @@ export default function App() {
       if (isAppearing) {
         const inactiveFill = mapType === "free" && isGameMode && drawingActive ? "#deded8" : "#eeeeee";
         ctx.fillStyle = inactiveFill;
-        ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
+        ctx.fillRect(x, y, cellWidth, cellHeight);
         ctx.globalAlpha = animationProgress;
         ctx.fillStyle = fill;
-        ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
+        ctx.fillRect(x, y, cellWidth, cellHeight);
         ctx.globalAlpha = 1;
       } else {
         ctx.fillStyle = fill;
-        ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
+        ctx.fillRect(x, y, cellWidth, cellHeight);
       }
 
       // Поверх основы остаётся мягкий «пульс», поэтому анимация не исчезает.
@@ -5475,14 +5509,14 @@ export default function App() {
       ) {
         ctx.globalAlpha = 0.35;
         ctx.fillStyle =
-          colors[i] ||
+          paintColors[i] ||
           "#dcdcdc";
 
         ctx.fillRect(
           x,
           y,
-          cw + physicalPixel,
-          ch + physicalPixel
+          cellWidth,
+          cellHeight
         );
 
         ctx.globalAlpha = 1;
@@ -5493,7 +5527,7 @@ export default function App() {
       if (isErasing) {
         ctx.globalAlpha = 1 - animationProgress;
         ctx.fillStyle = animation.color || fill;
-        ctx.fillRect(x, y, cw + physicalPixel, ch + physicalPixel);
+        ctx.fillRect(x, y, cellWidth, cellHeight);
         ctx.globalAlpha = 1;
       }
     }
