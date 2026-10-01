@@ -6,7 +6,7 @@ export function AnimatedEditorPresence({ visible, children }) {
   if (visible) lastContent.current = children;
   useEffect(() => {
     if (visible) { setMounted(true); return; }
-    const timer = setTimeout(() => setMounted(false), 360);
+    const timer = setTimeout(() => setMounted(false), 460);
     return () => clearTimeout(timer);
   }, [visible]);
   return <div className={`editor-presence${visible ? ' is-visible' : ''}`} aria-hidden={!visible} inert={!visible}>

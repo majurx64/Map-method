@@ -59,7 +59,7 @@ const BASIC_COLORS = [
   "#00c7be",
   "#007aff",
   "#5856d6",
-  "#FF47CA",
+  "#ff47ca",
   UTILITY_COLOR,
 ];
 
@@ -10349,6 +10349,7 @@ export default function App() {
                     )}
                   </div>
 
+                  <AnimatedEditorPanel viewKey="custom-colors">
                   {customColors.length >
                     0 && (
                     <div className="color-palette-section">
@@ -10414,6 +10415,7 @@ export default function App() {
                     </div>
                   )}
 
+                  </AnimatedEditorPanel>
                   <div className="utility-color-section">
                     <div className="utility-color-copy">
                       <strong>Служебные клетки</strong>

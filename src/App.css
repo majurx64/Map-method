@@ -3911,10 +3911,10 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .right-sidebar .utility-color-copy strong { grid-column:1; grid-row:1; }
 .right-sidebar .utility-color-copy span { grid-column:1/-1; grid-row:2; }
 .right-sidebar .utility-color { grid-column:2; grid-row:1; }
-.editor-presence { display:grid; grid-template-rows:0fr; transition:grid-template-rows 350ms cubic-bezier(.64,0,.78,0); }
-.editor-presence.is-visible { grid-template-rows:1fr; transition-timing-function:cubic-bezier(.22,1,.36,1); }
-.editor-presence-inner { min-height:0; overflow:hidden; opacity:0; transform:translateY(-6px); transition:opacity 350ms ease-in,transform 350ms ease-in; }
-.editor-presence.is-visible .editor-presence-inner { opacity:1; transform:translateY(0); transition-timing-function:ease-out; }
+.editor-presence { display:grid; grid-template-rows:0fr; transition:grid-template-rows 440ms cubic-bezier(.4,0,.2,1); }
+.editor-presence.is-visible { grid-template-rows:1fr; }
+.editor-presence-inner { min-height:0; overflow:hidden; opacity:0; transform:translateY(-6px); transition:opacity 420ms ease,transform 440ms cubic-bezier(.4,0,.2,1); }
+.editor-presence.is-visible .editor-presence-inner { opacity:1; transform:translateY(0); }
 .editor-presence .palette-section { animation:none; }
 .left-sidebar .clear-btn { margin:0; border-color:#d8a8a0; color:#a34536; background:#fff3ef; transition:background 180ms ease,border-color 180ms ease; }
 .left-sidebar .clear-btn:hover { background:#f9e4dd; border-color:#bc776b; }
@@ -3940,3 +3940,6 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .editor-presence .game-fill-control { animation:none; }
 .map-zoom-toolbar .tool-btn:last-child { width:auto; min-width:54px; padding-inline:10px; }
 @media (prefers-reduced-motion:reduce) { .right-sidebar .selected-color-preview,.editor-picker-trigger > i,.right-sidebar .color-item { transition:none; } }
+.left-sidebar .tool-stack > .editor-presence { transition-property:grid-template-rows,margin-bottom; }
+.left-sidebar .tool-stack > .editor-presence:not(.is-visible) { margin-bottom:-12px; }
+.right-sidebar .color-palette .editor-panel-transition { transition-duration:420ms; }
