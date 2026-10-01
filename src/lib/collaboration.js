@@ -3,11 +3,19 @@ import { supabase } from './supabase';
 export const INVITE_KEY = 'mm-collaborative-invite';
 export const JOIN_KEY = 'mm-collaborative-join';
 
+export function rememberCollaborativeInvite() {
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get('collaborate') || new URLSearchParams(url.hash.slice(1)).get('collaborate');
+  if (token && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(token)) localStorage.setItem(INVITE_KEY, token);
+  return localStorage.getItem(INVITE_KEY) || '';
+}
+
 export function collaborativeMap(data) {
   return { ...data.map_data, isGameMode: true, versions: [], collaboration: {
     id: data.id, ownerId: data.owner_id, inviteToken: data.invite_token,
     members: data.members || [], claims: data.claims || {}, events: data.events || [],
     revision: data.revision, baseProgress: data.map_data.progressCompleted || [],
+    hidden: Boolean(data.hidden),
   } };
 }
 
@@ -30,7 +38,7 @@ export async function loadCollaborativeMaps() {
 export function mergeCollaborativeMaps(maps, shared) {
   const merged = new Map(maps.map((map) => [map.id, map]));
   shared.forEach((map) => merged.set(map.id, map));
-  return [...merged.values()];
+  return [...merged.values()].filter((map) => !map.collaboration?.hidden);
 }
 
 export function participantName(user) {

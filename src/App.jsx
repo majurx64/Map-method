@@ -7,7 +7,7 @@ import Auth from "./Auth";
 import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPanel';
 import EditorColorPicker from './EditorColorPicker';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
-import { collaborativeRpc, loadCollaborativeMaps, mergeCollaborativeMaps, progressChanges } from './lib/collaboration';
+import { collaborativeRpc, loadCollaborativeMaps, mergeCollaborativeMaps, progressChanges, INVITE_KEY } from './lib/collaboration';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
@@ -2543,7 +2543,7 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
-    if (!user?.id || isLibraryOwner || mapsLoading || !isMapInitialized || maps.length || screen === "shared" || syncStatus || !navigator.onLine) return;
+    if (!user?.id || isLibraryOwner || mapsLoading || !isMapInitialized || maps.length || screen === "shared" || syncStatus || !navigator.onLine || localStorage.getItem(INVITE_KEY)) return;
     const key = `${ONBOARDING_KEY}:${user.id}`;
     if (localStorage.getItem(key)) return;
     const timer = window.setTimeout(() => {
@@ -6488,7 +6488,6 @@ export default function App() {
   function openRenameModal(
     map
   ) {
-    if (map.collaboration) return;
     setClosingModal("");
     setRenameValue(
       map.name || ""
@@ -6547,6 +6546,18 @@ export default function App() {
     }
 
     if (user) {
+      if (renamed.collaboration) {
+        try {
+          await collaborativeRpc('manage_collaborative_map', { team_id: renamed.collaboration.id, details: {
+            name: renamed.name, description: renamed.description, category: renamed.category,
+            deadline: renamed.deadline, planMode: renamed.planMode, planPausedUntil: renamed.planPausedUntil,
+          } });
+        } catch {
+          setMaps((current) => current.map((map) => map.id === old.id ? old : map));
+          setMapActionError('Не удалось изменить совместную карту. Попробуйте ещё раз.');
+          return;
+        }
+      }
       const err =
         await remoteSave(
           renamed
@@ -6578,7 +6589,6 @@ export default function App() {
   function openDeleteModal(
     map
   ) {
-    if (map.collaboration) return;
     setClosingModal("");
     setMapToDelete(map);
     setIsDeleteOpen(true);
@@ -6672,8 +6682,12 @@ export default function App() {
     setMapActionError("");
     try {
       if (user && !pending) {
-        const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(deleted, user.id), { onConflict: "id" });
-        if (error) throw error;
+        if (deleted.collaboration) {
+          await collaborativeRpc('manage_collaborative_map', { team_id: deleted.collaboration.id, hide: false });
+        } else {
+          const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(deleted, user.id), { onConflict: "id" });
+          if (error) throw error;
+        }
       }
       prepareCardLayoutTransition("restore", deleted.id);
       setMaps((current) => [...current.filter((map) => map.id !== deleted.id), deleted]);
@@ -6702,8 +6716,12 @@ export default function App() {
     try {
       const remove = async () => {
         if (!user) return;
-        const { error } = await supabase.from("maps").delete().eq("id", id).eq("user_id", user.id);
-        if (error) throw error;
+        if (pending.map.collaboration) {
+          await collaborativeRpc('manage_collaborative_map', { team_id: pending.map.collaboration.id, hide: true });
+        } else {
+          const { error } = await supabase.from("maps").delete().eq("id", id).eq("user_id", user.id);
+          if (error) throw error;
+        }
         await discardPendingMap(user.id, id).catch(() => null);
       };
       const request = remoteSaveQueueRef.current.then(remove, remove);
@@ -9501,7 +9519,6 @@ export default function App() {
                             </button>
 
                             <button
-                              disabled={Boolean(map.collaboration)}
                               className="tool-btn"
                               onClick={(
                                 e
@@ -9553,7 +9570,6 @@ export default function App() {
                             </button>
 
                             <button
-                              disabled={Boolean(map.collaboration)}
                               className="tool-btn danger-action"
                               onClick={(
                                 e
@@ -10983,7 +10999,7 @@ export default function App() {
         </div>
       )}
 
-      {historyMap?.collaboration && <CollaborativeHistory key={historyMap.id} map={historyMap} closing={historyClosing} onClose={closeHistoryModal} />}
+      {historyMap?.collaboration && <CollaborativeHistory key={historyMap.id} map={historyMap} closing={historyClosing} onClose={closeHistoryModal} Select={AnimatedSelect} />}
       {historyMap && !historyMap.collaboration && (
         <div className={`modal-overlay feature-modal-overlay history-overlay${versionUndoNotice ? " has-version-undo" : ""}${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
           <div className="create-modal history-modal" onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
@@ -11039,7 +11055,7 @@ export default function App() {
         <div className={`modal-overlay feature-modal-overlay${shareClosing ? " is-closing" : ""}`} onMouseDown={closeShareDialog}>
           <div className="create-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="share-modal-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ПОДЕЛИТЬСЯ</span><h2 id="share-modal-title">{shareMap.collaboration ? 'Совместная карта' : shareStatus === "revoked" ? "Ссылка отключена" : "Публичная ссылка"}</h2></div><button type="button" className="modal-close" disabled={shareStatus === "saving"} onClick={closeShareDialog}>×</button></div>
-            <CollaborativeShare key={shareMap.id} map={shareMap} user={user} save={remoteSave} onCreated={(map) => {
+            <CollaborativeShare key={shareMap.id} map={shareMap} user={user} save={remoteSave} AnimatedText={CrossfadeText} onCreated={(map) => {
               const next = normalizeMap(map);
               setMaps((current) => mergeCollaborativeMaps(current, [next]));
               setShareMap(next); shareDialogRef.current = next;
@@ -11066,13 +11082,15 @@ export default function App() {
       )}
 
       {onboardingOpen && (
-        <div className={`modal-overlay onboarding-overlay${closingModal === 'onboarding' ? ' is-closing' : ''}`}>
-          <div className="create-modal onboarding-modal">
+        <div className={`modal-overlay onboarding-overlay${closingModal === 'onboarding' ? ' is-closing' : ''}`} onMouseDown={finishOnboarding}>
+          <div className="create-modal onboarding-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="onboarding-progress">{[0,1,2].map((step) => <i key={step} className={step <= onboardingStep ? "active" : ""} />)}</div>
-            {onboardingStep === 0 && <><span className="onboarding-icon">□</span><h2>Добро пожаловать в Map Method</h2><p>Здесь большая цель превращается в карту: один выполненный шаг — одна закрашенная клетка.</p></>}
-            {onboardingStep === 1 && <><span className="onboarding-icon">✦</span><h2>Двигайтесь в своём темпе</h2><p>Укажите срок и выберите спокойный, ровный или интенсивный режим. План будет пересчитываться сам.</p></>}
-            {onboardingStep === 2 && <><span className="onboarding-icon">✓</span><h2>Попробуйте на готовой карте</h2><p>Мы создадим небольшую демонстрационную карту. Её можно менять или удалить как обычную.</p></>}
-            <div className="onboarding-actions">{onboardingStep > 0 && <button type="button" onClick={() => setOnboardingStep((step) => step - 1)}>Назад</button>}<button type="button" className="feature-primary" onClick={() => onboardingStep < 2 ? setOnboardingStep((step) => step + 1) : createDemoMap()}>{onboardingStep < 2 ? "Дальше" : "Создать демо-карту"}</button></div>
+            <div className="onboarding-pages">{[
+              ['□', 'Добро пожаловать в Map Method', 'Здесь большая цель превращается в карту: один выполненный шаг — одна закрашенная клетка.'],
+              ['✦', 'Двигайтесь в своём темпе', 'Укажите срок и выберите спокойный, ровный или интенсивный режим. План будет пересчитываться сам.'],
+              ['✓', 'Попробуйте на готовой карте', 'Мы создадим небольшую демонстрационную карту. Её можно менять или удалить как обычную.'],
+            ].map(([icon, title, text], index) => <div key={title} className={`onboarding-page${index === onboardingStep ? ' is-active' : ''}`} style={{ '--page-direction': index < onboardingStep ? -1 : 1 }} aria-hidden={index !== onboardingStep}><span className="onboarding-icon">{icon}</span><h2>{title}</h2><p>{text}</p></div>)}</div>
+            <div className="onboarding-actions"><button type="button" className={`onboarding-back${onboardingStep ? '' : ' is-hidden'}`} tabIndex={onboardingStep ? 0 : -1} onClick={() => setOnboardingStep((step) => Math.max(0, step - 1))}>Назад</button><button type="button" className="feature-primary" onClick={() => onboardingStep < 2 ? setOnboardingStep((step) => step + 1) : createDemoMap()}><CrossfadeText value={onboardingStep < 2 ? "Дальше" : "Создать демо-карту"} /></button></div>
             <button type="button" className="onboarding-skip" onClick={finishOnboarding}>Пропустить</button>
           </div>
         </div>
@@ -11228,7 +11246,7 @@ export default function App() {
               <p className="delete-modal-text">
                 <strong>«{mapToDelete.name}»</strong>
                 <br />
-                Это действие нельзя отменить: карта и весь её прогресс будут удалены.
+                {mapToDelete.collaboration ? 'Карта будет убрана только из Вашего списка. У других участников она останется, Ваш вклад и история сохранятся.' : 'Это действие нельзя отменить: карта и весь её прогресс будут удалены.'}
               </p>
 
               <div className="delete-modal-actions">

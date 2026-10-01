@@ -2,6 +2,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import { rememberCollaborativeInvite } from './lib/collaboration'
+
+// Keep the invitation before the authentication callback cleans up the URL.
+rememberCollaborativeInvite()
 
 // Allow a direct diagnostic visit without changing the normal canonical URL.
 const directCheck = new URLSearchParams(window.location.search).get('mm_direct') === '1'

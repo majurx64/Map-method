@@ -3968,3 +3968,24 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .collaborative-template-locked { display: none; }
 @keyframes collaborative-content-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .collaborative-events { animation: none; } }
+.onboarding-pages { display:grid; width:100%; }
+.onboarding-page { grid-area:1 / 1; opacity:0; visibility:hidden; transform:translateX(calc(var(--page-direction) * 16px)); transition:opacity 320ms ease,transform 380ms cubic-bezier(.16,1,.3,1),visibility 0s 380ms; }
+.onboarding-page.is-active { opacity:1; visibility:visible; transform:translateX(0); transition-delay:0s; }
+.onboarding-page p { min-height:52px; margin:0; color:#70766e; line-height:1.55; }
+.onboarding-actions .onboarding-back { transition:opacity 260ms ease,visibility 0s 260ms; }
+.onboarding-actions .onboarding-back.is-hidden { opacity:0; visibility:hidden; pointer-events:none; }
+.onboarding-actions .feature-primary { min-width:180px; }
+.collaborative-share .share-link button { min-width:146px; transition:background 240ms ease,box-shadow 240ms ease,transform 240ms ease; }
+.collaborative-share .share-link button.is-copied { background:#32624f; box-shadow:0 0 0 3px rgba(50,98,79,.12); }
+.collaborative-copy-status { min-height:21px; margin-top:10px; }
+.collaborative-copy-status p { margin:0; }
+.collaborative-invite-overlay { z-index:2400; }
+.collaborative-history-overlay { align-items:center; justify-content:center; padding:24px; }
+.collaborative-history-modal { height:auto; min-height:0; max-height:calc(100dvh - 48px); overflow:auto; }
+.collaborative-history-modal .collaborative-events { height:auto; max-height:min(34dvh,330px); align-content:start; }
+.collaborative-filter .animated-select-trigger { height:44px; padding:0 42px 0 14px; font-family:inherit; font-size:14px; font-weight:500; }
+.collaborative-filter .animated-select-trigger span { font:inherit; }
+.collaborative-filter .animated-select-trigger i { right:15px !important; }
+.collaborative-filter .animated-select-menu button { font-family:inherit; font-size:14px; font-weight:500; min-height:38px; padding:0 12px; }
+@media (max-width:600px) { .collaborative-history-overlay { padding:12px; } .collaborative-history-modal { max-height:calc(100dvh - 24px); } }
+@media (prefers-reduced-motion:reduce) { .onboarding-page,.onboarding-actions .onboarding-back { transition:none; } }

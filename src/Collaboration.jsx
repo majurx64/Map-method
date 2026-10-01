@@ -1,12 +1,23 @@
-import { useEffect, useState } from 'react';
-import { collaborativeMap, collaborativeRpc, contributionStats, INVITE_KEY, JOIN_KEY, participantName } from './lib/collaboration';
+import { useEffect, useRef, useState } from 'react';
+import { collaborativeMap, collaborativeRpc, contributionStats, INVITE_KEY, JOIN_KEY, participantName, rememberCollaborativeInvite } from './lib/collaboration';
 import { getMapStats } from './lib/grid';
 
-export function CollaborativeShare({ map, user, save, onCreated }) {
+export function CollaborativeShare({ map, user, save, onCreated, AnimatedText }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef(null);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
   const token = map.collaboration?.inviteToken;
-  const link = token ? `${window.location.origin}/?collaborate=${token}` : '';
+  const link = token ? `${import.meta.env.PROD ? 'https://www.mapmethod.ru' : window.location.origin}/#collaborate=${token}` : '';
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true); setStatus('Приглашение скопировано.');
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => { setCopied(false); setStatus(''); }, 2400);
+    } catch { setStatus('Выделите ссылку и скопируйте вручную.'); }
+  }
   async function create() {
     setBusy(true); setStatus('');
     try {
@@ -21,22 +32,24 @@ export function CollaborativeShare({ map, user, save, onCreated }) {
     <h3>Вести карту совместно</h3>
     <p>Участники заполняют одну карту, видят изменения друг друга и свой вклад. Рисунок и размер карты фиксируются при создании приглашения.</p>
     {!map.collaboration && <button className="feature-primary" disabled={busy || !user} onClick={create}>{busy ? 'Создаём…' : 'Пригласить участников'}</button>}
-    {link && <div className="share-link"><input aria-label="Приглашение в совместную карту" readOnly value={link} /><button onClick={async () => { try { await navigator.clipboard.writeText(link); setStatus('Приглашение скопировано.'); } catch { setStatus('Выделите ссылку и скопируйте вручную.'); } }}>Копировать</button></div>}
+    {link && <div className="share-link"><input aria-label="Приглашение в совместную карту" readOnly value={link} /><button type="button" className={copied ? 'is-copied' : ''} onClick={copy}><AnimatedText value={copied ? '✓ Скопировано' : 'Копировать'} /></button></div>}
     {map.collaboration && !token && <p>Новые приглашения создаёт владелец карты.</p>}
-    <p role="status">{status}</p>
+    <div className="collaborative-copy-status" role="status" aria-live="polite"><AnimatedText as="p" value={status} /></div>
   </section>;
 }
 
 export function CollaborativeInvite({ user, ready, onLogin, onJoined }) {
-  const [token, setToken] = useState(() => {
-    const value = new URLSearchParams(window.location.search).get('collaborate');
-    if (value && /^[a-f\d-]{36}$/i.test(value)) localStorage.setItem(INVITE_KEY, value);
-    return localStorage.getItem(INVITE_KEY) || '';
-  });
+  const [token, setToken] = useState(rememberCollaborativeInvite);
   const [preview, setPreview] = useState(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [closing, setClosing] = useState(false);
+  useEffect(() => {
+    const read = () => { const invitation = rememberCollaborativeInvite(); if (invitation) setToken(invitation); };
+    window.addEventListener('hashchange', read);
+    window.addEventListener('popstate', read);
+    return () => { window.removeEventListener('hashchange', read); window.removeEventListener('popstate', read); };
+  }, []);
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -49,6 +62,8 @@ export function CollaborativeInvite({ user, ready, onLogin, onJoined }) {
     setClosing(true);
     if (clear) { localStorage.removeItem(INVITE_KEY); localStorage.removeItem(JOIN_KEY); }
     const url = new URL(window.location.href); url.searchParams.delete('collaborate');
+    const fragment = new URLSearchParams(url.hash.slice(1)); fragment.delete('collaborate');
+    url.hash = fragment.toString();
     window.history.replaceState({}, '', url);
     setTimeout(() => { setToken(''); setClosing(false); }, 220);
   }
@@ -72,7 +87,7 @@ export function CollaborativeInvite({ user, ready, onLogin, onJoined }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, ready, token, preview]);
   if (!token) return null;
-  return <div className={`modal-overlay feature-modal-overlay${closing ? ' is-closing' : ''}`}>
+  return <div className={`modal-overlay feature-modal-overlay collaborative-invite-overlay${closing ? ' is-closing' : ''}`}>
     <div className="create-modal" role="dialog" aria-modal="true" aria-labelledby="collaborative-invite-title">
       <div className="modal-header"><h2 id="collaborative-invite-title">Вести карту совместно</h2><button className="modal-close" onClick={() => close()}>×</button></div>
       <p>{preview ? `Вас пригласили в карту «${preview.name}». Участников: ${preview.participants}.` : 'Загружаем приглашение…'}</p>
@@ -84,19 +99,19 @@ export function CollaborativeInvite({ user, ready, onLogin, onJoined }) {
   </div>;
 }
 
-export function CollaborativeHistory({ map, closing, onClose }) {
+export function CollaborativeHistory({ map, closing, onClose, Select }) {
   const [participant, setParticipant] = useState('all');
   const team = map.collaboration;
   const stats = contributionStats(team);
   const overall = getMapStats(map);
   const events = [...team.events].reverse().filter((event) => participant === 'all' || event.actor_id === participant);
-  return <div className={`modal-overlay feature-modal-overlay history-overlay${closing ? ' is-closing' : ''}`} onMouseDown={onClose}>
-    <div className="create-modal history-modal" role="dialog" aria-modal="true" aria-label="История совместной карты" onMouseDown={(event) => event.stopPropagation()}>
+  return <div className={`modal-overlay feature-modal-overlay history-overlay collaborative-history-overlay${closing ? ' is-closing' : ''}`} onMouseDown={onClose}>
+    <div className="create-modal history-modal collaborative-history-modal" role="dialog" aria-modal="true" aria-label="История совместной карты" onMouseDown={(event) => event.stopPropagation()}>
       <div className="modal-header"><h2>История «{map.name}»</h2><button className="modal-close" onClick={onClose}>×</button></div>
       <p>Общий прогресс: {overall.filled} / {overall.total} клеток · {overall.total ? (overall.filled / overall.total * 100).toFixed(1) : 0}%</p>
       <div className="collaborative-contributions">{stats.map((member) => <div key={member.id}><span>{member.name}</span><strong>{member.percent.toFixed(1)}%</strong><small>{member.cells} клеток</small><progress max="100" value={member.percent} /></div>)}</div>
       <p className="collaborative-caption">Доля вклада — доля участника среди закрашенных сейчас клеток. При стирании клетка вычитается из вклада её автора.</p>
-      <label className="collaborative-filter">История прогресса<select value={participant} onChange={(event) => setParticipant(event.target.value)}><option value="all">Общий вклад</option>{team.members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+      <div className="collaborative-filter"><span>История прогресса</span><Select ariaLabel="История прогресса по участникам" value={participant} onChange={setParticipant} options={[{ value: 'all', label: 'Общий вклад' }, ...team.members.map((member) => ({ value: member.id, label: member.name }))]} /></div>
       <div className="history-version-list collaborative-events" key={participant}>{events.map((event) => {
         const added = event.changes.filter((change) => change.filled).length;
         const removed = event.changes.length - added;
