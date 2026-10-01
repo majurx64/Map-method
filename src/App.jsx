@@ -10414,7 +10414,7 @@ export default function App() {
                                   )
                                 }
                               >
-                                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{ display: "block", pointerEvents: "none" }}>
+                                <svg width="8" height="8" viewBox="0 0 12 12" aria-hidden="true" style={{ display: "block", pointerEvents: "none" }}>
                                   <path d="M2 2 10 10M10 2 2 10" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
                                 </svg>
                               </button>
