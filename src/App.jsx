@@ -1600,7 +1600,6 @@ const CrossfadeText = memo(function CrossfadeText({ value, as: Tag = "span" }) {
 });
 
 export default function App() {
-  const initial = getInitialData();
 
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -2046,7 +2045,12 @@ export default function App() {
   const [selectionReady, setSelectionReady] = useState(false);
   const selectionGestureRef = useRef(null);
   const panGestureRef = useRef(null);
-  const [strokeCounter, setStrokeCounter] = useState(null);
+  const strokeCounterRef = useRef(null);
+  const strokePointerPositionRef = useRef(null);
+  const strokeUiUpdatedAtRef = useRef(0);
+  const strokePaintedDeltaRef = useRef(0);
+  const miniPreviewRef = useRef(null);
+  const miniPreviewPaintRef = useRef(null);
   const strokeCountRef = useRef(0);
   const strokeButtonRef = useRef(1);
   const canvasRef = useRef(null);
@@ -2151,7 +2155,6 @@ export default function App() {
 
   const currentStats = getMapStats({ mapType, totalCells, imageRatio, gridMode, manualRows, manualCols, completed, progressCompleted });
   const drawingSet = new Set(completed);
-  const progressSet = new Set(progressCompleted);
   const displayedCompleted = progressCompleted.filter((i) => i < actualTotal && (mapType === "image" || drawingSet.has(i)));
   const displayedTotal = currentStats.total;
   const displayedProgress = currentStats.percent;
@@ -3210,12 +3213,14 @@ export default function App() {
     activeMapRef.current = activeMap;
   }, [activeMap]);
 
-  useEffect(() => {
-    completedRef.current = new Set(completed);
+  useLayoutEffect(() => {
+    // Pointer input owns the live buffers until the stroke ends. React only
+    // receives snapshots; an older render must never replace a newer stroke.
+    if (!isDrawingRef.current) completedRef.current = new Set(completed);
   }, [completed]);
 
-  useEffect(() => {
-    if (!gameFillAnimationRef.current) progressCompletedRef.current = new Set(progressCompleted);
+  useLayoutEffect(() => {
+    if (!isDrawingRef.current && !gameFillAnimationRef.current) progressCompletedRef.current = new Set(progressCompleted);
   }, [progressCompleted]);
 
   useEffect(() => {
@@ -3270,8 +3275,8 @@ export default function App() {
     if (!complete) wasDemoCompleteRef.current = false;
   }, [heroDemoCells]);
 
-  useEffect(() => {
-    colorsRef.current = colors;
+  useLayoutEffect(() => {
+    if (!isDrawingRef.current) colorsRef.current = colors;
   }, [colors]);
 
   useEffect(() => {
@@ -3375,6 +3380,7 @@ export default function App() {
     if (authLoading) return undefined;
 
     async function load() {
+      const initial = getInitialData();
       loadedOwnerRef.current = null;
       setMapsLoading(true);
       setIsMapInitialized(false);
@@ -4791,6 +4797,13 @@ export default function App() {
     return index < actualTotal ? index : null;
   }
 
+  function requestCanvasDraw() {
+    if (!canvasAnimationFrameRef.current) canvasAnimationFrameRef.current = requestAnimationFrame(() => {
+      canvasAnimationFrameRef.current = null;
+      drawCanvasRef.current?.();
+    });
+  }
+
   function animateCells(cells, mode = "draw") {
     if (!cells?.length) return;
 
@@ -4807,10 +4820,7 @@ export default function App() {
             : null,
       });
     });
-    if (!canvasAnimationFrameRef.current) canvasAnimationFrameRef.current = requestAnimationFrame(() => {
-      canvasAnimationFrameRef.current = null;
-      drawCanvasRef.current?.();
-    });
+    requestCanvasDraw();
 
     window.clearTimeout(cellAnimationTimerRef.current);
     cellAnimationTimerRef.current = window.setTimeout(() => {
@@ -4885,8 +4895,8 @@ export default function App() {
       animateCells(changed, mode);
       recordVersionCellChanges(changed, mode);
       progressCompletedRef.current = next;
-      setProgressCompleted([...next]);
-      recordPaintedCells(mode === "draw" ? changed.length : -changed.length);
+      requestCanvasDraw();
+      strokePaintedDeltaRef.current += mode === "draw" ? changed.length : -changed.length;
       strokeCountRef.current += changed.length;
       return;
     }
@@ -4924,14 +4934,13 @@ export default function App() {
     animateCells(changed, mode);
     recordVersionCellChanges(changed, mode);
     completedRef.current = nextSet;
-    setCompleted([...nextSet]);
-    recordPaintedCells(mode === "draw" ? changed.length : -changed.length);
+    strokePaintedDeltaRef.current += mode === "draw" ? changed.length : -changed.length;
     strokeCountRef.current += mode === "draw" ? painted : changed.length;
 
     if (nextColors) {
       colorsRef.current = nextColors;
-      setColors(nextColors);
     }
+    requestCanvasDraw();
   }
 
   function startStroke(
@@ -4944,6 +4953,8 @@ export default function App() {
     }
 
     strokeCountRef.current = 0;
+    strokePaintedDeltaRef.current = 0;
+    strokeUiUpdatedAtRef.current = performance.now();
     isDrawingRef.current = true;
     drawModeRef.current = mode;
     previousCellRef.current = index;
@@ -5022,6 +5033,10 @@ export default function App() {
     if (!isDrawingRef.current)
       return;
 
+    publishStrokeState();
+    recordPaintedCells(strokePaintedDeltaRef.current);
+    strokePaintedDeltaRef.current = 0;
+
     if (strokeCountRef.current > 0) {
       const lastPaintedAt = new Date().toISOString();
       activeMapRef.current = { ...activeMapRef.current, lastPaintedAt };
@@ -5035,7 +5050,8 @@ export default function App() {
     }
 
     isDrawingRef.current = false;
-    setStrokeCounter(null);
+    if (strokeCounterRef.current) strokeCounterRef.current.style.visibility = 'hidden';
+    strokePointerPositionRef.current = null;
     setIsDrawing(false);
 
     const before =
@@ -5119,6 +5135,7 @@ export default function App() {
     const mode = e.button === 2 || (currentSet.has(i) && sameColor) ? "erase" : "draw";
 
     strokeButtonRef.current = e.button === 2 ? 2 : 1;
+    strokePointerPositionRef.current = { x: e.clientX, y: e.clientY };
     startStroke(
       i,
       mode,
@@ -5209,10 +5226,11 @@ export default function App() {
       finishStroke();
       return;
     }
+    const nativeEvent = e.nativeEvent || e;
     const events =
-      typeof e.getCoalescedEvents ===
+      typeof nativeEvent.getCoalescedEvents ===
       "function"
-        ? e.getCoalescedEvents()
+        ? nativeEvent.getCoalescedEvents()
         : [];
 
     let last = null;
@@ -5236,7 +5254,8 @@ export default function App() {
     ) {
       continueStroke(i);
     }
-    if (strokeCountRef.current >= 2) setStrokeCounter({ x: e.clientX, y: e.clientY, count: strokeCountRef.current });
+    strokePointerPositionRef.current = { x: e.clientX, y: e.clientY };
+    requestCanvasDraw();
   }
 
   function handlePointerUp(e) {
@@ -5372,6 +5391,12 @@ export default function App() {
     );
   }
 
+  function publishStrokeState() {
+    if (isGameMode) setProgressCompleted([...progressCompletedRef.current]);
+    else { setCompleted([...completedRef.current]); setColors([...colorsRef.current]); }
+    strokeUiUpdatedAtRef.current = performance.now();
+  }
+
   function drawCanvas() {
     const c = canvasRef.current;
 
@@ -5400,7 +5425,7 @@ export default function App() {
       0,
       0
     );
-    const paintKey = [c, pixelWidth, pixelHeight, dpr, cols, rows, actualTotal, mapType, isGameMode, showImage, image];
+    const paintKey = [c, miniPreviewRef.current, pixelWidth, pixelHeight, dpr, cols, rows, actualTotal, mapType, isGameMode, showImage, image];
     const previousPaint = canvasPaintStateRef.current;
     const fullRepaint = !previousPaint || paintKey.some((value, index) => value !== previousPaint.key[index]);
     const drawingCells = completedRef.current;
@@ -5420,6 +5445,20 @@ export default function App() {
     }
     canvasPaintStateRef.current = { key: paintKey, drawing: drawingCells, active: activeCells, colors: paintColors, animations: [...cellAnimationsRef.current.keys()] };
 
+    // Keep the preview in the same frame as the field. Thousands of animated
+    // DOM cells otherwise make layout and painting compete with pointer input.
+    const preview = miniPreviewRef.current;
+    const previewWidth = preview ? Math.max(1, Math.round(preview.clientWidth * dpr)) : 0;
+    const previewHeight = preview ? Math.max(1, Math.round(preview.clientHeight * dpr)) : 0;
+    let previewPaint = miniPreviewPaintRef.current;
+    if (preview && (!previewPaint || previewPaint.canvas !== preview || previewPaint.cols !== cols || previewPaint.rows !== rows || previewPaint.total !== actualTotal || preview.width !== previewWidth || preview.height !== previewHeight)) {
+      preview.width = previewWidth;
+      preview.height = previewHeight;
+      previewPaint = { canvas: preview, cols, rows, total: actualTotal, cells: [], animations: new Set() };
+      miniPreviewPaintRef.current = previewPaint;
+      for (let i = 0; i < actualTotal; i++) dirtyCells.add(i);
+    }
+
     // Одинаковый фильтр сохраняет один оттенок пустых клеток в обоих режимах.
     ctx.filter = "none";
 
@@ -5431,6 +5470,16 @@ export default function App() {
 
     const now = performance.now();
     let hasActiveAnimations = false;
+
+    if (isDrawingRef.current) {
+      if (now - strokeUiUpdatedAtRef.current >= 80) publishStrokeState();
+      const counter = strokeCounterRef.current, point = strokePointerPositionRef.current;
+      if (counter && point && strokeCountRef.current >= 2) {
+        counter.style.visibility = 'visible';
+        counter.style.transform = `translate(${point.x + 12}px, ${point.y + 12}px)`;
+        counter.textContent = String(strokeCountRef.current);
+      }
+    }
 
     for (const i of dirtyCells) {
       if (i < 0 || i >= actualTotal) continue;
@@ -5451,6 +5500,23 @@ export default function App() {
         isGameMode
           ? progressCompletedRef.current.has(i)
           : drawingActive;
+
+      if (previewPaint && preview) {
+        const previewActive = isGameMode ? active && (mapType === 'image' || drawingActive) : mapType === 'free' && drawingActive;
+        const previewColor = paintColors[i] || (mapType === 'free' ? '#111111' : '#e5e5e5');
+        const utility = mapType === 'free' && normalizeHexColor(paintColors[i]) === UTILITY_COLOR;
+        const guide = (mapType === 'image' && showImage && image) || (isGameMode && mapType === 'free' && drawingActive);
+        const color = utility || (!previewActive && !guide) ? '#eeeeea' : previewColor;
+        const opacity = utility || previewActive || !guide ? 1 : !isGameMode && mapType === 'image' ? .35 : .2;
+        const target = `${color}:${opacity}`;
+        const previous = previewPaint.cells[i];
+        if (previous?.target !== target) {
+          const hex = (normalizeHexColor(color) || '#eeeeea').slice(1);
+          const to = [0, 2, 4].map((offset, channel) => parseInt(hex.slice(offset, offset + 2), 16) * opacity + [238, 238, 234][channel] * (1 - opacity));
+          previewPaint.cells[i] = { target, from: previous?.current || to, to, current: previous?.current || to, startedAt: now };
+          previewPaint.animations.add(i);
+        }
+      }
 
       let fill;
 
@@ -5543,6 +5609,24 @@ export default function App() {
 
     ctx.strokeStyle =
       "#d8d4cc";
+
+    if (preview && previewPaint) {
+      const previewCtx = preview.getContext('2d');
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      for (const i of new Set([...dirtyCells, ...previewPaint.animations])) {
+        const cell = previewPaint.cells[i];
+        if (!cell) continue;
+        const progress = reducedMotion ? 1 : Math.min(1, (now - cell.startedAt) / 320);
+        const eased = 1 - (1 - progress) ** 3;
+        cell.current = cell.to.map((value, channel) => cell.from[channel] + (value - cell.from[channel]) * eased);
+        const col = i % cols, row = Math.floor(i / cols);
+        const x = Math.round(col * previewWidth / cols), y = Math.round(row * previewHeight / rows);
+        previewCtx.fillStyle = `rgb(${cell.current.join(',')})`;
+        previewCtx.fillRect(x, y, Math.round((col + 1) * previewWidth / cols) - x, Math.round((row + 1) * previewHeight / rows) - y);
+        if (progress < 1 && cell.from.some((value, channel) => value !== cell.to[channel])) hasActiveAnimations = true;
+        else previewPaint.animations.delete(i);
+      }
+    }
 
     ctx.lineWidth = physicalPixel;
 
@@ -10409,7 +10493,7 @@ export default function App() {
               </div>
             </div>
 
-            {strokeCounter && createPortal(<span className="stroke-counter" style={{ left: strokeCounter.x + 12, top: strokeCounter.y + 12 }}>{strokeCounter.count}</span>, document.body)}
+            {createPortal(<span ref={strokeCounterRef} className="stroke-counter" style={{ left: 0, top: 0, visibility: 'hidden' }} />, document.body)}
             <div className="drawing-hint">
               {t(
                 "drawHint"
@@ -10425,49 +10509,15 @@ export default function App() {
                 )}
               </div>
 
-              <div
-                className="mini-preview"
+              <canvas
+                className="mini-preview" ref={miniPreviewRef}
+                aria-label="Предпросмотр карты"
                 style={{
-                  gridTemplateColumns: `repeat(${cols},minmax(0,1fr))`,
+                  display: 'block',
+                  height: 'auto',
                   aspectRatio: `${cols}/${rows}`,
                 }}
-              >
-                {Array.from(
-                  {
-                    length:
-                      actualTotal,
-                  },
-                  (_, i) => {
-                    const active = isGameMode
-                      ? progressSet.has(i) && (mapType === "image" || drawingSet.has(i))
-                      : mapType === "free" && drawingSet.has(i);
-
-                    const color =
-                      colors[i] ||
-                      (mapType === "free" ? "#111111" : "#e5e5e5");
-                    const utilityCell = mapType === "free" && normalizeHexColor(colors[i]) === UTILITY_COLOR;
-
-                    const showGuide = (mapType === "image" && showImage && image)
-                      || (isGameMode && mapType === "free" && drawingSet.has(i));
-                    return (
-                      <span
-                        key={i}
-                        className={cellAnimationsRef.current.has(i) ? "cell-pop" : ""}
-                        style={{
-                          backgroundColor: utilityCell
-                            ? "#eeeeea"
-                            : active
-                            ? color
-                            : showGuide
-                              ? color
-                              : "#eeeeea",
-                          opacity: utilityCell ? 1 : !active && showGuide ? (!isGameMode && mapType === "image" ? 0.35 : 0.2) : 1,
-                        }}
-                      />
-                    );
-                  }
-                )}
-              </div>
+              />
 
               {dailyPlan && <p className={`daily-plan${dailyPlan.paused ? " paused" : ""}`} aria-live="polite">{dailyPlan.label}</p>}
               <div className="preview-progress">
