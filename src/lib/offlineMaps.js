@@ -1,13 +1,22 @@
 // Account-scoped durable storage; revisions prevent an older response clearing a newer edit.
 let database;
+let persistenceRequested = false;
 function openDatabase() {
+  if (!persistenceRequested && globalThis.navigator?.storage?.persist) {
+    persistenceRequested = true;
+    // Best effort: denial never blocks local edits or cloud synchronization.
+    void navigator.storage.persist().catch(() => {});
+  }
   if (!database) database = new Promise((resolve, reject) => {
     const request = indexedDB.open("map-method-offline", 1);
     request.onupgradeneeded = () => {
       request.result.createObjectStore("cache");
       request.result.createObjectStore("outbox", { keyPath: "key" });
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      request.result.onversionchange = () => { request.result.close(); database = null; };
+      resolve(request.result);
+    };
     request.onerror = () => { database = null; reject(request.error); };
   });
   return database;

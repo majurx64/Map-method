@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { collaborativeVersions } from './collaborativeHistory.js';
 import { stableDrawingColors } from './drawingColors.js';
+import { compactCollaborativeRpc } from './remoteMaps';
 
 export const INVITE_KEY = 'mm-collaborative-invite';
 export const JOIN_KEY = 'mm-collaborative-join';
@@ -37,6 +38,11 @@ export function progressChanges(before, after) {
 }
 
 export async function collaborativeRpc(name, args) {
+  if (['get_collaborative_map', 'resize_collaborative_grid', 'apply_collaborative_changes', 'manage_collaborative_map', 'create_collaborative_map', 'join_collaborative_map'].includes(name)) {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session?.user.id) throw new Error('login-required');
+    return compactCollaborativeRpc(data.session.user.id, name, args);
+  }
   const { data, error } = await supabase.rpc(name, args);
   if (error) throw error;
   return data;

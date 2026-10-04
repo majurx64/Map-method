@@ -8,7 +8,8 @@ import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPan
 import EditorColorPicker from './EditorColorPicker';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
-import { loadRemoteMaps, rememberRemoteSave, loadCachedLibrary } from './lib/remoteMaps';
+import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap } from './lib/remoteMaps';
+import { equalJSON } from './lib/syncWire';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
@@ -2120,6 +2121,7 @@ export default function App() {
   const liveChannelRef = useRef(null);
   const liveRefreshRef = useRef(null);
   const historyTeamRef = useRef(null);
+  const cachedBootstrapRef = useRef(false);
   const dirtyMapsRef = useRef(new Map());
   const liveStateRef = useRef(null);
   const activeMapRef = useRef(activeMap);
@@ -2427,9 +2429,8 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    const loadPublicLibrary = async () => {
-      const { data, error } = await loadCachedLibrary(PUBLIC_LIBRARY_TABLE);
-      if (cancelled || error) return;
+    const displayLibrary = (data) => {
+      if (cancelled) return;
       const hiddenBuiltinIds = new Set((data || [])
         .flatMap((row) => [row.data?.hiddenBuiltinId, row.data?.replacesBuiltinId])
         .filter(Boolean));
@@ -2446,6 +2447,10 @@ export default function App() {
         ...BUILTIN_PUBLIC_LIBRARY.filter((item) => !hiddenBuiltinIds.has(item.id)),
         ...savedItems,
       ]);
+    };
+    const loadPublicLibrary = async () => {
+      const { data, error } = await loadCachedLibrary(PUBLIC_LIBRARY_TABLE, displayLibrary);
+      if (!error) displayLibrary(data);
     };
     loadPublicLibrary();
     return () => { cancelled = true; };
@@ -2513,10 +2518,10 @@ export default function App() {
     let loading = false;
     let lastUpdatedAt = "";
     const refresh = async () => {
-      if (loading || document.hidden || cancelled) return;
+      if (loading || document.hidden || !navigator.onLine || cancelled) return;
       loading = true;
       try {
-        const { data, error } = await supabase.rpc("poll_shared_map", { share_token: token, known_updated_at: lastUpdatedAt });
+        const { data, error } = await loadPublicMap(token).then((data) => ({ data }), (error) => ({ error }));
         if (cancelled) return;
         if (error) {
           if (!lastUpdatedAt) setSharedViewStatus("missing");
@@ -2549,10 +2554,14 @@ export default function App() {
     void refresh();
     const timer = window.setInterval(refresh, 20000);
     window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", refresh);
     };
   }, [screen]);
 
@@ -2647,7 +2656,7 @@ export default function App() {
       privateLibraryItem: true,
     });
     if (user) {
-      const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(item, user.id), { onConflict: "id" });
+      const { error } = await upsertRemoteMap(mapToSupabaseRow(item, user.id));
       if (error) {
         setLibraryStatus("Не удалось сохранить эскиз в аккаунте.");
         return;
@@ -2785,7 +2794,7 @@ export default function App() {
       modeDrafts: {},
     });
     if (user) {
-      const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(map, user.id), { onConflict: "id" });
+      const { error } = await upsertRemoteMap(mapToSupabaseRow(map, user.id));
       if (error) {
         setMapActionError("Не удалось добавить рисунок из библиотеки.");
         return;
@@ -3386,6 +3395,7 @@ export default function App() {
     async function load() {
       const initial = getInitialData();
       loadedOwnerRef.current = null;
+      cachedBootstrapRef.current = false;
       setMapsLoading(true);
       setIsMapInitialized(false);
       hydratingRef.current = true;
@@ -3413,6 +3423,32 @@ export default function App() {
             }, 0);
         }
 
+        return;
+      }
+
+      // Open the durable, account-scoped copy immediately. The live synchronizer
+      // merges server changes with dirty maps and the outbox before touching the editor.
+      const cached = await readAccountCache(user.id).catch(() => []);
+      const pending = await pendingMapSaves(user.id).catch(() => []);
+      if (cancelled) return;
+      if (cached.length) {
+        const local = mergePendingMaps(cached, pending).map(normalizeMap);
+        const localMaps = local.filter((map) => !map.privateLibraryItem && !map.collaboration?.hidden);
+        const localLibrary = local.filter((map) => map.privateLibraryItem);
+        const active = localMaps.find((map) => map.id === localStorage.getItem(ACTIVE_MAP_KEY)) || localMaps[0];
+        loadedOwnerRef.current = user.id;
+        localStorage.setItem(LOCAL_MAP_OWNER_KEY, user.id);
+        cachedBootstrapRef.current = true;
+        setMaps(localMaps);
+        setPrivateLibrary((current) => ({ ...current, [user.id]: localLibrary }));
+        setCustomCategories([...new Set(localMaps.map((map) => map.category).filter((category) => category && !MAP_CATEGORIES.includes(category)))]);
+        setActiveMapId(active?.id || null);
+        if (active) openMap(active);
+        setSyncStatus(navigator.onLine ? 'Открыта сохранённая копия. Проверяем обновления.' : 'Нет связи с сервером. Открыта сохранённая копия; изменения отправятся после восстановления связи.');
+        setMapsLoading(false);
+        setIsMapInitialized(true);
+        clearTimeout(hydrationReleaseTimerRef.current);
+        hydrationReleaseTimerRef.current = setTimeout(() => { if (!cancelled) hydratingRef.current = false; }, 0);
         return;
       }
 
@@ -3466,18 +3502,7 @@ export default function App() {
             id: createMapId(),
           });
 
-          const { error: e } =
-            await supabase
-              .from("maps")
-              .upsert(
-                mapToSupabaseRow(
-                  fresh,
-                  user.id
-                ),
-                {
-                  onConflict: "id",
-                }
-              );
+          const { error: e } = await upsertRemoteMap(mapToSupabaseRow(fresh, user.id));
 
           if (!e) {
             migrated.push(fresh);
@@ -3509,7 +3534,7 @@ export default function App() {
               id: loadedMaps.some((map) => map.id === oldItem.id) ? createMapId() : oldItem.id,
               privateLibraryItem: true,
             });
-            const { error: libraryMigrationError } = await supabase.from("maps").upsert(mapToSupabaseRow(item, user.id), { onConflict: "id" });
+            const { error: libraryMigrationError } = await upsertRemoteMap(mapToSupabaseRow(item, user.id));
             if (!libraryMigrationError) loadedLibrary.push(item);
           }
         }
@@ -3536,9 +3561,7 @@ export default function App() {
           localStorage.setItem(recoveryKey, "1");
         } else {
           const recoveredMetro = createRecoveredMetroMap(loadedMaps.length);
-          const { error: recoveryError } = await supabase
-            .from("maps")
-            .upsert(mapToSupabaseRow(recoveredMetro, user.id), { onConflict: "id" });
+          const { error: recoveryError } = await upsertRemoteMap(mapToSupabaseRow(recoveredMetro, user.id));
           if (!recoveryError) {
             loadedMaps = [...loadedMaps, recoveredMetro];
             localStorage.setItem(recoveryKey, "1");
@@ -3740,6 +3763,10 @@ export default function App() {
           retryTimer = setTimeout(refresh, 500);
           return;
         }
+        if (cachedBootstrapRef.current) {
+          cachedBootstrapRef.current = false;
+          if (!pending.length && !dirtyMapsRef.current.size) setSyncStatus('');
+        }
         const current = liveStateRef.current;
         const local = [...current.maps, ...current.personalLibrary];
         const blocked = new Set([...deletingIdsRef.current, ...pendingDeletesRef.current.map((entry) => entry.map.id)]);
@@ -3750,14 +3777,14 @@ export default function App() {
                 ...(!map.collaboration ? { gridMode: current.editor.gridMode } : {}),
                 drawColor: current.editor.drawColor, customColors: current.editor.customColors } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
-        const mapsChanged = JSON.stringify(current.maps) !== JSON.stringify(nextMaps);
-        const libraryChanged = JSON.stringify(current.personalLibrary) !== JSON.stringify(nextLibrary);
+        const mapsChanged = !equalJSON(current.maps, nextMaps);
+        const libraryChanged = !equalJSON(current.personalLibrary, nextLibrary);
         const nextActive = nextMaps.find((map) => map.id === current.activeMapId);
         const oldActive = current.maps.find((map) => map.id === current.activeMapId);
         const activeChanged = !current.publicLibraryEditContext && nextActive
           && !dirtyMapsRef.current.has(nextActive.id)
           && !pending.some((entry) => entry.map.id === nextActive.id)
-          && JSON.stringify(nextActive) !== JSON.stringify(current.editor);
+          && !equalJSON(nextActive, current.editor);
         if (!mapsChanged && !libraryChanged && !activeChanged) return;
         hydratingRef.current = true;
         if (activeChanged) {
@@ -3783,6 +3810,7 @@ export default function App() {
         clearTimeout(hydrationReleaseTimerRef.current);
         hydrationReleaseTimerRef.current = setTimeout(() => { hydratingRef.current = false; }, 0);
       } catch (error) {
+        if (cachedBootstrapRef.current && !cancelled) setSyncStatus('Нет связи с сервером. Открыта сохранённая копия; изменения отправятся после восстановления связи.');
         console.error("Не удалось получить изменения карт:", error);
       } finally {
         refreshing = false;
@@ -3802,6 +3830,7 @@ export default function App() {
       });
     liveChannelRef.current = channel;
     liveRefreshRef.current = refresh;
+    void refresh();
     // Broadcast handles immediate updates. These small checks only recover missed events.
     const interval = setInterval(refresh, 120000);
     const reconnectInterval = setInterval(() => { if (!channelReady) void refresh(); }, 15000);
@@ -3874,7 +3903,8 @@ export default function App() {
             const saved = collaborativeSavedRef.current.get(key);
             const before = saved && saved.revision === map.collaboration.revision ? saved.progress : map.collaboration.baseProgress;
             const beforeDrawing = (saved && saved.revision === map.collaboration.revision ? saved.drawing : map.collaboration.baseDrawing) || { completed: map.completed, colors: map.colors };
-            await collaborativeRpc('save_collaborative_cells', { team_id: map.collaboration.id, expected_revision: map.collaboration.revision, expected_grid: getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols), cell_changes: [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)] });
+            const cellChanges = [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)];
+            if (cellChanges.length) await collaborativeRpc('save_collaborative_cells', { team_id: map.collaboration.id, expected_revision: map.collaboration.revision, expected_grid: getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols), cell_changes: cellChanges });
             collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted, drawing: { completed: map.completed, colors: map.colors } });
             if (pending) await acknowledgeMapSave(pending);
             if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
@@ -3882,9 +3912,7 @@ export default function App() {
             return null;
           }
           const row = mapToSupabaseRow(map, user.id);
-          const { data: receipt, error } = await supabase.rpc('save_personal_map', {
-            map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: user.id,
-          });
+          const { error } = await upsertRemoteMap(row);
 
           if (error) {
             setSyncStatus("Сохранено на устройстве. Сервер пока недоступен.");
@@ -3896,12 +3924,10 @@ export default function App() {
             return error;
           }
 
-          await rememberRemoteSave(user.id, row, receipt);
-
           if (map.shareId && !revokedShareIdsRef.current.has(map.shareId)) {
             let settings = map.shareSettings;
             if (!settings) {
-              const shared = await supabase.rpc("get_shared_map", { share_token: map.shareId });
+              const shared = await supabase.rpc("get_shared_map_settings", { share_token: map.shareId });
               if (shared.error) throw shared.error;
               // Older maps keep their visibility settings on the server.
               if (shared.data) settings = shared.data.settings;
@@ -3909,17 +3935,15 @@ export default function App() {
             let publishedSettings = null;
             let publishedMap = null;
             if (settings?.mode === "snapshot") {
-              const shared = await supabase.rpc("get_shared_map", { share_token: map.shareId });
+              const shared = await supabase.rpc("get_shared_map_settings", { share_token: map.shareId });
               if (shared.error) throw shared.error;
               publishedSettings = shared.data?.settings;
-              publishedMap = shared.data?.map_data;
+              if (!map.shareSnapshot && shouldUpdateSharedMap(settings, publishedSettings)) publishedMap = (await loadPublicMap(map.shareId))?.map_data;
             }
             if (settings && shouldUpdateSharedMap(settings, publishedSettings) && !revokedShareIdsRef.current.has(map.shareId)) {
-              const { error: shareError } = await supabase.from(SHARED_MAPS_TABLE).update({
-                map_data: publicSharedSnapshot(map, settings, publishedMap),
-                settings,
-                updated_at: new Date().toISOString(),
-              }).eq("id", map.shareId).eq("owner_id", user.id);
+              const { error: shareError } = await supabase.rpc('update_shared_map_if_changed', {
+                share_token: map.shareId, visible_data: publicSharedSnapshot(map, settings, publishedMap), visibility: settings, expected_owner: user.id,
+              });
               if (shareError) {
                 setSyncStatus("Карта сохранена. Публичная ссылка обновится после восстановления связи.");
                 return shareError;
@@ -6564,21 +6588,7 @@ export default function App() {
       const {
         data,
         error,
-      } = await supabase
-        .from("maps")
-        .upsert(
-          mapToSupabaseRow(
-            map,
-            user.id
-          ),
-          {
-            onConflict: "id",
-          }
-        )
-        .select(
-          "id,user_id,name,data,created_at,updated_at"
-        )
-        .single();
+      } = await upsertRemoteMap(mapToSupabaseRow(map, user.id));
 
       if (error) {
         console.error(error);
@@ -6913,7 +6923,7 @@ export default function App() {
         if (deleted.collaboration) {
           await collaborativeRpc('manage_collaborative_map', { team_id: deleted.collaboration.id, hide: false });
         } else {
-          const { error } = await supabase.from("maps").upsert(mapToSupabaseRow(deleted, user.id), { onConflict: "id" });
+          const { error } = await upsertRemoteMap(mapToSupabaseRow(deleted, user.id));
           if (error) throw error;
         }
       }
@@ -7804,7 +7814,7 @@ export default function App() {
     setShareStatus(map.shareId ? "loading" : "");
     if (!map.shareId) return;
     try {
-      const { data, error } = await supabase.rpc("get_shared_map", { share_token: map.shareId });
+      const { data, error } = await supabase.rpc("get_shared_map_settings", { share_token: map.shareId });
       if (shareDialogRef.current !== dialog) return;
       if (error) throw error;
       if (!data) {
@@ -7818,10 +7828,13 @@ export default function App() {
       }
       dialog.shareSettings = data.settings;
       if (data.settings.mode === "snapshot" && !dialog.shareSnapshot) {
+        const snapshot = await loadPublicMap(map.shareId);
+        if (shareDialogRef.current !== dialog) return;
+        if (!snapshot) throw new Error('share-revoked');
         // Preserve older frozen links too, without including any later versions.
         dialog.shareSnapshot = {
-          ...data.map_data,
-          versions: data.map_data.versions || (map.versions || []).filter((version) => Date.parse(version.createdAt) <= Date.parse(data.updated_at)),
+          ...snapshot.map_data,
+          versions: snapshot.map_data.versions || (map.versions || []).filter((version) => Date.parse(version.createdAt) <= Date.parse(data.updated_at)),
         };
       }
       setShareProgressVisible(data.settings.showProgress !== false);
