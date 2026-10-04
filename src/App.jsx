@@ -7,7 +7,8 @@ import Auth from "./Auth";
 import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPanel';
 import EditorColorPicker from './EditorColorPicker';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
-import { collaborativeMap, collaborativeRpc, loadCollaborativeMaps, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
+import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
+import { loadRemoteMaps, rememberRemoteSave, loadCachedLibrary } from './lib/remoteMaps';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
@@ -2001,6 +2002,7 @@ export default function App() {
   const [isFeedbackThanksClosing, setIsFeedbackThanksClosing] = useState(false);
   const [feedbackMessages, setFeedbackMessages] = useState([]);
   const [feedbackInboxLoading, setFeedbackInboxLoading] = useState(false);
+  const feedbackCacheRef = useRef(new Map());
   const [feedbackInboxFilter, setFeedbackInboxFilter] = useState("all");
   const [feedbackNoteDrafts, setFeedbackNoteDrafts] = useState({});
   const [feedbackAdminState, setFeedbackAdminState] = useState({});
@@ -2116,6 +2118,8 @@ export default function App() {
   const remoteSaveQueueRef = useRef(Promise.resolve());
   const collaborativeSavedRef = useRef(new Map());
   const liveChannelRef = useRef(null);
+  const liveRefreshRef = useRef(null);
+  const historyTeamRef = useRef(null);
   const dirtyMapsRef = useRef(new Map());
   const liveStateRef = useRef(null);
   const activeMapRef = useRef(activeMap);
@@ -2405,6 +2409,8 @@ export default function App() {
   const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const historyReadOnly = historyMapId === "public-share";
   const historyMap = historyReadOnly ? (sharedView?.settings?.showHistory ? sharedView.map : null) : maps.find((map) => map.id === historyMapId) || null;
+  historyTeamRef.current = historyMap?.collaboration?.id || null;
+  useEffect(() => { if (historyMapId) liveRefreshRef.current?.(); }, [historyMapId]);
   const historyVersionEntries = useMemo(() => {
     const entries = (historyMap?.versions || []).map((version, index) => ({ version, index }))
       .filter(({ version }) => !historyMap?.collaboration || historyParticipant === 'all' || version.actorId === historyParticipant);
@@ -2422,10 +2428,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const loadPublicLibrary = async () => {
-      const { data, error } = await supabase
-        .from(PUBLIC_LIBRARY_TABLE)
-        .select("*")
-        .order("created_at", { ascending: true });
+      const { data, error } = await loadCachedLibrary(PUBLIC_LIBRARY_TABLE);
       if (cancelled || error) return;
       const hiddenBuiltinIds = new Set((data || [])
         .flatMap((row) => [row.data?.hiddenBuiltinId, row.data?.replacesBuiltinId])
@@ -2513,7 +2516,7 @@ export default function App() {
       if (loading || document.hidden || cancelled) return;
       loading = true;
       try {
-        const { data, error } = await supabase.rpc("get_shared_map", { share_token: token });
+        const { data, error } = await supabase.rpc("poll_shared_map", { share_token: token, known_updated_at: lastUpdatedAt });
         if (cancelled) return;
         if (error) {
           if (!lastUpdatedAt) setSharedViewStatus("missing");
@@ -2527,6 +2530,7 @@ export default function App() {
           setScreen("shared");
           return;
         }
+        if (data.unchanged) return;
         if (data.updated_at !== lastUpdatedAt) {
           lastUpdatedAt = data.updated_at;
           setSharedView({ ...data, map: normalizeMap(data.map_data) });
@@ -3415,15 +3419,9 @@ export default function App() {
       const {
         data,
         error,
-      } = !navigator.onLine ? { data: null, error: new Error("offline") } : await supabase
-        .from("maps")
-        .select(
-          "id,user_id,name,data,created_at,updated_at"
-        )
-        .eq("user_id", user.id)
-        .order("created_at", {
-          ascending: true,
-        });
+        shared: remoteShared,
+      } = !navigator.onLine ? { data: null, error: new Error("offline") }
+        : await loadRemoteMaps(user.id).then((result) => ({ data: result.personal, shared: result.shared }), (error) => ({ data: null, error }));
 
       if (cancelled) return;
 
@@ -3498,10 +3496,7 @@ export default function App() {
       if (!error) {
         const pending = await pendingMapSaves(user.id).catch(() => []);
         if (cancelled) return;
-        const shared = await loadCollaborativeMaps().catch(async () => {
-          setSyncStatus('Совместные карты временно недоступны. Открыта сохранённая копия.');
-          return (await readAccountCache(user.id).catch(() => [])).filter((map) => map.collaboration);
-        });
+        const shared = remoteShared.map(collaborativeMap);
         if (cancelled) return;
         const merged = mergePendingMaps(mergeCollaborativeMaps([...loadedMaps, ...loadedLibrary], shared), pending).map(normalizeMap);
         loadedMaps = merged.filter((map) => !map.privateLibraryItem);
@@ -3724,20 +3719,22 @@ export default function App() {
     let refreshRequested = false;
     let channelReady = false;
     let retryTimer;
+    let notificationTimer;
     const refresh = async () => {
-      if (cancelled || !navigator.onLine) return;
+      if (cancelled || document.hidden || !navigator.onLine) return;
       if (refreshing) { refreshRequested = true; return; }
       refreshing = true;
       try {
         const queue = remoteSaveQueueRef.current;
         await queue;
-        const { data, error } = await supabase.from("maps")
-          .select("id,user_id,name,data,created_at,updated_at")
-          .eq("user_id", owner).order("created_at", { ascending: true });
-        if (error) return;
-        const shared = await loadCollaborativeMaps();
+        // Wait for local gestures before requesting data, not after downloading it.
+        if (isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current) {
+          clearTimeout(retryTimer); retryTimer = setTimeout(refresh, 500); return;
+        }
+        const remote = await loadRemoteMaps(owner, historyTeamRef.current);
+        const data = remote.personal, shared = remote.shared.map(collaborativeMap);
         const pending = await pendingMapSaves(owner);
-        if (cancelled || latestOwnerRef.current !== owner || error) return;
+        if (cancelled || latestOwnerRef.current !== owner) return;
         if (queue !== remoteSaveQueueRef.current || isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current) {
           clearTimeout(retryTimer);
           retryTimer = setTimeout(refresh, 500);
@@ -3792,25 +3789,32 @@ export default function App() {
         if (refreshRequested && !cancelled) { refreshRequested = false; void refresh(); }
       }
     };
-    // Broadcast carries only an invalidation signal; map contents remain behind account RLS.
+    const scheduleRefresh = () => {
+      clearTimeout(notificationTimer);
+      notificationTimer = setTimeout(refresh, 180);
+    };
+    // Database broadcasts contain only an invalidation signal, never map contents.
     const channel = supabase.channel(`account-maps:${owner}`)
-      .on("broadcast", { event: "maps-changed" }, refresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "collaborative_maps" }, refresh)
+      .on("broadcast", { event: "maps-changed" }, scheduleRefresh)
       .subscribe((status) => {
         channelReady = status === "SUBSCRIBED";
         if (channelReady) void refresh();
       });
     liveChannelRef.current = channel;
-    const interval = setInterval(refresh, 15000);
-    const reconnectInterval = setInterval(() => { if (!channelReady) void refresh(); }, 2000);
+    liveRefreshRef.current = refresh;
+    // Broadcast handles immediate updates. These small checks only recover missed events.
+    const interval = setInterval(refresh, 120000);
+    const reconnectInterval = setInterval(() => { if (!channelReady) void refresh(); }, 15000);
     window.addEventListener("focus", refresh);
     window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
       cancelled = true;
+      if (liveRefreshRef.current === refresh) liveRefreshRef.current = null;
       clearInterval(interval);
       clearInterval(reconnectInterval);
       clearTimeout(retryTimer);
+      clearTimeout(notificationTimer);
       window.removeEventListener("focus", refresh);
       window.removeEventListener("online", refresh);
       document.removeEventListener("visibilitychange", refresh);
@@ -3818,15 +3822,6 @@ export default function App() {
       void supabase.removeChannel(channel);
     };
   }, [user?.id, isMapInitialized]);
-
-  useEffect(() => {
-    if (!user?.id || !isMapInitialized || hydratingRef.current) return;
-    const timer = setTimeout(async () => {
-      await remoteSaveQueueRef.current;
-      void liveChannelRef.current?.send({ type: "broadcast", event: "maps-changed", payload: {} });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [maps, personalLibrary, user?.id, isMapInitialized]);
 
   useEffect(() => {
     if (!window.mapMethodDesktop?.isDesktop) return;
@@ -3879,25 +3874,17 @@ export default function App() {
             const saved = collaborativeSavedRef.current.get(key);
             const before = saved && saved.revision === map.collaboration.revision ? saved.progress : map.collaboration.baseProgress;
             const beforeDrawing = (saved && saved.revision === map.collaboration.revision ? saved.drawing : map.collaboration.baseDrawing) || { completed: map.completed, colors: map.colors };
-            await collaborativeRpc('apply_collaborative_grid_changes', { team_id: map.collaboration.id, expected_revision: map.collaboration.revision, expected_grid: getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols), cell_changes: [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)] });
+            await collaborativeRpc('save_collaborative_cells', { team_id: map.collaboration.id, expected_revision: map.collaboration.revision, expected_grid: getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols), cell_changes: [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)] });
             collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted, drawing: { completed: map.completed, colors: map.colors } });
             if (pending) await acknowledgeMapSave(pending);
             if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
             setSyncStatus('');
             return null;
           }
-          const { error } =
-            await supabase
-              .from("maps")
-              .upsert(
-                mapToSupabaseRow(
-                  map,
-                  user.id
-                ),
-                {
-                  onConflict: "id",
-                }
-              );
+          const row = mapToSupabaseRow(map, user.id);
+          const { data: receipt, error } = await supabase.rpc('save_personal_map', {
+            map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: user.id,
+          });
 
           if (error) {
             setSyncStatus("Сохранено на устройстве. Сервер пока недоступен.");
@@ -3908,6 +3895,8 @@ export default function App() {
 
             return error;
           }
+
+          await rememberRemoteSave(user.id, row, receipt);
 
           if (map.shareId && !revokedShareIdsRef.current.has(map.shareId)) {
             let settings = map.shareSettings;
@@ -3939,7 +3928,6 @@ export default function App() {
           }
           if (pending) await acknowledgeMapSave(pending);
           if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
-          void liveChannelRef.current?.send({ type: "broadcast", event: "maps-changed", payload: {} });
           setSyncStatus("");
           return null;
         } catch (error) {
@@ -4099,17 +4087,31 @@ export default function App() {
     let cancelled = false;
     let initialLoad = true;
     async function loadFeedbackMessages() {
+      if (cancelled || document.hidden || !navigator.onLine) return;
       if (!cancelled && initialLoad) setFeedbackInboxLoading(true);
-      const { data, error } = await supabase
+      const { data: summary, error } = await supabase
         .from(FEEDBACK_TABLE)
-        .select("*")
+        .select("id,sync_revision,is_read,kind,work_status,created_at")
         .order("created_at", { ascending: false });
+      let data = summary;
+      if (!cancelled && !error && screen === 'feedback-inbox') {
+        const changed = summary.filter((row) => feedbackCacheRef.current.get(row.id)?.sync_revision !== row.sync_revision);
+        if (changed.length) {
+          const details = await supabase.from(FEEDBACK_TABLE).select('*').in('id', changed.map((row) => row.id));
+          if (cancelled) return;
+          if (details.error) { setFeedbackInboxLoading(false); return; }
+          details.data.forEach((row) => feedbackCacheRef.current.set(row.id, row));
+        }
+        data = summary.map((row) => feedbackCacheRef.current.get(row.id) || row);
+      }
       if (!cancelled && !error) {
-        setFeedbackMessages(data || []);
+        const ids = new Set(data.map((row) => row.id));
+        for (const id of feedbackCacheRef.current.keys()) if (!ids.has(id)) feedbackCacheRef.current.delete(id);
+        setFeedbackMessages((previous) => data.map((row) => ({ ...previous.find((item) => item.id === row.id), ...row })));
         setFeedbackNoteDrafts((previous) => {
           const next = { ...previous };
           (data || []).forEach((message) => {
-            if (!(message.id in next)) next[message.id] = message.owner_note || "";
+            if (!(message.id in next) && 'owner_note' in message) next[message.id] = message.owner_note || "";
           });
           return next;
         });
@@ -4120,13 +4122,13 @@ export default function App() {
     loadFeedbackMessages();
     const refreshOnFocus = () => loadFeedbackMessages();
     window.addEventListener("focus", refreshOnFocus);
-    const timer = window.setInterval(loadFeedbackMessages, 30000);
+    const timer = window.setInterval(loadFeedbackMessages, 60000);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", refreshOnFocus);
       window.clearInterval(timer);
     };
-  }, [user?.id, isLibraryOwner]);
+  }, [user?.id, isLibraryOwner, screen]);
 
   useEffect(() => {
     if (authLoading || isLibraryOwner) return;
@@ -11274,7 +11276,7 @@ export default function App() {
                 {!historyReadOnly && <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>}
                 <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && (!historyMap.collaboration || version.eventId) && <button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
               </>;
-            })() : <p className="feature-empty">{historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внесите изменение в карту или сохраните важный этап вручную."}</p>}
+            })() : <p className="feature-empty">{historyMap.collaboration && !historyMap.collaboration.historyLoaded ? 'Загрузка истории…' : historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внесите изменение в карту или сохраните важный этап вручную."}</p>}
           </div>
           {!historyReadOnly && versionUndoNotice && (() => {
             const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);

@@ -17,11 +17,11 @@ export function collaborativeMap(data) {
   const team = {
     id: data.id, ownerId: data.owner_id, inviteToken: data.invite_token,
     members: data.members || [], claims: data.claims || {}, events: data.events || [],
-    revision: data.revision, baseProgress: data.map_data.progressCompleted || [],
+    revision: data.revision, historyLoaded: Array.isArray(data.events), baseProgress: data.map_data.progressCompleted || [],
     hidden: Boolean(data.hidden),
     baseDrawing: { completed: map.completed || [], colors: map.colors },
   };
-  return { ...map, isGameMode: true, versions: collaborativeVersions(map, team), collaboration: team };
+  return { ...map, isGameMode: true, versions: team.historyLoaded ? collaborativeVersions(map, team) : [], collaboration: team };
 }
 
 export function drawingChanges(before, after) {
