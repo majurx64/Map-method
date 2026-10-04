@@ -3789,10 +3789,6 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .history-version-undo > small { display:block; margin-top:6px; font-size:13px; }
 .history-version-undo > i { height:5px; margin-top:12px; }
 .history-version-undo.is-closing { pointer-events:none; animation:history-undo-float-out 360ms cubic-bezier(.4,0,1,1) forwards; }
-.history-overlay.has-version-undo { flex-direction:column; align-items:center; justify-content:flex-start; gap:14px; padding:12px; }
-.history-overlay.has-version-undo .history-modal { width:min(800px,100%); max-height:calc(100vh - 154px); }
-.history-overlay.has-version-undo .history-version-undo { position:relative; bottom:auto; left:auto; width:min(800px,100%); flex:none; animation:history-undo-flow-in 420ms cubic-bezier(.16,1,.3,1) both; }
-.history-overlay.has-version-undo .history-version-undo.is-closing { animation:history-undo-flow-out 360ms cubic-bezier(.4,0,1,1) forwards; }
 @keyframes history-undo-float-in { from { opacity:0; transform:translate(-50%,18px) scale(.975); filter:blur(3px); } to { opacity:1; transform:translate(-50%,0) scale(1); filter:blur(0); } }
 @keyframes history-undo-float-out { from { opacity:1; transform:translate(-50%,0) scale(1); filter:blur(0); } to { opacity:0; transform:translate(-50%,14px) scale(.98); filter:blur(3px); } }
 @keyframes history-undo-flow-in { from { opacity:0; transform:translateY(18px) scale(.975); filter:blur(3px); } to { opacity:1; transform:translateY(0) scale(1); filter:blur(0); } }
@@ -3995,8 +3991,8 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .grid-canvas:focus { outline:none; }
 
 /* Keep category and acknowledgement motion independent of card completion effects. */
-.maps-list.is-category-leaving { pointer-events:none; animation:maps-category-leave 140ms ease-in both; }
-.maps-list.is-category-entering { animation:maps-category-enter 320ms cubic-bezier(.22,1,.36,1) both; }
+.maps-page.is-ready .maps-list.is-category-leaving { pointer-events:none; animation:maps-category-leave 140ms ease-in both; }
+.maps-page.is-ready .maps-list.is-category-entering { animation:maps-category-enter 320ms cubic-bezier(.22,1,.36,1) both; }
 @keyframes maps-category-leave { to { opacity:0; transform:translateY(5px); } }
 @keyframes maps-category-enter { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
 .map-save-notice { position:fixed; z-index:2600; left:50%; bottom:24px; display:flex; align-items:center; gap:12px; width:max-content; max-width:calc(100% - 32px); box-sizing:border-box; padding:14px 20px; border:1px solid #bacfbd; border-radius:14px; background:#f3f8ef; color:#32624f; box-shadow:0 8px 24px #26372824; transform:translateX(-50%); animation:map-save-enter 260ms cubic-bezier(.22,1,.36,1) both; }
@@ -4013,3 +4009,36 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   .maps-list .map-card { grid-template-columns:1fr; }
   .maps-list .map-card-preview { width:calc(100% - 32px); height:220px; min-height:220px; aspect-ratio:auto; margin:16px auto 0; border:1px solid #ded9cf; border-radius:12px; container-type:normal; }
 }
+
+/* Keep the editor visible before tools on phones, and leave room for the desktop hint. */
+@media (max-width:720px) {
+  .editor-layout > .workspace { order:0; }
+  .editor-layout > .left-sidebar { order:1; }
+  .editor-layout > .right-sidebar { order:2; }
+}
+@media (min-width:721px) {
+  .workspace { padding-top:12px; padding-bottom:20px; }
+  .workspace-meta { margin-bottom:12px; }
+  .canvas-card { padding-top:18px; padding-bottom:18px; }
+  .grid-viewport { height:clamp(260px,min(66vh,calc(100dvh - 250px)),820px); }
+}
+/* A persistent overlay reverses its transition when another deletion arrives. */
+.history-overlay .history-version-undo {
+  position:fixed; z-index:2300; left:50%; bottom:18px; right:auto;
+  width:min(620px,calc(100% - 32px)); box-sizing:border-box; margin:0;
+  padding:12px 14px 10px; border-radius:13px;
+  opacity:0; visibility:hidden; pointer-events:none;
+  transform:translate(-50%,12px); animation:none;
+  transition:opacity 240ms ease,transform 300ms cubic-bezier(.22,1,.36,1),visibility 0s 300ms;
+}
+.history-overlay .history-version-undo.is-visible {
+  opacity:1; visibility:visible; pointer-events:auto; transform:translate(-50%,0);
+  transition:opacity 240ms ease,transform 300ms cubic-bezier(.22,1,.36,1),visibility 0s;
+}
+.history-version-undo .delete-undo-copy { gap:10px; }
+.history-version-undo .delete-undo-copy > span { font-size:13px; }
+.history-version-undo .delete-undo-copy strong { flex:none; width:46px; font-size:13px; text-align:right; }
+.history-version-undo .delete-undo-copy button { min-height:32px; padding:0 11px; border-radius:8px; font-size:13px; }
+.history-version-undo .history-crossfade-text { white-space:nowrap; }
+.history-version-undo > small { margin-top:4px; font-size:11px; }
+.history-version-undo > i { height:4px; margin-top:9px; }

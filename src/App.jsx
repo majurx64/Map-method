@@ -7675,6 +7675,7 @@ export default function App() {
     window.clearTimeout(versionUndoTimerRef.current);
     window.clearTimeout(versionUndoCloseTimerRef.current);
     setVersionUndoClosing(false);
+    setDeleteCountdownNow(Date.now());
     setVersionUndoNotice({ mapId: map.id, versionId: version.id, label: version.label, pending: true, deadline: Date.now() + 5000 });
     window.setTimeout(async () => {
       const current = maps.find((item) => item.id === map.id) || map;
@@ -7691,7 +7692,7 @@ export default function App() {
       }
       deletedVersionsRef.current = [{ mapId: current.id, version, index }, ...deletedVersionsRef.current].slice(0, 20);
       const saving = persistFeatureMap({ ...current, versions: nextVersions });
-      setHistoryPreviewIndex(nextVersions.length ? Math.min(index, nextVersions.length - 1) : 0);
+      setHistoryPreviewIndex((selected) => Math.min(Math.max(0, selected - (selected > index ? 1 : 0)), Math.max(0, nextVersions.length - 1)));
       setDeletingVersionId("");
       const notice = { mapId: current.id, versionId: version.id, label: version.label, deadline: Date.now() + 5000 };
       setVersionUndoClosing(false);
@@ -11286,7 +11287,7 @@ export default function App() {
       )}
 
       {historyMap && (
-        <div className={`modal-overlay feature-modal-overlay history-overlay${historyMap.collaboration ? ' collaborative-history-overlay' : ''}${versionUndoNotice ? " has-version-undo" : ""}${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
+        <div className={`modal-overlay feature-modal-overlay history-overlay${historyMap.collaboration ? ' collaborative-history-overlay' : ''}${historyClosing ? " is-closing" : ""}`} onMouseDown={closeHistoryModal}>
           <div className={`create-modal history-modal${historyMap.collaboration ? ' collaborative-history-modal' : ''}`} onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ВСЕ ВЕРСИИ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
             <p className="feature-modal-intro">{historyReadOnly ? "История прогресса опубликована владельцем. Выбирай этапы или включи воспроизведение." : "Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням."}</p>
@@ -11330,10 +11331,12 @@ export default function App() {
               </>;
             })() : <p className="feature-empty">{historyMap.collaboration && !historyMap.collaboration.historyLoaded ? 'Загрузка истории…' : historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внесите изменение в карту или сохраните важный этап вручную."}</p>}
           </div>
-          {!historyReadOnly && versionUndoNotice && (() => {
-            const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
-            return <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoClosing ? " is-closing" : ""}`} role="status" onMouseDown={(event) => event.stopPropagation()}><div className="delete-undo-copy"><span>{versionUndoNotice.pending ? `Удаляем версию «${versionUndoNotice.label}»…` : `Версия «${versionUndoNotice.label}» удалена`}</span><strong>{versionUndoNotice.pending ? "…" : `${Math.max(1, Math.ceil(remainingMs / 1000))} сек.`}</strong><button type="button" disabled={versionUndoNotice.pending} onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
-          })()}
+          {!historyReadOnly && <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoNotice && !versionUndoClosing ? " is-visible" : ""}`} role="status" aria-hidden={!versionUndoNotice || versionUndoClosing} onMouseDown={(event) => event.stopPropagation()}>
+            {versionUndoNotice && (() => {
+              const remainingMs = Math.max(0, Math.min(5000, versionUndoNotice.deadline - deleteCountdownNow));
+              return <><div className="delete-undo-copy"><span><CrossfadeText value={`Версия «${versionUndoNotice.label}» ${versionUndoNotice.pending ? "удаляется…" : "удалена"}`} /></span><strong>{versionUndoNotice.pending ? "…" : `${Math.max(1, Math.ceil(remainingMs / 1000))} сек.`}</strong><button type="button" disabled={versionUndoNotice.pending} onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${versionUndoNotice.pending ? 100 : remainingMs / 50}%` }} /></i></>;
+            })()}
+          </div>}
         </div>
       )}
 

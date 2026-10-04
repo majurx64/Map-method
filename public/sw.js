@@ -16,14 +16,13 @@ self.addEventListener("fetch", (event) => {
   if (event.request.mode === "navigate") {
     event.respondWith((async () => {
       const cache = await caches.open(CACHE);
+      // The installed shell and its bundles are one complete version. Show it
+      // immediately; registering the worker downloads the next version in the background.
+      const saved = await cache.match("/");
+      if (saved) return saved;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
       try {
-        // Install the new HTML and its matching bundles together, never cache mismatched versions.
-        if (url.searchParams.has('site-update')) {
-          const staged = await cache.match('/');
-          if (staged) return staged;
-        }
         const response = await fetch(event.request, { signal: controller.signal, cache: "no-store" });
         return response.ok ? response : (await cache.match("/")) || response;
       } catch {

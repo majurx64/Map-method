@@ -26,3 +26,42 @@ test('a failed bundle download leaves the previous working shell untouched', asy
     fetcher: async (url) => url.endsWith('.js') ? new Response('', { status: 503 }) : new Response(html) }), /site-bundle-unavailable/);
   assert.equal(writes, 0);
 });
+
+
+// Exercise the real worker instead of a copy of its caching policy.
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+function workerFetch({ cached, fetcher }) {
+  const handlers = {};
+  runInNewContext(readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8'), {
+    self: { location: { origin }, addEventListener: (type, handler) => { handlers[type] = handler; } },
+    caches: { open: async () => ({ match: async () => cached }) },
+    fetch: fetcher, URL, Response, AbortController, setTimeout, clearTimeout,
+  });
+  return (request) => {
+    let response;
+    handlers.fetch({ request, respondWith: (promise) => { response = promise; } });
+    return response;
+  };
+}
+
+test('refresh returns the complete installed shell without waiting for the network, including invite URLs', async () => {
+  let calls = 0;
+  const respond = workerFetch({ cached: new Response(html), fetcher: () => { calls++; return new Promise(() => {}); } });
+  const response = await respond({ method: 'GET', mode: 'navigate', url: origin + '/?collaborate=invite' });
+  assert.equal(await response.text(), html);
+  assert.equal(calls, 0);
+});
+
+test('navigation without an installed shell still requests the page', async () => {
+  let calls = 0;
+  const respond = workerFetch({ fetcher: async () => { calls++; return new Response(html); } });
+  const response = await respond({ method: 'GET', mode: 'navigate', url: origin + '/' });
+  assert.equal(await response.text(), html);
+  assert.equal(calls, 1);
+});
+
+test('worker leaves account and map API responses outside the shell cache', () => {
+  const respond = workerFetch({ fetcher: () => { throw Error('worker must not fetch private data'); } });
+  assert.equal(respond({ method: 'GET', mode: 'cors', url: 'https://project.supabase.co/rest/v1/maps' }), undefined);
+});

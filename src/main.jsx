@@ -23,7 +23,10 @@ if (window.location.hostname === 'map-method-chi.vercel.app' && !directCheck) {
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   let refreshingForUpdate = false
+  let hadController = Boolean(navigator.serviceWorker.controller)
   navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // First installation only adds offline support; it must not reload the page again.
+    if (!hadController) { hadController = true; return }
     if (refreshingForUpdate) return
     refreshingForUpdate = true
     window.location.reload()
