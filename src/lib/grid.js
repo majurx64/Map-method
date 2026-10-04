@@ -107,6 +107,14 @@ export function imagePlacement(width, height, cols, rows, total, offset = { x: 0
   return { width: drawWidth, height: drawHeight, left: marginX + x, top: marginY + y, offset: { x: x / cols, y: y / rows }, marginX, marginY };
 }
 
+export function gridViewportAnchor(rect, viewport, before, after = before, dx = 0, dy = 0) {
+  const clientX = viewport.left + viewport.width / 2;
+  const clientY = viewport.top + viewport.height / 2;
+  return { clientX, clientY,
+    x: ((clientX - rect.left) / rect.width * before.cols + dx) / after.cols,
+    y: ((clientY - rect.top) / rect.height * before.rows + dy) / after.rows };
+}
+
 export function zoomScrollDelta(rect, anchor) {
   return { x: rect.left + anchor.x * rect.width - anchor.clientX, y: rect.top + anchor.y * rect.height - anchor.clientY };
 }

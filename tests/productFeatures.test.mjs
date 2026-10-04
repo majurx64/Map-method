@@ -148,3 +148,15 @@ test('Visibility changes preserve the frozen map and its playback endpoint; live
   const legacy = { ...later, shareSnapshot: null };
   assert.deepEqual(publicSharedSnapshot(legacy, settings, later.shareSnapshot), result);
 });
+
+
+test('Canonical history is reused without cloning snapshots on editor updates', () => {
+  const source = [createMapSnapshot({ ...map, completed: [0, 1], colors: ['#111111'] })];
+  const canonical = normalizeVersions(source);
+  assert.notEqual(canonical, source);
+  assert.equal(normalizeVersions(canonical), canonical);
+  assert.equal(normalizeVersions(canonical)[0].colors, canonical[0].colors);
+  source[0].completed.push(-1, 10001);
+  assert.deepEqual(normalizeVersions(source)[0].completed, [0, 1]);
+  assert.notEqual(normalizeVersions([...canonical]), canonical);
+});

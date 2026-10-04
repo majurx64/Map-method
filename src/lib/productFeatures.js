@@ -113,9 +113,12 @@ export function createMapSnapshot(map, label = "Автоматическая в�
   };
 }
 
+const normalizedVersionLists = new WeakSet();
+
 export function normalizeVersions(versions) {
   if (!Array.isArray(versions)) return [];
-  return versions.flatMap((version) => {
+  if (normalizedVersionLists.has(versions)) return versions;
+  const result = versions.flatMap((version) => {
     if (!version || typeof version !== "object" || !Array.isArray(version.completed)) return [];
     return [{
       id: String(version.id || `${Date.now()}-${Math.random()}`),
@@ -144,6 +147,8 @@ export function normalizeVersions(versions) {
         .filter((entry) => Number.isInteger(entry) && entry >= -MAX_CELLS && entry < MAX_CELLS),
     }];
   });
+  normalizedVersionLists.add(result);
+  return result;
 }
 
 export function addDailySnapshot(previous, next) {

@@ -914,7 +914,7 @@ button:disabled {
 
   padding:
     28px
-    clamp(20px, 4vw, 58px)
+    clamp(16px, 2vw, 30px)
     34px;
 
   background: #f4f3ee;
@@ -928,7 +928,7 @@ button:disabled {
 
   gap: 20px;
 
-  max-width: 920px;
+  max-width: 1160px;
 
   margin: 0 auto 18px;
 }
@@ -962,7 +962,7 @@ button:disabled {
 }
 
 .canvas-card {
-  max-width: 920px;
+  max-width: 1160px;
 
   margin: 0 auto;
 
@@ -1005,7 +1005,7 @@ button:disabled {
 }
 
 .drawing-hint {
-  max-width: 920px;
+  max-width: 1160px;
 
   margin: 13px auto 0;
 
@@ -3095,7 +3095,7 @@ body .modal-inline-fields > .modal-field > .animated-select .animated-select-tri
 }
 .grid-viewport {
   width: 100%;
-  height: clamp(320px, 58vh, 680px);
+  height: clamp(360px, 66vh, 820px);
   overflow: auto;
   overscroll-behavior: contain;
   overflow-anchor: none;
@@ -3993,3 +3993,23 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .onboarding-actions .onboarding-back { grid-column:1; justify-self:end; }
 .onboarding-actions .feature-primary { grid-column:2; width:180px; }
 .grid-canvas:focus { outline:none; }
+
+/* Keep category and acknowledgement motion independent of card completion effects. */
+.maps-list.is-category-leaving { pointer-events:none; animation:maps-category-leave 140ms ease-in both; }
+.maps-list.is-category-entering { animation:maps-category-enter 320ms cubic-bezier(.22,1,.36,1) both; }
+@keyframes maps-category-leave { to { opacity:0; transform:translateY(5px); } }
+@keyframes maps-category-enter { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+.map-save-notice { position:fixed; z-index:2600; left:50%; bottom:24px; display:flex; align-items:center; gap:12px; width:max-content; max-width:calc(100% - 32px); box-sizing:border-box; padding:14px 20px; border:1px solid #bacfbd; border-radius:14px; background:#f3f8ef; color:#32624f; box-shadow:0 8px 24px #26372824; transform:translateX(-50%); animation:map-save-enter 260ms cubic-bezier(.22,1,.36,1) both; }
+.map-save-notice > span { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; background:#32624f; color:white; animation:map-save-check 360ms cubic-bezier(.22,1,.36,1) both; }
+.map-save-notice strong,.map-save-notice small { display:block; }
+.map-save-notice small { margin-top:3px; max-width:70vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#747d70; }
+.map-save-notice.is-closing { animation:map-save-exit 220ms ease-in both; }
+.save-map-btn.is-saved { animation:map-save-check 360ms cubic-bezier(.22,1,.36,1); }
+@keyframes map-save-enter { from { opacity:0; transform:translate(-50%,12px); } to { opacity:1; transform:translate(-50%,0); } }
+@keyframes map-save-exit { to { opacity:0; transform:translate(-50%,8px); } }
+@keyframes map-save-check { from { opacity:.35; transform:scale(.85); } to { opacity:1; transform:scale(1); } }
+@media (max-width:720px) { .grid-viewport { height:clamp(320px,58svh,620px); } }
+@media (max-width:460px) {
+  .maps-list .map-card { grid-template-columns:1fr; }
+  .maps-list .map-card-preview { width:calc(100% - 32px); height:220px; min-height:220px; aspect-ratio:auto; margin:16px auto 0; border:1px solid #ded9cf; border-radius:12px; container-type:normal; }
+}

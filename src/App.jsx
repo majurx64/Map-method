@@ -16,7 +16,7 @@ import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
 import { liveCellChanges, mergeLiveMaps } from "./lib/liveMaps";
 import { stageSiteUpdate } from "./lib/siteUpdate";
-import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridViewportAnchor, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, publicSharedSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
 
 const STORAGE_KEY = "mm-maps";
@@ -1081,7 +1081,7 @@ function saveMapsLocally(maps) {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(maps.map(normalizeMap))
+      JSON.stringify(maps)
     );
   } catch (error) {
     // Большие исходные изображения могут не поместиться в localStorage.
@@ -1942,6 +1942,10 @@ export default function App() {
   const [renamePlanMode, setRenamePlanMode] = useState("balanced");
   const [renamePausedUntil, setRenamePausedUntil] = useState("");
   const [mapCategoryFilter, setMapCategoryFilter] = useState("Все");
+  const [mapCategoryMotion, setMapCategoryMotion] = useState(null);
+  const mapCategoryTimerRef = useRef(null);
+  const [saveNotice, setSaveNotice] = useState(null);
+  const saveNoticeTimerRef = useRef(null);
   const [mapColumns, setMapColumns] = useState(2);
   const [celebratingAchievements, setCelebratingAchievements] = useState(() => {
     try {
@@ -2087,8 +2091,7 @@ export default function App() {
   const imageProcessingRef = useRef(0);
   const sourceImageRef = useRef(null);
   const cellAnimationsRef = useRef(new Map());
-  const cellAnimationTimerRef = useRef(null);
-  const canvasAnimationFrameRef = useRef(null);
+    const canvasAnimationFrameRef = useRef(null);
   const drawCanvasRef = useRef(null);
   const canvasPaintStateRef = useRef(null);
   const analyticsSessionTrackedRef = useRef(false);
@@ -2170,7 +2173,7 @@ export default function App() {
     || (newMapGridMode === "manual" && (!Number.isInteger(Number(newMapRows)) || !Number.isInteger(Number(newMapCols)) || Number(newMapRows) < 1 || Number(newMapCols) < 1));
   const fitScale = Math.min((viewportSize.width - 24) / cols, (viewportSize.height - 24) / rows);
   const displayDpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-  const renderedCellScale = Math.max(1 / displayDpr, Math.floor(fitScale * mapZoom * displayDpr) / displayDpr);
+  const renderedCellScale = Math.max(1 / displayDpr, fitScale * mapZoom);
   const canvasWidth = Math.max(1, cols * renderedCellScale);
   const canvasHeight = Math.max(1, rows * renderedCellScale);
 
@@ -2188,9 +2191,56 @@ export default function App() {
     preservedScrollRef.current = { screen: screenName, position };
   }
 
+  function captureGridViewport(after = { rows, cols }, dx = 0, dy = 0) {
+    const canvas = canvasRef.current, viewport = viewportRef.current;
+    if (!canvas || !viewport) return;
+    const bounds = viewport.getBoundingClientRect();
+    zoomAnchorRef.current = gridViewportAnchor(canvas.getBoundingClientRect(),
+      { left: bounds.left, top: bounds.top, width: viewport.clientWidth, height: viewport.clientHeight }, { rows, cols }, after, dx, dy);
+  }
+
+  function changeMapZoom(next) {
+    if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) return;
+    const value = Math.max(.5, Math.min(4, Number(next.toFixed(2))));
+    if (value === mapZoom) return;
+    captureGridViewport();
+    setMapZoom(value);
+  }
+
+  function changeMapCategory(category) {
+    if (category === (mapCategoryMotion?.category || mapCategoryFilter)) return;
+    clearTimeout(mapCategoryTimerRef.current);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setMapCategoryMotion(null); setMapCategoryFilter(category); return;
+    }
+    setMapCategoryMotion({ category, phase: 'leaving' });
+    mapCategoryTimerRef.current = setTimeout(() => {
+      setMapCategoryFilter(category); setMapCategoryMotion({ category, phase: 'entering' });
+      mapCategoryTimerRef.current = setTimeout(() => setMapCategoryMotion(null), 320);
+    }, 140);
+  }
+
+  function showSaveNotice(map) {
+    clearTimeout(saveNoticeTimerRef.current);
+    setSaveNotice({ name: map.name, closing: false });
+    saveNoticeTimerRef.current = setTimeout(() => {
+      setSaveNotice((notice) => notice && { ...notice, closing: true });
+      saveNoticeTimerRef.current = setTimeout(() => setSaveNotice(null), 220);
+    }, 2200);
+  }
+
+  useEffect(() => () => {
+    clearTimeout(mapCategoryTimerRef.current); clearTimeout(saveNoticeTimerRef.current);
+    zoomTransitionRef.current?.cancel();
+  }, []);
+
   function openMapFromList(map) {
     rememberScrollPosition("maps");
     openMap(map);
+    if (window.matchMedia("(max-width: 720px)").matches) {
+      const positions = JSON.parse(localStorage.getItem(SCROLL_POSITIONS_KEY) || "{}");
+      localStorage.setItem(SCROLL_POSITIONS_KEY, JSON.stringify({ ...positions, editor: 0 }));
+    }
     setScreen("editor");
   }
 
@@ -3206,10 +3256,32 @@ export default function App() {
   useEffect(() => {
     if (!isMapInitialized) return;
 
-    saveMapsLocally(maps);
-    if (user?.id && loadedOwnerRef.current === user.id) {
-      void cacheAccountMaps(user.id, [...maps, ...personalLibrary]).catch(() => setSyncStatus("Не удалось сохранить офлайн-копию: проверьте свободное место на устройстве."));
-    }
+    let timer;
+    let saved = false;
+    const persist = () => {
+      if (saved) return;
+      saved = true;
+      clearTimeout(timer);
+      saveMapsLocally(maps);
+      if (user?.id && loadedOwnerRef.current === user.id) {
+        void cacheAccountMaps(user.id, [...maps, ...personalLibrary]).catch(() => setSyncStatus("Не удалось сохранить офлайн-копию: проверьте свободное место на устройстве."));
+      }
+    };
+    const whenSettled = () => {
+      if (document.visibilityState !== 'hidden' && canvasRef.current && (isDrawingRef.current || cellAnimationsRef.current.size)) {
+        timer = setTimeout(whenSettled, 80);
+      } else persist();
+    };
+    const whenHidden = () => { if (document.visibilityState === 'hidden') persist(); };
+    // Serialization of a large history must not occupy the frames of a short click.
+    timer = setTimeout(whenSettled, 350);
+    window.addEventListener('pagehide', persist);
+    document.addEventListener('visibilitychange', whenHidden);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', persist);
+      document.removeEventListener('visibilitychange', whenHidden);
+    };
   }, [maps, isMapInitialized, user?.id, personalLibrary]);
 
   useEffect(() => {
@@ -4022,7 +4094,7 @@ export default function App() {
         setMaps((stored) => stored.map((item) => item.id === map.id ? map : item));
         remoteSave(map);
       }
-    }, 250);
+    }, 350);
 
     return () =>
       clearTimeout(saveTimerRef.current);
@@ -4833,12 +4905,11 @@ export default function App() {
   function animateCells(cells, mode = "draw") {
     if (!cells?.length) return;
 
-    const startedAt = performance.now();
     cells.forEach((cell) => {
       const index = typeof cell === "number" ? cell : cell.index;
       const cellMode = typeof cell === "number" ? mode : cell.mode;
       cellAnimationsRef.current.set(index, {
-        startedAt,
+        startedAt: null,
         mode: cellMode,
         color:
           cellMode === "erase"
@@ -4848,11 +4919,7 @@ export default function App() {
     });
     requestCanvasDraw();
 
-    window.clearTimeout(cellAnimationTimerRef.current);
-    cellAnimationTimerRef.current = window.setTimeout(() => {
-      cellAnimationsRef.current.clear();
-      setCellAnimationTick((tick) => tick + 1);
-    }, 300);
+
   }
 
   function recordPaintedCells(count) {
@@ -5119,6 +5186,7 @@ export default function App() {
   function handlePointerDown(e) {
     e.preventDefault();
     if (collaborativeGridBusyRef.current) return;
+    zoomTransitionRef.current?.finish();
     if (e.button !== 0 && e.button !== 2) return;
     if (isDrawingRef.current || artworkDragRef.current || selectionGestureRef.current || panGestureRef.current) return;
     const i = getCellFromPointerEvent(e);
@@ -5427,6 +5495,8 @@ export default function App() {
     const c = canvasRef.current;
 
     if (!c) return;
+    // Reuse the existing bitmap while the compositor scales it; rasterize once at rest.
+    if (zoomTransitionRef.current?.playState === 'running') return;
 
     // Draw at the final layout size while the compositor animates visual zoom.
     const rect = { width: c.clientWidth, height: c.clientHeight };
@@ -5563,7 +5633,9 @@ export default function App() {
       }
 
       const animation = cellAnimationsRef.current.get(i);
+      if (animation && animation.startedAt === null) animation.startedAt = now;
       const elapsed = animation === undefined ? 300 : now - animation.startedAt;
+      if (animation && elapsed >= 260) cellAnimationsRef.current.delete(i);
       const animationProgress = Math.min(1, elapsed / 260);
       const scale = elapsed < 260
         ? animationProgress < 0.72
@@ -5775,40 +5847,45 @@ export default function App() {
       observer.disconnect();
       cancelAnimationFrame(redrawFrame);
     };
-  }, [screen, activeMapId, rows, cols, mapZoom]);
+  }, [screen, activeMapId]);
 
   useLayoutEffect(() => {
     const anchor = zoomAnchorRef.current;
-    const viewport = viewportRef.current;
-    const canvas = canvasRef.current;
-    if (!viewport || !canvas) return;
-    const stage = canvas.parentElement;
+    const viewport = viewportRef.current, canvas = canvasRef.current;
+    if (screen !== 'editor' || !viewport || !canvas) return;
+    const grid = canvas.parentElement;
     const previous = zoomVisualSizeRef.current;
-    const next = { width: canvasWidth, height: canvasHeight, mapId: activeMapId };
+    const next = { width: canvasWidth, height: canvasHeight, mapId: activeMapId, canvas, zoom: mapZoom };
+    const firstView = !previous || previous.mapId !== activeMapId || previous.canvas !== canvas;
     const resizing = previous && (previous.width !== next.width || previous.height !== next.height);
     let visualScale = { a: 1, d: 1 };
-    if (resizing && zoomTransitionRef.current) {
-      visualScale = new DOMMatrixReadOnly(getComputedStyle(stage).transform);
-    }
-    if (resizing) zoomTransitionRef.current?.cancel();
+    if (resizing && zoomTransitionRef.current?.playState === 'running') visualScale = new DOMMatrixReadOnly(getComputedStyle(grid).transform);
+    zoomTransitionRef.current?.cancel();
+    zoomTransitionRef.current = null;
     zoomVisualSizeRef.current = next;
-    if (!anchor) {
+    if (firstView) {
       viewport.scrollLeft = (viewport.scrollWidth - viewport.clientWidth) / 2;
       viewport.scrollTop = (viewport.scrollHeight - viewport.clientHeight) / 2;
-    } else {
-      const rect = canvas.getBoundingClientRect();
-      const delta = zoomScrollDelta(rect, anchor);
-      viewport.scrollLeft += delta.x;
-      viewport.scrollTop += delta.y;
-      zoomAnchorRef.current = null;
+    } else if (anchor) {
+      const delta = zoomScrollDelta(canvas.getBoundingClientRect(), anchor);
+      viewport.scrollLeft += delta.x; viewport.scrollTop += delta.y;
+    } else if (resizing) {
+      viewport.scrollLeft *= next.width / previous.width;
+      viewport.scrollTop *= next.height / previous.height;
     }
-    if (resizing && previous.mapId === activeMapId && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    zoomAnchorRef.current = null;
+    if (resizing && !firstView && previous.zoom !== mapZoom && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       const transformOrigin = anchor ? `${anchor.x * 100}% ${anchor.y * 100}%` : '50% 50%';
-      zoomTransitionRef.current = stage.animate([
+      const animation = grid.animate([
         { transform: `scale(${previous.width * visualScale.a / next.width}, ${previous.height * visualScale.d / next.height})`, transformOrigin },
         { transform: 'scale(1)', transformOrigin },
       ], { duration: 220, easing: 'cubic-bezier(.22,1,.36,1)' });
-    }
+      zoomTransitionRef.current = animation;
+      animation.onfinish = () => {
+        if (zoomTransitionRef.current !== animation) return;
+        zoomTransitionRef.current = null; requestCanvasDraw();
+      };
+    } else requestCanvasDraw();
   }, [mapZoom, canvasWidth, canvasHeight, screen, viewportSize, activeMapId]);
 
   useEffect(() => {
@@ -6104,10 +6181,13 @@ export default function App() {
     }
   }
 
-  function acceptCollaborativeGrid(data) {
+  function acceptCollaborativeGrid(data, sides = null) {
     const editor = buildCurrentMap();
     const map = normalizeMap({ ...collaborativeMap(data), isGameMode: editor?.isGameMode,
       drawColor: editor?.drawColor, customColors: editor?.customColors });
+    const after = getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols);
+    const shift = sides ? gridResizeShift({ rows, cols }, after, sides.rows, sides.cols) : { dx: 0, dy: 0 };
+    captureGridViewport(after, shift.dx, shift.dy);
     clearTimeout(saveTimerRef.current);
     hydratingRef.current = true;
     dirtyMapsRef.current.delete(map.id);
@@ -6140,7 +6220,7 @@ export default function App() {
       const dimensions = getGridDimensions(count, current.imageRatio, mode, rowCount, colCount);
       const data = await collaborativeRpc('resize_collaborative_grid', { team_id: current.collaboration.id, expected_revision: latest.revision,
         layout: { gridMode: mode, totalCells: String(count), manualRows: String(dimensions.rows), manualCols: String(dimensions.cols), rowSide: sides?.rows || 'bottom', colSide: sides?.cols || 'right' } });
-      const map = acceptCollaborativeGrid(data);
+      const map = acceptCollaborativeGrid(data, sides);
       if (data.revision !== latest.revision) {
         undoStackRef.current.push({ target: 'collaborative-grid', eventId: map.collaboration.events.at(-1).id, revision: data.revision });
         redoStackRef.current = [];
@@ -6185,6 +6265,7 @@ export default function App() {
     const before = { rows, cols, actualTotal };
     const after = getGridDimensions(count, imageRatio, mode, nextRows, nextCols);
     const { dx, dy } = sides ? gridResizeShift(before, after, sides.rows, sides.cols) : { dx: 0, dy: 0 };
+    captureGridViewport(after, dx, dy);
     const beforeSnapshot = {
       gridMode,
       totalCells,
@@ -6466,6 +6547,7 @@ export default function App() {
     }
 
     setSaveStatus("saved");
+    showSaveNotice(map);
 
     setTimeout(
       () =>
@@ -6814,6 +6896,7 @@ export default function App() {
       }
     }
 
+    showSaveNotice(renamed);
     setIsRenameOpen(false);
     setRenameValue("");
     setRenameDescription("");
@@ -7589,20 +7672,25 @@ export default function App() {
     if (!map || !version || deletingVersionId) return;
     setHistoryPlaying(false);
     setDeletingVersionId(version.id);
+    window.clearTimeout(versionUndoTimerRef.current);
+    window.clearTimeout(versionUndoCloseTimerRef.current);
+    setVersionUndoClosing(false);
+    setVersionUndoNotice({ mapId: map.id, versionId: version.id, label: version.label, pending: true, deadline: Date.now() + 5000 });
     window.setTimeout(async () => {
       const current = maps.find((item) => item.id === map.id) || map;
       const index = (current.versions || []).findIndex((item) => item.id === version.id);
       if (index < 0) {
+        setVersionUndoNotice(null);
         setDeletingVersionId("");
         return;
       }
       const nextVersions = current.versions.filter((item) => item.id !== version.id);
       if (current.collaboration && version.eventId) {
         try { await collaborativeRpc('set_collaborative_version_visibility', { team_id: current.collaboration.id, event_id: version.eventId, hide: true }); }
-        catch { setFeatureStatus('Не удалось удалить версию. Попробуйте ещё раз.'); setDeletingVersionId(''); return; }
+        catch { setVersionUndoNotice(null); setFeatureStatus('Не удалось удалить версию. Попробуйте ещё раз.'); setDeletingVersionId(''); return; }
       }
       deletedVersionsRef.current = [{ mapId: current.id, version, index }, ...deletedVersionsRef.current].slice(0, 20);
-      await persistFeatureMap({ ...current, versions: nextVersions });
+      const saving = persistFeatureMap({ ...current, versions: nextVersions });
       setHistoryPreviewIndex(nextVersions.length ? Math.min(index, nextVersions.length - 1) : 0);
       setDeletingVersionId("");
       const notice = { mapId: current.id, versionId: version.id, label: version.label, deadline: Date.now() + 5000 };
@@ -7618,10 +7706,12 @@ export default function App() {
           setVersionUndoClosing(false);
         }, 360);
       }, 5000);
+      await saving;
     }, 210);
   }
 
   async function undoDeletedVersion() {
+    if (versionUndoNotice?.pending) return;
     const deleted = deletedVersionsRef.current.shift();
     if (!deleted) return;
     const map = maps.find((item) => item.id === deleted.mapId);
@@ -8046,6 +8136,7 @@ export default function App() {
           <strong>Переключаем аккаунт…</strong>
         </div>
       )}
+      {saveNotice && <div className={`map-save-notice${saveNotice.closing ? ' is-closing' : ''}`} role="status"><span aria-hidden="true">✓</span><div><strong>Изменения сохранены</strong><small>{saveNotice.name}</small></div></div>}
       {savedAccountDragVisual && (
         <div
           className={`saved-account-drag-ghost${savedAccountDragVisual.settling ? " is-settling" : ""}`}
@@ -8155,8 +8246,8 @@ export default function App() {
                 ↓ Скачать
               </button>
 
-              <button className="save-map-btn" onClick={saveActiveMap} disabled={!activeMap}>
-                {saveStatus === "error" ? "Ошибка" : saveStatus ? t("saved") : t("save")}
+              <button className={`save-map-btn${saveStatus === "saved" ? " is-saved" : ""}`} onClick={saveActiveMap} disabled={!activeMap}>
+                <CrossfadeText value={saveStatus === "error" ? "Ошибка" : saveStatus ? `✓ ${t("saved")}` : t("save")} />
               </button>
             </>
           )}
@@ -9642,11 +9733,11 @@ export default function App() {
                   <button
                     key={category}
                     data-category={category}
-                    className={`${mapCategoryFilter === category ? "active" : ""}${categoryDrag?.category === category ? " is-dragging" : ""}${categoryDrag?.target === category && categoryDrag.category !== category ? " is-drop-target" : ""}`}
+                    className={`${(mapCategoryMotion?.category || mapCategoryFilter) === category ? "active" : ""}${categoryDrag?.category === category ? " is-dragging" : ""}${categoryDrag?.target === category && categoryDrag.category !== category ? " is-drop-target" : ""}`}
                     onPointerDown={category === "Все" ? undefined : (event) => beginCategoryDrag(event, category)}
                     onClick={() => {
                       if (suppressCategoryClick.current) return;
-                      setMapCategoryFilter(category);
+                      changeMapCategory(category);
                     }}
                     style={{ transform: categoryDragTransform(category) }}
                   >{category}</button>
@@ -9654,7 +9745,7 @@ export default function App() {
               </div>
             <p className="maps-drag-hint">Перетаскивайте карты и категории, чтобы менять их порядок.</p>
             {mapActionError && <p className="field-error" role="alert">{mapActionError}</p>}
-            <div className={`maps-list maps-list-columns-${mapColumns}${cardSettling ? " is-reordering" : ""}`} style={{ "--map-columns": mapColumns }}>
+            <div className={`maps-list maps-list-columns-${mapColumns}${mapCategoryMotion ? ` is-category-${mapCategoryMotion.phase}` : ""}${cardSettling ? " is-reordering" : ""}`} style={{ "--map-columns": mapColumns }}>
               {cardDrag?.dropRect && <div className="map-drop-indicator" aria-hidden="true" style={cardDrag.dropRect} />}
               {[...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
                 (map) => {
@@ -10395,62 +10486,10 @@ export default function App() {
 
             <div className="canvas-card">
               <div className="map-zoom-toolbar">
-                <button
-                  className="tool-btn"
-                  onClick={() =>
-                    setMapZoom(
-                      (z) =>
-                        Math.max(
-                          0.5,
-                          +(
-                            z -
-                            0.1
-                          ).toFixed(
-                            1
-                          )
-                        )
-                    )
-                  }
-                >
-                  −
-                </button>
-
-                <span>
-                  {Math.round(
-                    mapZoom *
-                      100
-                  )}
-                  %
-                </span>
-
-                <button
-                  className="tool-btn"
-                  onClick={() =>
-                    setMapZoom(
-                      (z) =>
-                        Math.min(
-                          4,
-                          +(
-                            z +
-                            0.1
-                          ).toFixed(
-                            1
-                          )
-                        )
-                    )
-                  }
-                >
-                  +
-                </button>
-
-                <button
-                  className="tool-btn"
-                  onClick={() =>
-                    setMapZoom(1)
-                  }
-                >
-                  100%
-                </button>
+                <button className="tool-btn" onClick={() => changeMapZoom(mapZoom - .1)}>−</button>
+                <span>{Math.round(mapZoom * 100)}%</span>
+                <button className="tool-btn" onClick={() => changeMapZoom(mapZoom + .1)}>+</button>
+                <button className="tool-btn" onClick={() => changeMapZoom(1)}>100%</button>
               </div>
 
               <div
@@ -11293,7 +11332,7 @@ export default function App() {
           </div>
           {!historyReadOnly && versionUndoNotice && (() => {
             const remainingMs = Math.max(0, versionUndoNotice.deadline - deleteCountdownNow);
-            return <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoClosing ? " is-closing" : ""}`} role="status" onMouseDown={(event) => event.stopPropagation()}><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}» удалена</span><strong>{Math.max(1, Math.ceil(remainingMs / 1000))} сек.</strong><button type="button" onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
+            return <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoClosing ? " is-closing" : ""}`} role="status" onMouseDown={(event) => event.stopPropagation()}><div className="delete-undo-copy"><span>{versionUndoNotice.pending ? `Удаляем версию «${versionUndoNotice.label}»…` : `Версия «${versionUndoNotice.label}» удалена`}</span><strong>{versionUndoNotice.pending ? "…" : `${Math.max(1, Math.ceil(remainingMs / 1000))} сек.`}</strong><button type="button" disabled={versionUndoNotice.pending} onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${remainingMs / 50}%` }} /></i></div>;
           })()}
         </div>
       )}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from '../src/lib/grid.js';
+import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, gridViewportAnchor, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from '../src/lib/grid.js';
 
 test('Auto grids contain exactly the requested number of playable cells up to the limit', () => {
   for (let total = 1; total <= MAX_CELLS; total++) {
@@ -190,5 +190,22 @@ test('colour picker preserves RGB colours through HSV conversion', () => {
   for (const hex of ['#000000', '#ffffff', '#111111', '#ff0000', '#00ff00', '#0000ff', '#cf3030', '#b11b1b']) {
     const { h, s, v } = hexToHsv(hex);
     assert.equal(hsvToHex(h, s, v), hex);
+  }
+});
+
+
+test('Viewport anchoring keeps the viewed cell after top/left and bottom/right resizing', () => {
+  const before = { cols: 100, rows: 80 };
+  const rect = { left: -500, top: -400, width: 1000, height: 800 };
+  const viewport = { left: 0, top: 0, width: 400, height: 300 };
+  const after = { cols: 120, rows: 90 };
+  for (const [dx, dy] of [[0, 0], [20, 10], [-10, -5]]) {
+    const anchor = gridViewportAnchor(rect, viewport, before, after, dx, dy);
+    assert.ok(Math.abs(anchor.x * after.cols - (70 + dx)) < 1e-9);
+    assert.ok(Math.abs(anchor.y * after.rows - (55 + dy)) < 1e-9);
+    const next = { left: -300, top: -200, width: 1800, height: 1350 };
+    const delta = zoomScrollDelta(next, anchor);
+    assert.ok(Math.abs(next.left - delta.x + anchor.x * next.width - anchor.clientX) < 1e-9);
+    assert.ok(Math.abs(next.top - delta.y + anchor.y * next.height - anchor.clientY) < 1e-9);
   }
 });

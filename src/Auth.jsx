@@ -13,6 +13,17 @@ const AUTH_REDIRECT_URL = import.meta.env.PROD
     return url.href;
   }
 
+function authErrorMessage(error) {
+  const message = (error?.message || '').toLowerCase();
+  if (error?.code === 'invalid_credentials' || message.includes('invalid login credentials')) return 'Неверная почта или пароль.';
+  if (error?.code === 'email_not_confirmed' || message.includes('email not confirmed')) return 'Подтвердите почту по ссылке из письма.';
+  if (message.includes('already registered') || error?.code === 'user_already_exists') return 'Аккаунт с этой почтой уже существует.';
+  if (error?.status === 429 || message.includes('rate limit') || message.includes('too many')) return 'Слишком много попыток. Подождите немного и попробуйте снова.';
+  if (message.includes('password') && (message.includes('weak') || message.includes('at least'))) return 'Пароль слишком простой. Используйте не менее 6 символов.';
+  if (error?.status === 402 || error?.status >= 500) return 'Сервис временно недоступен. Попробуйте позже.';
+  return 'Не удалось выполнить запрос. Проверьте подключение и попробуйте ещё раз.';
+}
+
 export default function Auth({ onAuth, language = "ru" }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -35,7 +46,7 @@ export default function Auth({ onAuth, language = "ru" }) {
       });
 
       if (error) {
-        setMessage(error.message);
+        setMessage(authErrorMessage(error));
       } else {
         onAuth?.(data.user);
       }
@@ -50,7 +61,7 @@ export default function Auth({ onAuth, language = "ru" }) {
       });
 
       if (error) {
-        setMessage(error.message);
+        setMessage(authErrorMessage(error));
       } else if (data.user) {
         if (data.session) onAuth?.(data.user);
         setMessage(
@@ -74,7 +85,7 @@ export default function Auth({ onAuth, language = "ru" }) {
       email: email.trim(),
       options: { emailRedirectTo: authRedirectUrl() },
     });
-    setMessage(error ? error.message : "Письмо с подтверждением отправлено повторно. Проверьте входящие и папку «Спам».");
+    setMessage(error ? authErrorMessage(error) : "Письмо с подтверждением отправлено повторно. Проверьте входящие и папку «Спам».");
     setResending(false);
   }
 
