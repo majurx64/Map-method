@@ -8,6 +8,7 @@ import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPan
 import EditorColorPicker from './EditorColorPicker';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
+import { cachedAccountUser, syncFailureMessage } from './lib/startup';
 import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap } from './lib/remoteMaps';
 import { equalJSON } from './lib/syncWire';
 import { stableDrawingColors } from './lib/drawingColors';
@@ -2216,9 +2217,15 @@ export default function App() {
     setMapCategoryMotion({ category, phase: 'leaving' });
     mapCategoryTimerRef.current = setTimeout(() => {
       setMapCategoryFilter(category); setMapCategoryMotion({ category, phase: 'entering' });
-      mapCategoryTimerRef.current = setTimeout(() => setMapCategoryMotion(null), 320);
+      mapCategoryTimerRef.current = setTimeout(() => setMapCategoryMotion({ phase: "idle" }), 320);
     }, 140);
   }
+
+  useEffect(() => {
+    if (screen === "maps") return;
+    clearTimeout(mapCategoryTimerRef.current);
+    setMapCategoryMotion(null);
+  }, [screen]);
 
   function showSaveNotice(map) {
     clearTimeout(saveNoticeTimerRef.current);
@@ -2267,7 +2274,7 @@ export default function App() {
     let cancelled = false;
     let request;
     const check = async () => {
-      if (request || !navigator.onLine) return;
+      if (request) return;
       request = new AbortController();
       const timeout = setTimeout(() => request?.abort(), 8000);
       try {
@@ -3386,12 +3393,18 @@ export default function App() {
       });
     };
 
-    supabase.auth.getSession().then(({ data }) => {
+    const cachedUser = cachedAccountUser(supabase.auth, localStorage, window.location.href);
+    if (cachedUser) { setUser(cachedUser); setAuthLoading(false); }
+    supabase.auth.getSession().then(({ data, error }) => {
       if (mounted) {
-        setUser((previous) => previous?.id === data.session?.user?.id ? previous : data.session?.user || null);
-        rememberSession(data.session);
+        if (!error) {
+          setUser((previous) => previous?.id === data.session?.user?.id ? previous : data.session?.user || null);
+          rememberSession(data.session);
+        } else setSyncStatus(syncFailureMessage(error));
         setAuthLoading(false);
       }
+    }).catch((error) => {
+      if (mounted) { setAuthLoading(false); setSyncStatus(syncFailureMessage(error)); }
     });
 
     const {
@@ -3399,7 +3412,9 @@ export default function App() {
     } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (mounted) {
-          setUser((previous) => previous?.id === session?.user?.id ? previous : session?.user || null);
+          if (event !== 'INITIAL_SESSION' || session?.user || !cachedUser) {
+            setUser((previous) => previous?.id === session?.user?.id ? previous : session?.user || null);
+          }
           rememberSession(session);
           if (session?.user && ["SIGNED_IN", "TOKEN_REFRESHED", "USER_UPDATED"].includes(event)) {
             const url = new URL(window.location.href);
@@ -3516,7 +3531,7 @@ export default function App() {
         setCustomCategories([...new Set(localMaps.map((map) => map.category).filter((category) => category && !MAP_CATEGORIES.includes(category)))]);
         setActiveMapId(active?.id || null);
         if (active) openMap(active);
-        setSyncStatus(navigator.onLine ? 'Открыта сохранённая копия. Проверяем обновления.' : 'Нет связи с сервером. Открыта сохранённая копия; изменения отправятся после восстановления связи.');
+        setSyncStatus('Открыта сохранённая копия. Проверяем обновления.');
         setMapsLoading(false);
         setIsMapInitialized(true);
         clearTimeout(hydrationReleaseTimerRef.current);
@@ -3528,8 +3543,7 @@ export default function App() {
         data,
         error,
         shared: remoteShared,
-      } = !navigator.onLine ? { data: null, error: new Error("offline") }
-        : await loadRemoteMaps(user.id).then((result) => ({ data: result.personal, shared: result.shared }), (error) => ({ data: null, error }));
+      } = await loadRemoteMaps(user.id).then((result) => ({ data: result.personal, shared: result.shared }), (error) => ({ data: null, error }));
 
       if (cancelled) return;
 
@@ -3816,7 +3830,7 @@ export default function App() {
     let retryTimer;
     let notificationTimer;
     const refresh = async () => {
-      if (cancelled || document.hidden || !navigator.onLine) return;
+      if (cancelled || document.hidden) return;
       if (refreshing) { refreshRequested = true; return; }
       refreshing = true;
       try {
@@ -3882,7 +3896,7 @@ export default function App() {
         clearTimeout(hydrationReleaseTimerRef.current);
         hydrationReleaseTimerRef.current = setTimeout(() => { hydratingRef.current = false; }, 0);
       } catch (error) {
-        if (cachedBootstrapRef.current && !cancelled) setSyncStatus('Нет связи с сервером. Открыта сохранённая копия; изменения отправятся после восстановления связи.');
+        if (cachedBootstrapRef.current && !cancelled) setSyncStatus(syncFailureMessage(error));
         console.error("Не удалось получить изменения карт:", error);
       } finally {
         refreshing = false;
@@ -3965,10 +3979,6 @@ export default function App() {
         }
         if (deletingIdsRef.current.has(map.id)) return null;
         if (latestOwnerRef.current !== user.id) return new Error("account-changed");
-        if (!navigator.onLine) {
-          setSyncStatus(pending ? "Сохранено на устройстве. Ожидаем подключения." : "Нет связи; скачайте резервную копию.");
-          return new Error("offline");
-        }
         try {
           if (map.collaboration) {
             const key = `${user.id}:${map.collaboration.id}`;
@@ -4055,7 +4065,7 @@ export default function App() {
     if (!user?.id || !isMapInitialized || loadedOwnerRef.current !== user.id) return;
     let cancelled = false;
     const flush = async () => {
-      if (!navigator.onLine || cancelled) return;
+      if (cancelled) return;
       const entries = await pendingMapSaves(user.id).catch(() => []);
       for (const entry of entries) {
         if (cancelled || latestOwnerRef.current !== user.id) return;
@@ -7668,8 +7678,10 @@ export default function App() {
     return normalized;
   }
 
-  async function deleteMapVersion(map, version) {
+  async function deleteMapVersion(map, version, event) {
     if (!map || !version || deletingVersionId) return;
+    const row = event?.currentTarget.closest(".history-version-row");
+    if (row) row.style.setProperty("--version-row-height", `${row.getBoundingClientRect().height}px`);
     setHistoryPlaying(false);
     setDeletingVersionId(version.id);
     window.clearTimeout(versionUndoTimerRef.current);
@@ -7708,7 +7720,7 @@ export default function App() {
         }, 360);
       }, 5000);
       await saving;
-    }, 210);
+    }, 280);
   }
 
   async function undoDeletedVersion() {
@@ -11327,14 +11339,14 @@ export default function App() {
                   </div>
                 </div>
                 {!historyReadOnly && <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>}
-                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && (!historyMap.collaboration || version.eventId) && <button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={() => deleteMapVersion(historyMap, version)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
+                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && (!historyMap.collaboration || version.eventId) && <button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={(event) => deleteMapVersion(historyMap, version, event)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
               </>;
             })() : <p className="feature-empty">{historyMap.collaboration && !historyMap.collaboration.historyLoaded ? 'Загрузка истории…' : historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внесите изменение в карту или сохраните важный этап вручную."}</p>}
           </div>
           {!historyReadOnly && <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoNotice && !versionUndoClosing ? " is-visible" : ""}`} role="status" aria-hidden={!versionUndoNotice || versionUndoClosing} onMouseDown={(event) => event.stopPropagation()}>
             {versionUndoNotice && (() => {
               const remainingMs = Math.max(0, Math.min(5000, versionUndoNotice.deadline - deleteCountdownNow));
-              return <><div className="delete-undo-copy"><span><CrossfadeText value={`Версия «${versionUndoNotice.label}» ${versionUndoNotice.pending ? "удаляется…" : "удалена"}`} /></span><strong>{versionUndoNotice.pending ? "…" : `${Math.max(1, Math.ceil(remainingMs / 1000))} сек.`}</strong><button type="button" disabled={versionUndoNotice.pending} onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>Позже её также можно вернуть сочетанием Ctrl+Z</small><i><b style={{ width: `${versionUndoNotice.pending ? 100 : remainingMs / 50}%` }} /></i></>;
+              return <><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}»</span><strong>{versionUndoNotice.pending ? "…" : `${Math.max(1, Math.ceil(remainingMs / 1000))} сек.`}</strong><button type="button" disabled={versionUndoNotice.pending} onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>{versionUndoNotice.pending ? "Удаляем версию…" : "Версия удалена. Позже её также можно вернуть сочетанием Ctrl+Z"}</small><i><b style={{ width: `${versionUndoNotice.pending ? 100 : remainingMs / 50}%` }} /></i></>;
             })()}
           </div>}
         </div>

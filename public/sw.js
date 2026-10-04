@@ -1,9 +1,31 @@
 const ASSETS = ["__BUILD_ASSETS__"];
+const ASSET_ORIGIN = "https://map-method-chi.vercel.app";
 const CACHE = "map-method-v2-__BUILD_ID__";
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png", "/mm-logo.png", ...ASSETS];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    // The custom domain can stall on mobile networks. Use the existing asset
+    // origin for installation, retaining this site's URLs as the cache keys.
+    const cache = await caches.open(CACHE);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+    const staged = await Promise.all(SHELL.map(async (key) => {
+      const url = key.startsWith('/') ? ASSET_ORIGIN + key : key;
+      const response = await fetch(url, { cache: 'reload', signal: controller.signal });
+      if (!response.ok) throw new Error('shell-download-failed');
+      if (key === '/') {
+        const html = await response.text();
+        if (!ASSETS.every((asset) => html.includes(asset))) throw new Error('shell-version-mismatch');
+        return [key, new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })];
+      }
+      return [key, response];
+    }));
+    for (const [key, response] of staged) await cache.put(key, response);
+    await self.skipWaiting();
+    } finally { clearTimeout(timer); controller.abort(); }
+  })());
 });
 
 self.addEventListener("activate", (event) => {
