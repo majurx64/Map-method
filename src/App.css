@@ -3984,9 +3984,12 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .collaborative-filter .animated-select-menu button { font-family:inherit; font-size:14px; font-weight:500; min-height:38px; padding:0 12px; }
 @media (max-width:600px) { .collaborative-history-overlay { padding:12px; } .collaborative-history-modal { max-height:calc(100dvh - 24px); } }
 @media (prefers-reduced-motion:reduce) { .onboarding-page,.onboarding-actions .onboarding-back { transition:none; } }
-.onboarding-actions { display:grid; width:100%; grid-template-columns:1fr 180px 1fr; }
-.onboarding-actions .onboarding-back { grid-column:1; justify-self:end; }
-.onboarding-actions .feature-primary { grid-column:2; width:180px; }
+.onboarding-actions { display:flex; width:100%; justify-content:center; gap:10px; }
+.onboarding-actions .onboarding-back { min-width:80px; }
+.onboarding-actions .onboarding-back.is-hidden { display:none; }
+.onboarding-actions .feature-primary { width:auto; min-width:180px; }
+.onboarding-actions .feature-primary .history-crossfade-text { white-space:nowrap; }
+@media (max-width:460px) { .onboarding-actions { gap:8px; } .onboarding-actions button { padding:0 12px; font-size:14px; } .onboarding-actions .onboarding-back { min-width:0; } .onboarding-actions .feature-primary { min-width:0; } }
 .grid-canvas:focus { outline:none; }
 
 /* Keep category and acknowledgement motion independent of card completion effects. */

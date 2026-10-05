@@ -3,7 +3,10 @@
 .editor-tour-card { position:fixed; box-sizing:border-box; width:min(360px,calc(100% - 24px)); max-height:calc(100dvh - 24px); overflow:auto; padding:20px; border:1px solid #d7d1c6; border-radius:18px; background:#fffdf9; box-shadow:0 12px 40px #1e332533; color:#252621; pointer-events:auto; transition:left 320ms cubic-bezier(.22,1,.36,1),top 320ms cubic-bezier(.22,1,.36,1); }
 .editor-tour-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .editor-tour-heading > span { font-size:10px; font-weight:800; letter-spacing:.06em; color:#667363; }
-.editor-tour-heading > button { flex:none; width:28px; height:28px; padding:0; border:1px solid #ded7cd; border-radius:8px; background:#f4f1eb; color:#667363; cursor:pointer; font-size:20px; }
+.editor-tour-heading > button { display:grid; place-items:center; flex:none; width:28px; height:28px; padding:0; border:1px solid #ded7cd; border-radius:8px; background:#f4f1eb; color:#667363; cursor:pointer; line-height:1; transition:transform 180ms ease,background 180ms ease,color 180ms ease; }
+.editor-tour-heading > button svg { display:block; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; }
+.editor-tour-heading > button:hover { transform:rotate(6deg) scale(1.06); background:#e6eee5; color:#32624f; }
+.editor-tour-heading > button:active { transform:scale(.94); }
 .editor-tour-dots { display:flex; gap:4px; margin:14px 0 18px; }
 .editor-tour-dots i { flex:1; height:3px; border-radius:4px; background:#e2dfd7; transition:background 240ms ease; }
 .editor-tour-dots i.active { background:#32624f; }

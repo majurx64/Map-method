@@ -47,6 +47,7 @@ const MAPS_COLUMNS_KEY = "mm-maps-columns";
 const LIBRARY_FAVORITES_KEY = "mm-library-favorites";
 const LIBRARY_USAGE_KEY = "mm-library-usage";
 const ONBOARDING_KEY = "mm-onboarding";
+const GAME_FILL_COUNT_KEY = "mm-game-fill-count";
 const SHARED_MAPS_TABLE = "shared_maps";
 
 function getYandexReplyUrl(message) {
@@ -1572,7 +1573,7 @@ const AnimatedPercent = memo(function AnimatedPercent({ value, liveRef, precisio
     frameRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameRef.current);
   }, [target, precision]);
-  return <span ref={nodeRef}>{target + '%'}</span>;
+  return <output ref={nodeRef} aria-live="off">{target + '%'}</output>;
 });
 
 const CrossfadeToken = memo(function CrossfadeToken({ value }) {
@@ -1748,7 +1749,10 @@ export default function App() {
   const [progressCompleted, setProgressCompleted] = useState([]);
   const [progressExtra, setProgressExtra] = useState(0);
   const [isGameFillOpen, setIsGameFillOpen] = useState(false);
-  const [gameFillCount, setGameFillCount] = useState("1");
+  const [gameFillCount, setGameFillCount] = useState(() => {
+    const saved = localStorage.getItem(GAME_FILL_COUNT_KEY);
+    return Number.isSafeInteger(Number(saved)) && Number(saved) > 0 ? saved : '1';
+  });
   const [gameFillRandom, setGameFillRandom] = useState(false);
   const [showVictory, setShowVictory] = useState(false);
   const [victoryDismissing, setVictoryDismissing] = useState(false);
@@ -2410,9 +2414,9 @@ export default function App() {
     setSelectionTool(false);
   }, [editorTutorialMapId, editorTutorialStep, screen, activeMapId]);
 
-  useEffect(() => {
-    if (!selection) selectionDismissRef.current.pending = false;
-  }, [selection]);
+  useLayoutEffect(() => {
+    Object.assign(selectionDismissRef.current, { pending: Boolean(selection && selectionReady), area: selection, cols, rows });
+  }, [selection, selectionReady, cols, rows]);
 
   useEffect(() => {
     const consume = (event) => { event.preventDefault(); event.stopImmediatePropagation(); };
@@ -2420,6 +2424,15 @@ export default function App() {
       const state = selectionDismissRef.current;
       state.click = false;
       if (!state.pending || artworkDragRef.current || selectionGestureRef.current) return;
+      if (event.button !== 0 && event.button !== 2) return;
+      // A press inside the selection may become a drag. A stationary release
+      // closes it; every other press closes it before canvas input runs.
+      if (event.button === 0 && event.target === canvasRef.current) {
+        const rect = canvasRef.current.getBoundingClientRect();
+        const column = Math.floor((event.clientX - rect.left) / rect.width * state.cols);
+        const row = Math.floor((event.clientY - rect.top) / rect.height * state.rows);
+        if (column >= 0 && column < state.cols && row >= 0 && row < state.rows && selectionContains(state.area, row * state.cols + column, state.cols)) return;
+      }
       state.pending = false;
       state.pointer = event.pointerId;
       state.click = true;
@@ -5474,8 +5487,15 @@ export default function App() {
     }
     if (artworkDragRef.current?.pointerId === e.pointerId) {
       handlePointerMove(e);
+      const moved = Boolean(artworkDragRef.current.dx || artworkDragRef.current.dy);
       finishArtworkMove();
-      setSelectionReady(true);
+      if (moved) setSelectionReady(true);
+      else {
+        setSelection(null);
+        setSelectionReady(false);
+        setSelectionTool(false);
+        selectionDismissRef.current.click = true;
+      }
       canvasRef.current?.releasePointerCapture(e.pointerId);
       return;
     }
@@ -6821,13 +6841,18 @@ export default function App() {
 
   function openMap(map, { preserveViewport = false } = {}) {
     finishStroke();
-    selectionDismissRef.current.pending = false;
     if (!preserveViewport) gridRestoreRef.current = null;
-    setSelection(null);
-    setSelectionTool(false);
 
     const m =
       normalizeMap(map);
+    const nextGrid = getGridDimensions(m.totalCells, m.imageRatio, m.gridMode, m.manualRows, m.manualCols);
+    const previous = activeMapRef.current;
+    const previousGrid = previous && getGridDimensions(previous.totalCells, previous.imageRatio, previous.gridMode, previous.manualRows, previous.manualCols);
+    if (!preserveViewport || m.id !== previous?.id || nextGrid.cols !== previousGrid?.cols || nextGrid.rows !== previousGrid?.rows) {
+      selectionDismissRef.current.pending = false;
+      setSelection(null);
+      setSelectionTool(false);
+    }
     activeMapRef.current = m;
     setShowVictory(false);
 
@@ -10549,7 +10574,11 @@ export default function App() {
                         </button>
                         {isGameFillOpen && (
                           <div className="game-fill-inline">
-                            <label>Сколько <input type="number" min="1" value={gameFillCount} onChange={(event) => setGameFillCount(event.target.value)} /></label>
+                            <label>Сколько <input type="number" min="1" value={gameFillCount} onChange={(event) => {
+                              const value = event.target.value;
+                              setGameFillCount(value);
+                              if (Number.isSafeInteger(Number(value)) && Number(value) > 0) localStorage.setItem(GAME_FILL_COUNT_KEY, value);
+                            }} /></label>
                             <div>
                               <button type="button" className={!gameFillRandom ? "active" : ""} onClick={() => setGameFillRandom(false)}>По порядку</button>
                               <button type="button" className={gameFillRandom ? "active" : ""} onClick={() => setGameFillRandom(true)}>Хаотично</button>
@@ -11564,7 +11593,7 @@ export default function App() {
       {onboardingOpen && (
         <div className={`modal-overlay onboarding-overlay${closingModal === 'onboarding' ? ' is-closing' : ''}`} onMouseDown={finishOnboarding}>
           <div className="create-modal onboarding-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="onboarding-progress">{[0,1,2].map((step) => <i key={step} className={step <= onboardingStep ? "active" : ""} />)}</div>
+            <div className="onboarding-progress">{[0,1].map((step) => <i key={step} className={step <= onboardingStep ? "active" : ""} />)}</div>
             <div className="onboarding-pages">{[
               ['□', 'Добро пожаловать в Map Method', 'Здесь большая цель превращается в карту: один выполненный шаг — одна закрашенная клетка.'],
               ['✓', 'Попробуйте на готовой карте', 'Мы создадим небольшую демонстрационную карту. Её можно менять или удалить как обычную.'],
