@@ -6,6 +6,8 @@ import { flushAnalytics, trackAnalytics } from "./lib/analytics";
 import Auth from "./Auth";
 import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPanel';
 import EditorColorPicker from './EditorColorPicker';
+import EditorTutorial, { EDITOR_TUTORIAL_STEPS } from './EditorTutorial';
+import EditorSelection from './EditorSelection';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from './lib/historyVersions';
@@ -1542,34 +1544,35 @@ function sameState(a, b) {
   );
 }
 
-const AnimatedPercent = memo(function AnimatedPercent({ value }) {
+const AnimatedPercent = memo(function AnimatedPercent({ value, liveRef, precision = 1 }) {
   const target = Math.max(0, Number(value) || 0);
   const currentRef = useRef(target);
-  const [current, setCurrent] = useState(target);
-
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      currentRef.current = target;
-      setCurrent(target);
-      return;
-    }
-    const start = currentRef.current;
-    const startedAt = performance.now();
-    let frame = 0;
+  const nodeRef = useRef(null);
+  const frameRef = useRef(0);
+  const paint = (next) => {
+    currentRef.current = next;
+    const factor = 10 ** precision;
+    const rounded = Math.round(next * factor) / factor;
+    if (nodeRef.current) nodeRef.current.textContent = (Number.isInteger(rounded) ? rounded : String(rounded)) + '%';
+  };
+  useLayoutEffect(() => {
+    if (liveRef) liveRef.current = { set: (next) => { cancelAnimationFrame(frameRef.current); paint(next); } };
+    return () => { if (liveRef) liveRef.current = null; cancelAnimationFrame(frameRef.current); };
+  }, [liveRef, precision]);
+  useLayoutEffect(() => {
+    cancelAnimationFrame(frameRef.current);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || currentRef.current === target) { paint(target); return; }
+    const start = currentRef.current, startedAt = performance.now();
+    paint(start);
     const animate = (now) => {
       const progress = Math.min(1, (now - startedAt) / 420);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      const next = start + (target - start) * eased;
-      currentRef.current = next;
-      setCurrent(next);
-      if (progress < 1) frame = requestAnimationFrame(animate);
+      paint(start + (target - start) * (1 - Math.pow(1 - progress, 3)));
+      if (progress < 1) frameRef.current = requestAnimationFrame(animate);
     };
-    frame = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(frame);
-  }, [target]);
-
-  const rounded = Math.round(current * 10) / 10;
-  return <>{Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%</>;
+    frameRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameRef.current);
+  }, [target, precision]);
+  return <span ref={nodeRef}>{target + '%'}</span>;
 });
 
 const CrossfadeToken = memo(function CrossfadeToken({ value }) {
@@ -1705,6 +1708,9 @@ export default function App() {
   const editorColorAnchorRef = useRef(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
+  const [editorTutorialMapId, setEditorTutorialMapId] = useState(null);
+  const [editorTutorialStep, setEditorTutorialStep] = useState(0);
+  const finishEditorTutorial = useCallback(() => setEditorTutorialMapId(null), []);
   const [historyParticipant, setHistoryParticipant] = useState('all');
   const [latestSiteVersion, setLatestSiteVersion] = useState("");
   const [siteUpdateStatus, setSiteUpdateStatus] = useState("");
@@ -2052,6 +2058,7 @@ export default function App() {
   const [selectionTool, setSelectionTool] = useState(false);
   const [selection, setSelection] = useState(null);
   const [selectionReady, setSelectionReady] = useState(false);
+  const selectionDismissRef = useRef({ pending: false, pointer: null, click: false });
   const selectionGestureRef = useRef(null);
   const panGestureRef = useRef(null);
   const strokeCounterRef = useRef(null);
@@ -2151,6 +2158,11 @@ export default function App() {
   const mapCellsHoldRef = useRef({ delay: null, interval: null });
   const gameFillTimersRef = useRef([]);
   const gameFillAnimationRef = useRef(null);
+  const progressSequenceUiRef = useRef(false);
+  const progressPercentRef = useRef(null);
+  const progressHeaderRef = useRef(null);
+  const progressCountRef = useRef(null);
+  const progressBarRef = useRef(null);
 
   const requestedTotal = Math.max(
     1,
@@ -2173,7 +2185,7 @@ export default function App() {
   const drawingSet = new Set(completed);
   const displayedCompleted = progressCompleted.filter((i) => i < actualTotal && (mapType === "image" || drawingSet.has(i)));
   const displayedTotal = currentStats.total;
-  const displayedProgress = currentStats.percent;
+  const displayedProgress = displayedTotal > 1000 ? Math.round(displayedCompleted.length / displayedTotal * 10000) / 100 : currentStats.percent;
   const dailyPlan = activeMap ? adaptiveDailyTarget({ ...activeMap, totalCells, imageRatio, gridMode, manualRows, manualCols, completed, progressCompleted }, todayDate) : null;
   const newMapCount = newMapGridMode === "manual" ? Number(newMapRows) * Number(newMapCols) : Number(newMapCells);
   const newMapInvalid = !Number.isInteger(newMapCount) || newMapCount < 1 || newMapCount > MAX_CELLS
@@ -2388,6 +2400,61 @@ export default function App() {
   const libraryUserKey = user?.id || "guest";
   const personalLibrary = useMemo(() => Array.isArray(privateLibrary[libraryUserKey]) ? privateLibrary[libraryUserKey] : [], [privateLibrary, libraryUserKey]);
   useLayoutEffect(() => { liveStateRef.current = { maps, personalLibrary, activeMapId, publicLibraryEditContext }; });
+
+  useEffect(() => {
+    if (!editorTutorialMapId || screen !== 'editor' || activeMapId !== editorTutorialMapId) return;
+    const mode = EDITOR_TUTORIAL_STEPS[editorTutorialStep].mode;
+    if (mode !== undefined) setIsGameMode(mode);
+    setIsGameFillOpen(editorTutorialStep === 1);
+    setSelection(null);
+    setSelectionTool(false);
+  }, [editorTutorialMapId, editorTutorialStep, screen, activeMapId]);
+
+  useEffect(() => {
+    if (!selection) selectionDismissRef.current.pending = false;
+  }, [selection]);
+
+  useEffect(() => {
+    const consume = (event) => { event.preventDefault(); event.stopImmediatePropagation(); };
+    const down = (event) => {
+      const state = selectionDismissRef.current;
+      state.click = false;
+      if (!state.pending || artworkDragRef.current || selectionGestureRef.current) return;
+      state.pending = false;
+      state.pointer = event.pointerId;
+      state.click = true;
+      setSelection(null);
+      setSelectionReady(false);
+      setSelectionTool(false);
+      if (event.button === 2) rightButtonNavigationGuardRef.current = performance.now() + 350;
+      consume(event);
+    };
+    const up = (event) => {
+      if (selectionDismissRef.current.pointer !== event.pointerId) return;
+      selectionDismissRef.current.pointer = null;
+      consume(event);
+    };
+    const click = (event) => {
+      if (!selectionDismissRef.current.click) return;
+      selectionDismissRef.current.click = false;
+      consume(event);
+    };
+    const context = (event) => { if (selectionDismissRef.current.click) consume(event); };
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('pointerup', up, true);
+    document.addEventListener('pointercancel', up, true);
+    document.addEventListener('click', click, true);
+    document.addEventListener('auxclick', click, true);
+    document.addEventListener('contextmenu', context, true);
+    return () => {
+      document.removeEventListener('pointerdown', down, true);
+      document.removeEventListener('pointerup', up, true);
+      document.removeEventListener('pointercancel', up, true);
+      document.removeEventListener('click', click, true);
+      document.removeEventListener('auxclick', click, true);
+      document.removeEventListener('contextmenu', context, true);
+    };
+  }, []);
   const libraryFavorites = Array.isArray(favoritesByUser[libraryUserKey]) ? favoritesByUser[libraryUserKey] : [];
   function setLibraryFavorites(update) {
     setFavoritesByUser((current) => ({ ...current, [libraryUserKey]: update(Array.isArray(current[libraryUserKey]) ? current[libraryUserKey] : []) }));
@@ -4678,7 +4745,23 @@ export default function App() {
     }
   }
 
+  function publishProgressSequenceUi() {
+    const count = Math.min(displayedTotal, progressCompletedRef.current.size);
+    const factor = displayedTotal > 1000 ? 100 : 10;
+    const percent = displayedTotal ? Math.round(count / displayedTotal * 100 * factor) / factor : 0;
+    progressPercentRef.current?.set(percent);
+    if (progressHeaderRef.current) progressHeaderRef.current.textContent = count + ' / ' + displayedTotal + ' ' + t('cells');
+    if (progressCountRef.current) progressCountRef.current.textContent = String(count);
+    if (progressBarRef.current) progressBarRef.current.style.width = percent + '%';
+    if (!gameFillAnimationRef.current) {
+      progressSequenceUiRef.current = false;
+      progressBarRef.current?.parentElement.classList.remove('is-sequencing');
+    }
+  }
+
   function stopProgressSequence() {
+    progressSequenceUiRef.current = false;
+    progressBarRef.current?.parentElement.classList.remove('is-sequencing');
     gameFillTimersRef.current.forEach(window.clearTimeout);
     gameFillTimersRef.current = [];
     window.cancelAnimationFrame(gameFillAnimationRef.current);
@@ -4712,6 +4795,8 @@ export default function App() {
     }
 
     const working = new Set(current);
+    progressSequenceUiRef.current = true;
+    progressBarRef.current?.parentElement.classList.add('is-sequencing');
     const cadence = Math.max(8, Math.min(38, 1800 / ordered.length));
     const startedAt = performance.now();
     let cursor = 0;
@@ -5455,6 +5540,7 @@ export default function App() {
       });
       if (undoStackRef.current.length > 100) undoStackRef.current.shift();
       redoStackRef.current = [];
+      selectionDismissRef.current.pending = true;
     }
     artworkDragRef.current = null;
     stopArtworkDragTracking();
@@ -5598,6 +5684,8 @@ export default function App() {
         counter.textContent = String(strokeCountRef.current);
       }
     }
+
+    if (progressSequenceUiRef.current) publishProgressSequenceUi();
 
     for (const i of dirtyCells) {
       if (i < 0 || i >= actualTotal) continue;
@@ -6733,6 +6821,7 @@ export default function App() {
 
   function openMap(map, { preserveViewport = false } = {}) {
     finishStroke();
+    selectionDismissRef.current.pending = false;
     if (!preserveViewport) gridRestoreRef.current = null;
     setSelection(null);
     setSelectionTool(false);
@@ -8135,28 +8224,35 @@ export default function App() {
     } finally { featureBusyRef.current = false; }
   }
 
+  function startOnboarding() {
+    setClosingModal('');
+    finishEditorTutorial();
+    setOnboardingStep(0);
+    setOnboardingOpen(true);
+  }
+
   async function createDemoMap() {
-    if (!user || featureBusyRef.current) return;
+    if (featureBusyRef.current) return;
     featureBusyRef.current = true;
     try {
-    const demo = normalizeMap({
-      id: createMapId(), order: 0, name: "Моя первая карта", description: "Небольшая карта, чтобы попробовать Map Method",
-      category: "Личное", mapType: "free", gridMode: "manual", totalCells: "64", manualRows: "8", manualCols: "8",
-      completed: [18,19,20,21,25,26,27,28,29,30,34,35,36,37,42,43,44,51], colors: [], createdAt: new Date().toISOString(),
-      isGameMode: true,
-    });
-    setMaps((current) => [...current, demo]);
-    if (user) await remoteSave(demo);
-    localStorage.setItem(`${ONBOARDING_KEY}:${user.id}`, "done");
-    setOnboardingOpen(false);
-    setActiveMapId(demo.id);
-    openMap(demo);
-    setScreen("editor");
+      const demo = normalizeMap({
+        id: createMapId(), order: 0, name: "Моя первая карта", description: "Небольшая карта, чтобы попробовать Map Method",
+        category: "Личное", mapType: "free", gridMode: "manual", totalCells: "64", manualRows: "8", manualCols: "8",
+        completed: [18,19,20,21,25,26,27,28,29,30,34,35,36,37,42,43,44,51], colors: [], createdAt: new Date().toISOString(), isGameMode: true,
+      });
+      setMaps((current) => [...current, demo]);
+      openMap(demo);
+      setScreen('editor');
+      setEditorTutorialStep(0);
+      setEditorTutorialMapId(demo.id);
+      if (user?.id) localStorage.setItem(ONBOARDING_KEY + ':' + user.id, 'done');
+      closeModal('onboarding');
+      if (user) void remoteSave(demo);
     } finally { featureBusyRef.current = false; }
   }
 
   function finishOnboarding() {
-    if (user?.id) localStorage.setItem(`${ONBOARDING_KEY}:${user.id}`, "done");
+    if (user?.id) localStorage.setItem(ONBOARDING_KEY + ':' + user.id, 'done');
     closeModal('onboarding');
   }
 
@@ -8262,11 +8358,6 @@ export default function App() {
       )}
       <header className={`header${isLibraryOwner ? ' has-developer-tools' : ''}`}>
         <div className="header-back-links">
-          {isLibraryOwner && screen === 'home' && <button type="button" className="back-link developer-training" onClick={() => {
-            setClosingModal('');
-            setOnboardingStep(0);
-            setOnboardingOpen(true);
-          }}>Обучение</button>}
           <button
             className="back-link"
             onClick={() => {
@@ -8326,10 +8417,10 @@ export default function App() {
             </button>
             {siteUpdateStatus && siteUpdateStatus !== 'updating' && <small>{siteUpdateStatus}</small>}
           </div>}
-          {screen === "home" && (
+          {(screen !== "shared") && (
             <button
               className="home-how-btn"
-              onClick={() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })}
+              onClick={startOnboarding}
             >
               Как это работает
             </button>
@@ -10474,6 +10565,7 @@ export default function App() {
                   <div className="tool-actions">
                   <button
                     className="tool-btn"
+                    data-tutorial="undo"
                     onClick={
                       undo
                     }
@@ -10493,7 +10585,7 @@ export default function App() {
                   </button>
                 </div>
                 <AnimatedEditorPresence visible={!isGameMode}>
-                  {!isGameMode && <button className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
+                  {!isGameMode && <button data-tutorial="selection" className={`map-type-btn ${selectionTool ? "active" : ""}`} aria-pressed={selectionTool} onClick={() => { setSelectionTool(!selectionTool); setSelection(null); }}>Выделение</button>}
                 </AnimatedEditorPresence>
                 <button className="clear-btn" onClick={clearProgress}>{t("clearProgress")}</button>
 
@@ -10583,12 +10675,7 @@ export default function App() {
                 </h1>
               </div>
 
-              <span className="painted-count">
-                {displayedCompleted.length}{" "}
-                /{" "}
-                {displayedTotal}{" "}
-                {t("cells")}
-              </span>
+              <span className="painted-count" ref={progressHeaderRef}>{displayedCompleted.length + " / " + displayedTotal + " " + t("cells")}</span>
             </div>
 
             <div className="canvas-card">
@@ -10648,7 +10735,7 @@ export default function App() {
                         e.preventDefault()
                       }
                     />
-                    {selection && !isGameMode && <div className={`grid-selection${selectionReady && !movingArtwork ? " selection-ready" : ""}`} style={{ left: `${selection.x / cols * 100}%`, top: `${selection.y / rows * 100}%`, width: `${selection.width / cols * 100}%`, height: `${selection.height / rows * 100}%` }}>{selectionReady && !movingArtwork && <span>Можно перемещать</span>}</div>}
+                    <EditorSelection key={activeMapId} area={!isGameMode ? selection : null} ready={selectionReady} moving={movingArtwork} cols={cols} rows={rows} />
                   </div>
                 </div>
               </div>
@@ -10683,14 +10770,14 @@ export default function App() {
               {dailyPlan && <p className={`daily-plan${dailyPlan.paused ? " paused" : ""}`} aria-live="polite">{dailyPlan.label}</p>}
               <div className="preview-progress">
                 <strong>
-                  <AnimatedPercent value={displayedProgress} />
+                  <AnimatedPercent value={displayedProgress} liveRef={progressPercentRef} precision={displayedTotal > 1000 ? 2 : 1} />
                 </strong>
 
 
               </div>
 
               <div className="preview-bar">
-                <i
+                <i ref={progressBarRef}
                   style={{
                     width: `${displayedProgress}%`,
                   }}
@@ -10705,11 +10792,7 @@ export default function App() {
                   {t("cells")}
                 </span>
 
-                <strong>
-                  {
-                    displayedCompleted.length
-                  }
-                </strong>
+                <strong ref={progressCountRef}>{displayedCompleted.length}</strong>
               </div>
 
               <div className="preview-stat">
@@ -11476,16 +11559,17 @@ export default function App() {
         </div>
       )}
 
+      {editorTutorialMapId && editorTutorialMapId === activeMapId && screen === 'editor' && !onboardingOpen && <EditorTutorial step={editorTutorialStep} busy={Boolean(gameFillAnimationRef.current)} onStep={setEditorTutorialStep} onClose={finishEditorTutorial} onAccount={() => { finishEditorTutorial(); setScreen(user ? 'account' : 'auth'); }} />}
+
       {onboardingOpen && (
         <div className={`modal-overlay onboarding-overlay${closingModal === 'onboarding' ? ' is-closing' : ''}`} onMouseDown={finishOnboarding}>
           <div className="create-modal onboarding-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="onboarding-progress">{[0,1,2].map((step) => <i key={step} className={step <= onboardingStep ? "active" : ""} />)}</div>
             <div className="onboarding-pages">{[
               ['□', 'Добро пожаловать в Map Method', 'Здесь большая цель превращается в карту: один выполненный шаг — одна закрашенная клетка.'],
-              ['✦', 'Двигайтесь в своём темпе', 'Укажите срок и выберите спокойный, ровный или интенсивный режим. План будет пересчитываться сам.'],
               ['✓', 'Попробуйте на готовой карте', 'Мы создадим небольшую демонстрационную карту. Её можно менять или удалить как обычную.'],
             ].map(([icon, title, text], index) => <div key={title} className={`onboarding-page${index === onboardingStep ? ' is-active' : ''}`} style={{ '--page-direction': index < onboardingStep ? -1 : 1 }} aria-hidden={index !== onboardingStep}><span className="onboarding-icon">{icon}</span><h2>{title}</h2><p>{text}</p></div>)}</div>
-            <div className="onboarding-actions"><button type="button" className={`onboarding-back${onboardingStep ? '' : ' is-hidden'}`} tabIndex={onboardingStep ? 0 : -1} onClick={() => setOnboardingStep((step) => Math.max(0, step - 1))}>Назад</button><button type="button" className="feature-primary" onClick={() => onboardingStep < 2 ? setOnboardingStep((step) => step + 1) : createDemoMap()}><CrossfadeText value={onboardingStep < 2 ? "Дальше" : "Создать демо-карту"} /></button></div>
+            <div className="onboarding-actions"><button type="button" className={`onboarding-back${onboardingStep ? '' : ' is-hidden'}`} tabIndex={onboardingStep ? 0 : -1} onClick={() => setOnboardingStep((step) => Math.max(0, step - 1))}>Назад</button><button type="button" className="feature-primary" onClick={() => onboardingStep === 0 ? setOnboardingStep(1) : createDemoMap()}><CrossfadeText value={onboardingStep === 0 ? "Дальше" : "Создать демо-карту"} /></button></div>
             <button type="button" className="onboarding-skip" onClick={finishOnboarding}>Пропустить</button>
           </div>
         </div>

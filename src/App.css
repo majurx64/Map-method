@@ -4050,3 +4050,8 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .history-version-delete:disabled::before,.history-version-delete:disabled::after { display:none !important; }
 /* Brief mutation locks must not flash the surrounding history controls. */
 .history-modal button:disabled { opacity:1; }
+.preview-bar.is-sequencing > i { transition:none; }
+.grid-selection.is-closing { animation:selection-dismiss 180ms ease-out both; }
+.grid-selection.is-closing > span { animation:none; }
+@keyframes selection-dismiss { to { opacity:0; transform:scale(.985); } }
+@media (prefers-reduced-motion:reduce) { .grid-selection.is-closing { animation-duration:1ms; } }
