@@ -3580,6 +3580,7 @@ export default function App() {
         if (!cancelled) {
           setMaps([]);
           setActiveMapId(null);
+          setScreen((current) => current === "editor" ? "maps" : current);
           localStorage.removeItem(STORAGE_KEY);
           localStorage.removeItem(ACTIVE_MAP_KEY);
           localStorage.removeItem(LOCAL_MAP_OWNER_KEY);
@@ -6661,6 +6662,11 @@ export default function App() {
       ACTIVE_MAP_KEY,
       map.id
     );
+
+    if (!user) {
+      setScreen("auth");
+      return;
+    }
 
     if (user) {
       const err =
