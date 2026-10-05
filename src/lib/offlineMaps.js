@@ -42,9 +42,15 @@ export function readAccountCache(owner) {
     store.get(owner).onsuccess = (event) => done(event.target.result || []);
   });
 }
-export function queueMapSave(owner, map) {
-  const entry = { key: `${owner}:${map.id}`, owner, map, revision: crypto.randomUUID() };
-  return transaction("outbox", "readwrite", (store, done) => { store.put(entry); done(entry); });
+export function queueMapSave(owner, map, base = null) {
+  const entry = { key: `${owner}:${map.id}`, owner, map, base, revision: crypto.randomUUID() };
+  return transaction("outbox", "readwrite", (store, done) => {
+    store.get(entry.key).onsuccess = (event) => {
+      if (event.target.result && Object.hasOwn(event.target.result, 'base')) entry.base = event.target.result.base;
+      store.put(entry);
+      done(entry);
+    };
+  });
 }
 export function pendingMapSaves(owner) {
   return transaction("outbox", "readonly", (store, done) => {

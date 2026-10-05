@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import { readAccountCache, cacheAccountMaps } from './offlineMaps';
 import { applySyncDelta, knownVersions } from './syncCache';
 import { decodeWire, dataPatch, applyEventDelta } from './syncWire';
+import { rebasePersonalMap } from './personalMapMerge';
 
 const accounts = new Map();
 function account(owner) {
@@ -45,10 +46,7 @@ function withAccountLock(owner, run) {
   return globalThis.navigator?.locks ? navigator.locks.request(`mm-remote:${owner}`, run) : run();
 }
 
-export function loadRemoteMaps(owner, historyTeam = null) {
-  const state = account(owner);
-  return enqueue(state, () => withAccountLock(owner, async () => {
-    await initialize(state, owner, Boolean(globalThis.navigator?.locks));
+async function refreshRemoteState(state, owner, historyTeam = null) {
     const knownShared = knownVersions(state.shared, true);
     if (historyTeam && knownShared[historyTeam]) knownShared[historyTeam].eventHashes = state.histories[historyTeam]?.hashes || {};
     const { data: response, error } = await requestRpc('sync_map_bundle_v2', {
@@ -71,6 +69,12 @@ export function loadRemoteMaps(owner, historyTeam = null) {
     state.histories = Object.fromEntries(Object.entries(histories).filter(([id]) => data.shared.ids.includes(id)));
     if (changed) await persist(state, owner);
     return { personal, shared };
+}
+export function loadRemoteMaps(owner, historyTeam = null) {
+  const state = account(owner);
+  return enqueue(state, () => withAccountLock(owner, async () => {
+    await initialize(state, owner, Boolean(globalThis.navigator?.locks));
+    return refreshRemoteState(state, owner, historyTeam);
   }));
 }
 
@@ -87,28 +91,35 @@ export function rememberRemoteSave(owner, row, receipt) {
   }));
 }
 
-export function saveRemoteMap(owner, row) {
+export function saveRemoteMap(owner, row, baseline) {
   const state = account(owner);
   return enqueue(state, () => withAccountLock(owner, async () => {
     await initialize(state, owner, Boolean(globalThis.navigator?.locks));
-    const old = state.personal.find((item) => item.id === row.id);
-    const patch = old ? dataPatch(old.data, row.data) : null;
-    let result = old
-      ? await requestRpc('save_personal_map_patch', { map_id: String(row.id), map_name: row.name, patch, expected_revision: old.sync_revision, expected_owner: owner })
-      : { error: { code: '40001' } };
-    // A concurrent personal edit retains the established complete-snapshot save semantics.
-    // Never apply stale history indices to a newer snapshot. Shared maps use cell RPCs only.
-    if (result.error?.code === '40001') result = await requestRpc('save_personal_map', { map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: owner });
+    let old = state.personal.find((item) => item.id === row.id);
+    const base = baseline === undefined ? old : baseline;
+    let result, candidate;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!old && base && baseline !== undefined) throw Object.assign(new Error('personal-map-deleted'), { code: 'MM_SYNC_CONFLICT' });
+      candidate = old ? rebasePersonalMap(base || state.lastSaved?.get(row.id), row, old) : row;
+      result = old
+        ? await requestRpc('save_personal_map_patch', { map_id: String(row.id), map_name: candidate.name, patch: dataPatch(old.data, candidate.data), expected_revision: old.sync_revision, expected_owner: owner })
+        : await requestRpc('save_personal_map', { map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: owner });
+      if (result.error?.code !== '40001') break;
+      await refreshRemoteState(state, owner);
+      old = state.personal.find((item) => item.id === row.id);
+    }
     if (result.error) throw result.error;
-    const saved = { ...old, ...row, ...result.data };
+    const saved = { ...old, ...candidate, ...result.data };
     state.personal = [...state.personal.filter((item) => item.id !== row.id), saved];
+    state.lastSaved ??= new Map();
+    state.lastSaved.set(row.id, row);
     await persist(state, owner);
-    return result.data;
+    return saved;
   }));
 }
 
-export async function upsertRemoteMap(row) {
-  try { return { data: { ...row, ...await saveRemoteMap(row.user_id, row) }, error: null }; }
+export async function upsertRemoteMap(row, baseline) {
+  try { return { data: await saveRemoteMap(row.user_id, row, baseline), error: null }; }
   catch (error) { return { data: null, error }; }
 }
 

@@ -13,6 +13,7 @@ export function cachedAccountUser(auth, storage, href) {
 
 export function syncFailureMessage(error) {
   const message = String(error?.message || '').toLowerCase();
+  if (error?.code === 'MM_SYNC_CONFLICT') return 'Карта изменилась на другом устройстве. Правки сохранены локально; устаревшая копия не отправлена.';
   if (error?.status === 402 || message.includes('quota') || message.includes('payment required')) return 'Сервер ограничил доступ из-за лимита. Карты и правки сохранены на устройстве.';
   if (error?.status === 401 || error?.code === 'PGRST301' || message.includes('jwt expired')) return 'Нужно снова войти в аккаунт для синхронизации. Карты и правки сохранены на устройстве.';
   return 'Пока не удалось синхронизировать карты. Открыта сохранённая копия; правки сохраняются на устройстве.';

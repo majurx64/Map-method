@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { liveCellChanges, mergeLiveMaps } from '../src/lib/liveMaps.js';
 import { collaborativeVersions } from '../src/lib/collaborativeHistory.js';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from '../src/lib/historyVersions.js';
+import { rebasePersonalMap } from '../src/lib/personalMapMerge.js';
 
 test('shared history reconstructs drawing colours and progress across different participants', () => {
   const map = { mapType: 'free', totalCells: '4', completed: [0, 1], progressCompleted: [1], colors: ['#ff0000', '#0000ff'], createdAt: '2026-10-01T10:00:00Z' };
@@ -146,4 +147,50 @@ test('Reduced motion commits immediately without starting a row animation', asyn
   const removal = animateHistoryRemoval({ animate: () => { assert.fail('Animation must be skipped'); } }, true);
   await removal.finished;
   await removal.rollback();
+});
+
+function personalRow(filled = 168, today = 0) {
+  return { id: 'pull-ups', name: 'Подтягивания (500)', data: {
+    isGameMode: true, mapType: 'free', gridMode: 'manual', totalCells: '500', manualRows: '20', manualCols: '25',
+    completed: Array.from({ length: 500 }, (_, index) => index), colors: Array(500).fill('#111111'),
+    progressCompleted: Array.from({ length: filled }, (_, index) => index),
+    activityLog: today ? [{ date: '2026-10-05', cells: today }] : [],
+    lastPaintedAt: today ? '2026-10-05T12:00:00Z' : '2026-10-05T00:53:02Z',
+    versions: [{ id: 'start', createdAt: '2026-10-03T10:00:00Z', completed: [] }],
+  } };
+}
+
+test('opening a stale 168-cell copy preserves all 180 server cells and the 12 completed today', () => {
+  const before = personalRow(), latest = personalRow(180, 12);
+  latest.data.versions.push({ id: 'daytime', createdAt: latest.data.lastPaintedAt, completed: [], progressCompleted: latest.data.progressCompleted });
+  assert.deepEqual(rebasePersonalMap(before, structuredClone(before), latest), latest);
+});
+
+test('replaying an already accepted fill does not count the same twelve cells twice', () => {
+  const before = personalRow(), edited = personalRow(180, 12);
+  assert.deepEqual(rebasePersonalMap(before, edited, structuredClone(edited)), edited);
+});
+
+test('a stale device can erase one selected cell without erasing later cells from another device', () => {
+  const before = personalRow(), edited = structuredClone(before), latest = personalRow(180, 12);
+  edited.data.progressCompleted = edited.data.progressCompleted.filter(index => index !== 7);
+  const merged = rebasePersonalMap(before, edited, latest);
+  assert.equal(merged.data.progressCompleted.length, 179);
+  assert.equal(merged.data.progressCompleted.includes(7), false);
+  assert.equal(merged.data.progressCompleted.includes(179), true);
+  assert.deepEqual(merged.data.activityLog, latest.data.activityLog);
+  assert.equal(merged.data.lastPaintedAt, latest.data.lastPaintedAt);
+});
+
+test('deleting one history version preserves a newer version from another device', () => {
+  const before = personalRow(), edited = structuredClone(before), latest = personalRow(180, 12);
+  edited.data.versions = [];
+  latest.data.versions.push({ id: 'newer', createdAt: latest.data.lastPaintedAt, completed: [] });
+  assert.deepEqual(rebasePersonalMap(before, edited, latest).data.versions.map(version => version.id), ['newer']);
+});
+
+test('conflicting grid edits retain the local copy instead of replaying cells into different coordinates', () => {
+  const before = personalRow(), edited = personalRow(169, 1), latest = personalRow();
+  latest.data.manualCols = '30';
+  assert.throws(() => rebasePersonalMap(before, edited, latest), error => error.code === 'MM_SYNC_CONFLICT');
 });

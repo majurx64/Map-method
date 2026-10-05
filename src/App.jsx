@@ -2139,6 +2139,7 @@ export default function App() {
   const historyTeamRef = useRef(null);
   const cachedBootstrapRef = useRef(false);
   const dirtyMapsRef = useRef(new Map());
+  const mapBaselinesRef = useRef(new Map());
   const liveStateRef = useRef(null);
   const activeMapRef = useRef(activeMap);
   const hydrationReleaseTimerRef = useRef(null);
@@ -3571,6 +3572,7 @@ export default function App() {
     async function load() {
       const initial = getInitialData();
       loadedOwnerRef.current = null;
+      mapBaselinesRef.current.clear();
       cachedBootstrapRef.current = false;
       setMapsLoading(true);
       setIsMapInitialized(false);
@@ -3609,6 +3611,7 @@ export default function App() {
       const pending = await pendingMapSaves(user.id).catch(() => []);
       if (cancelled) return;
       if (cached.length) {
+        for (const map of cached) mapBaselinesRef.current.set(map.id, mapToSupabaseRow(map, user.id));
         const local = mergePendingMaps(cached, pending).map(normalizeMap);
         const localMaps = local.filter((map) => !map.privateLibraryItem && !map.collaboration?.hidden);
         const localLibrary = local.filter((map) => map.privateLibraryItem);
@@ -3748,6 +3751,7 @@ export default function App() {
       }
 
       loadedOwnerRef.current = user.id;
+      for (const map of [...loadedMaps, ...loadedLibrary]) mapBaselinesRef.current.set(map.id, mapToSupabaseRow(map, user.id));
       loadedActiveId = loadedMaps.find((map) => map.id === loadedActiveId)?.id || loadedMaps[0]?.id || null;
       setMaps(loadedMaps);
       setActiveMapId(loadedActiveId);
@@ -3951,6 +3955,9 @@ export default function App() {
                 ...(!map.collaboration ? { gridMode: current.editor.gridMode } : {}),
                 drawColor: current.editor.drawColor, customColors: current.editor.customColors } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
+        for (const map of [...nextMaps, ...nextLibrary]) {
+          if (!dirtyMapsRef.current.has(map.id) && !pending.some((entry) => entry.map.id === map.id)) mapBaselinesRef.current.set(map.id, mapToSupabaseRow(map, owner));
+        }
         const mapsChanged = !equalJSON(current.maps, nextMaps);
         const libraryChanged = !equalJSON(current.personalLibrary, nextLibrary);
         const nextActive = nextMaps.find((map) => map.id === current.activeMapId);
@@ -4038,7 +4045,7 @@ export default function App() {
       if (user?.id && current && !publicLibraryEditContext) {
         const map = normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current));
         // Persist before restarting even if the network is unavailable.
-        await queueMapSave(user.id, map);
+        await queueMapSave(user.id, map, mapBaselinesRef.current.get(map.id) || null);
         pendingVersionSequenceRef.current = [];
       } else if (current) {
         const maps = liveStateRef.current.maps.map((map) => map.id === current.id ? current : map);
@@ -4057,7 +4064,7 @@ export default function App() {
       }
 
       const editRevision = dirtyMapsRef.current.get(map.id);
-      const queued = queuedEntry ? Promise.resolve(queuedEntry) : queueMapSave(user.id, normalizeMap(map)).catch(() => {
+      const queued = queuedEntry ? Promise.resolve(queuedEntry) : queueMapSave(user.id, normalizeMap(map), mapBaselinesRef.current.get(map.id) || null).catch(() => {
         setSyncStatus("Не удалось сохранить офлайн-копию. Скачайте резервную копию.");
         return null;
       });
@@ -4084,10 +4091,10 @@ export default function App() {
             return null;
           }
           const row = mapToSupabaseRow(map, user.id);
-          const { error } = await upsertRemoteMap(row);
+          const { error } = await upsertRemoteMap(row, pending?.base);
 
           if (error) {
-            setSyncStatus("Сохранено на устройстве. Сервер пока недоступен.");
+            setSyncStatus(error.code === 'MM_SYNC_CONFLICT' ? "Карта изменилась на другом устройстве. Правки сохранены локально; устаревшая копия не отправлена." : "Сохранено на устройстве. Сервер пока недоступен.");
             console.error(
               "Ошибка автосохранения:",
               error
@@ -4123,8 +4130,12 @@ export default function App() {
             }
           }
           if (pending) await acknowledgeMapSave(pending);
-          if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
+          mapBaselinesRef.current.set(map.id, row);
+          const current = liveStateRef.current;
+          const currentMap = current.activeMapId === map.id ? current.editor : [...current.maps, ...current.personalLibrary].find((item) => item.id === map.id);
+          if (dirtyMapsRef.current.get(map.id) === editRevision && (!queuedEntry || (currentMap && equalJSON(mapToSupabaseRow(currentMap, user.id), row)))) dirtyMapsRef.current.delete(map.id);
           setSyncStatus("");
+          void liveRefreshRef.current?.();
           return null;
         } catch (error) {
           if (map.collaboration) setSyncStatus('Сохранено на устройстве. Совместный прогресс отправится после восстановления связи.');
@@ -6871,6 +6882,18 @@ export default function App() {
 
   function openMap(map, { preserveViewport = false } = {}) {
     finishStroke();
+    if (!preserveViewport && user?.id && loadedOwnerRef.current === user.id && dirtyMapsRef.current.has(activeMapRef.current?.id)) {
+      const current = buildCurrentMap();
+      if (current) {
+        const saved = normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current));
+        pendingVersionSequenceRef.current = [];
+        void remoteSave(saved);
+      }
+    }
+    clearTimeout(saveTimerRef.current);
+    hydratingRef.current = true;
+    clearTimeout(hydrationReleaseTimerRef.current);
+    hydrationReleaseTimerRef.current = setTimeout(() => { hydratingRef.current = false; }, 0);
     if (!preserveViewport) gridRestoreRef.current = null;
 
     const m =
@@ -8324,7 +8347,7 @@ export default function App() {
       clearTimeout(saveTimerRef.current);
       const current = buildCurrentMap();
       if (current && user?.id) {
-        await queueMapSave(user.id, normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current)));
+        await queueMapSave(user.id, normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current)), mapBaselinesRef.current.get(current.id) || null);
         pendingVersionSequenceRef.current = [];
       }
       if (navigator.serviceWorker?.controller && window.caches) {
