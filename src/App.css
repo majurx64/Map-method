@@ -3516,7 +3516,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .maps-view-switch button:focus-visible { outline:2px solid #32624f; outline-offset:2px; }
 
 .maps-list { grid-template-columns:repeat(var(--map-columns, 2),minmax(0,1fr)); }
-.maps-list-columns-3 .map-card,.maps-list-columns-4 .map-card { grid-template-columns:minmax(0,1fr); }
+.maps-list-columns-3 .map-card,.maps-list-columns-4 .map-card { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
 .maps-list-columns-3 .map-card-preview,.maps-list-columns-4 .map-card-preview { width:100%; border-right:0; border-bottom:0; }
 .maps-list-columns-3 .map-card-preview { height:clamp(190px,18vw,245px); min-height:190px; }
 .maps-list-columns-4 .map-card-preview { height:clamp(165px,14vw,205px); min-height:165px; }
@@ -3545,7 +3545,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   .maps-page-actions { width:100%; align-items:stretch; flex-direction:column-reverse; }
   .maps-view-switch { align-self:flex-start; }
   .maps-list { grid-template-columns:1fr; }
-  .maps-list-columns-3 .map-card,.maps-list-columns-4 .map-card { grid-template-columns:154px minmax(0,1fr); }
+  .maps-list-columns-3 .map-card,.maps-list-columns-4 .map-card { grid-template-columns:154px minmax(0,1fr); grid-template-rows:auto; }
   .maps-list-columns-3 .map-card-preview,.maps-list-columns-4 .map-card-preview { width:auto; height:auto; min-height:154px; border-right:1px solid #ded9cf; border-bottom:0; container-type:normal; }
   .maps-list-columns-3 .map-card-body,.maps-list-columns-4 .map-card-body { min-height:154px; }
 }
