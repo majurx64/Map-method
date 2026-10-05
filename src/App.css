@@ -4048,3 +4048,5 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .history-modal .history-version-list { display:flex; flex-direction:column; height:190px; max-height:190px; gap:6px; }
 .history-version-list .history-version-row { flex:0 0 auto; min-height:0; box-sizing:border-box; }
 .history-version-delete:disabled::before,.history-version-delete:disabled::after { display:none !important; }
+/* Brief mutation locks must not flash the surrounding history controls. */
+.history-modal button:disabled { opacity:1; }

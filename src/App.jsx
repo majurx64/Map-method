@@ -5875,6 +5875,9 @@ export default function App() {
     const anchor = zoomAnchorRef.current;
     const viewport = viewportRef.current, canvas = canvasRef.current;
     if (screen !== 'editor' || !viewport || !canvas) return;
+    // The stage still uses the previous viewport size until its measurement
+    // reaches React. Do not consume the first centering or zoom anchor yet.
+    if (viewportSize.width !== viewport.clientWidth || viewportSize.height !== viewport.clientHeight) return;
     const grid = canvas.parentElement;
     const previous = zoomVisualSizeRef.current;
     const next = { width: canvasWidth, height: canvasHeight, mapId: activeMapId, canvas, zoom: mapZoom };
