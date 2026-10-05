@@ -12,7 +12,7 @@ import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from '.
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from './lib/historyVersions';
 import { cachedAccountUser, syncFailureMessage } from './lib/startup';
-import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap } from './lib/remoteMaps';
+import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap, requestRpc } from './lib/remoteMaps';
 import { equalJSON } from './lib/syncWire';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
@@ -3916,7 +3916,6 @@ export default function App() {
     let cancelled = false;
     let refreshing = false;
     let refreshRequested = false;
-    let channelReady = false;
     let retryTimer;
     let notificationTimer;
     const refresh = async () => {
@@ -3940,10 +3939,8 @@ export default function App() {
           retryTimer = setTimeout(refresh, 500);
           return;
         }
-        if (cachedBootstrapRef.current) {
-          cachedBootstrapRef.current = false;
-          if (!pending.length && !dirtyMapsRef.current.size) setSyncStatus('');
-        }
+        cachedBootstrapRef.current = false;
+        if (!pending.length && !dirtyMapsRef.current.size) setSyncStatus('');
         const current = liveStateRef.current;
         const local = [...current.maps, ...current.personalLibrary];
         const blocked = new Set([...deletingIdsRef.current, ...pendingDeletesRef.current.map((entry) => entry.map.id)]);
@@ -3987,7 +3984,11 @@ export default function App() {
         clearTimeout(hydrationReleaseTimerRef.current);
         hydrationReleaseTimerRef.current = setTimeout(() => { hydratingRef.current = false; }, 0);
       } catch (error) {
-        if (cachedBootstrapRef.current && !cancelled) setSyncStatus(syncFailureMessage(error));
+        if (!cancelled) {
+          setSyncStatus(syncFailureMessage(error));
+          clearTimeout(retryTimer);
+          retryTimer = setTimeout(refresh, 3000);
+        }
         console.error("Не удалось получить изменения карт:", error);
       } finally {
         refreshing = false;
@@ -4002,15 +4003,14 @@ export default function App() {
     const channel = supabase.channel(`account-maps:${owner}`)
       .on("broadcast", { event: "maps-changed" }, scheduleRefresh)
       .subscribe((status) => {
-        channelReady = status === "SUBSCRIBED";
-        if (channelReady) void refresh();
+        if (status === "SUBSCRIBED") void refresh();
       });
     liveChannelRef.current = channel;
     liveRefreshRef.current = refresh;
     void refresh();
-    // Broadcast handles immediate updates. These small checks only recover missed events.
-    const interval = setInterval(refresh, 120000);
-    const reconnectInterval = setInterval(() => { if (!channelReady) void refresh(); }, 15000);
+    // A connected socket can still miss a database notification. Fetch only deltas
+    // while visible, without making the mobile screen wait minutes for recovery.
+    const interval = setInterval(refresh, 15000);
     window.addEventListener("focus", refresh);
     window.addEventListener("online", refresh);
     document.addEventListener("visibilitychange", refresh);
@@ -4018,7 +4018,6 @@ export default function App() {
       cancelled = true;
       if (liveRefreshRef.current === refresh) liveRefreshRef.current = null;
       clearInterval(interval);
-      clearInterval(reconnectInterval);
       clearTimeout(retryTimer);
       clearTimeout(notificationTimer);
       window.removeEventListener("focus", refresh);
@@ -4100,7 +4099,7 @@ export default function App() {
           if (map.shareId && !revokedShareIdsRef.current.has(map.shareId)) {
             let settings = map.shareSettings;
             if (!settings) {
-              const shared = await supabase.rpc("get_shared_map_settings", { share_token: map.shareId });
+              const shared = await requestRpc("get_shared_map_settings", { share_token: map.shareId });
               if (shared.error) throw shared.error;
               // Older maps keep their visibility settings on the server.
               if (shared.data) settings = shared.data.settings;
@@ -4108,13 +4107,13 @@ export default function App() {
             let publishedSettings = null;
             let publishedMap = null;
             if (settings?.mode === "snapshot") {
-              const shared = await supabase.rpc("get_shared_map_settings", { share_token: map.shareId });
+              const shared = await requestRpc("get_shared_map_settings", { share_token: map.shareId });
               if (shared.error) throw shared.error;
               publishedSettings = shared.data?.settings;
               if (!map.shareSnapshot && shouldUpdateSharedMap(settings, publishedSettings)) publishedMap = (await loadPublicMap(map.shareId))?.map_data;
             }
             if (settings && shouldUpdateSharedMap(settings, publishedSettings) && !revokedShareIdsRef.current.has(map.shareId)) {
-              const { error: shareError } = await supabase.rpc('update_shared_map_if_changed', {
+              const { error: shareError } = await requestRpc('update_shared_map_if_changed', {
                 share_token: map.shareId, visible_data: publicSharedSnapshot(map, settings, publishedMap), visibility: settings, expected_owner: user.id,
               });
               if (shareError) {
@@ -4155,17 +4154,42 @@ export default function App() {
   useEffect(() => {
     if (!user?.id || !isMapInitialized || loadedOwnerRef.current !== user.id) return;
     let cancelled = false;
+    let flushing = false;
+    let retryTimer;
+    let retryDelay = 3000;
+    const retry = () => {
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(flush, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 30000);
+    };
     const flush = async () => {
-      if (cancelled) return;
-      const entries = await pendingMapSaves(user.id).catch(() => []);
-      for (const entry of entries) {
-        if (cancelled || latestOwnerRef.current !== user.id) return;
-        await remoteSave(entry.map, entry);
-      }
+      if (cancelled || document.hidden || flushing) return;
+      flushing = true;
+      clearTimeout(retryTimer);
+      try {
+        const entries = await pendingMapSaves(user.id);
+        for (const entry of entries) {
+          if (cancelled || latestOwnerRef.current !== user.id) return;
+          const error = await remoteSave(entry.map, entry);
+          if (error) { if (!cancelled) retry(); return; }
+        }
+        retryDelay = 3000;
+      } catch { if (!cancelled) retry(); }
+      finally { flushing = false; }
     };
     void flush();
+    const interval = setInterval(flush, 15000);
     window.addEventListener("online", flush);
-    return () => { cancelled = true; window.removeEventListener("online", flush); };
+    window.addEventListener("focus", flush);
+    document.addEventListener("visibilitychange", flush);
+    return () => {
+      cancelled = true;
+      clearTimeout(retryTimer);
+      clearInterval(interval);
+      window.removeEventListener("online", flush);
+      window.removeEventListener("focus", flush);
+      document.removeEventListener("visibilitychange", flush);
+    };
   }, [user?.id, isMapInitialized, remoteSave]);
 
   useLayoutEffect(() => {

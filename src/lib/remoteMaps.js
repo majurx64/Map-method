@@ -14,6 +14,21 @@ function enqueue(state, operation) {
   state.queue = request.catch(() => {});
   return request;
 }
+// Bound the whole request, including session validation, so one stalled mobile
+// connection cannot hold the account queue and its cross-tab lock indefinitely.
+export async function requestRpc(name, args) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('map-sync-timeout'));
+    }, 15000);
+  });
+  try {
+    return await Promise.race([supabase.rpc(name, args).abortSignal(controller.signal), deadline]);
+  } finally { clearTimeout(timer); }
+}
 async function initialize(state, owner, reload = false) {
   if (state.ready && !reload) return;
   const cache = await readAccountCache(`remote-v1:${owner}`).catch(() => null);
@@ -36,7 +51,7 @@ export function loadRemoteMaps(owner, historyTeam = null) {
     await initialize(state, owner, Boolean(globalThis.navigator?.locks));
     const knownShared = knownVersions(state.shared, true);
     if (historyTeam && knownShared[historyTeam]) knownShared[historyTeam].eventHashes = state.histories[historyTeam]?.hashes || {};
-    const { data: response, error } = await supabase.rpc('sync_map_bundle_v2', {
+    const { data: response, error } = await requestRpc('sync_map_bundle_v2', {
       known_private: knownVersions(state.personal), known_shared: knownShared, history_team: historyTeam, expected_owner: owner, known_objects: Object.keys(state.objects),
     });
     if (error) throw error;
@@ -79,11 +94,11 @@ export function saveRemoteMap(owner, row) {
     const old = state.personal.find((item) => item.id === row.id);
     const patch = old ? dataPatch(old.data, row.data) : null;
     let result = old
-      ? await supabase.rpc('save_personal_map_patch', { map_id: String(row.id), map_name: row.name, patch, expected_revision: old.sync_revision, expected_owner: owner })
+      ? await requestRpc('save_personal_map_patch', { map_id: String(row.id), map_name: row.name, patch, expected_revision: old.sync_revision, expected_owner: owner })
       : { error: { code: '40001' } };
     // A concurrent personal edit retains the established complete-snapshot save semantics.
     // Never apply stale history indices to a newer snapshot. Shared maps use cell RPCs only.
-    if (result.error?.code === '40001') result = await supabase.rpc('save_personal_map', { map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: owner });
+    if (result.error?.code === '40001') result = await requestRpc('save_personal_map', { map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: owner });
     if (result.error) throw result.error;
     const saved = { ...old, ...row, ...result.data };
     state.personal = [...state.personal.filter((item) => item.id !== row.id), saved];
@@ -101,7 +116,7 @@ export function compactCollaborativeRpc(owner, operation, args) {
   const state = account(owner);
   return enqueue(state, () => withAccountLock(owner, async () => {
     await initialize(state, owner, Boolean(globalThis.navigator?.locks));
-    const { data: response, error } = await supabase.rpc('compact_collaborative_rpc', { operation, arguments: args, known_objects: Object.keys(state.objects), expected_owner: owner });
+    const { data: response, error } = await requestRpc('compact_collaborative_rpc', { operation, arguments: args, known_objects: Object.keys(state.objects), expected_owner: owner });
     if (error) throw error;
     const { data, objects } = decodeWire(response, state.objects);
     state.objects = objects;
@@ -113,7 +128,7 @@ export function compactCollaborativeRpc(owner, operation, args) {
 export async function loadPublicMap(token) {
   const key = `public-share-v2:${token}`;
   const cached = await readAccountCache(key).catch(() => null);
-  const { data: response, error } = await supabase.rpc('sync_public_map', { share_token: token, known_fields: cached?.row?.fields || {}, known_updated_at: cached?.row?.updated_at || '', known_objects: Object.keys(cached?.objects || {}) });
+  const { data: response, error } = await requestRpc('sync_public_map', { share_token: token, known_fields: cached?.row?.fields || {}, known_updated_at: cached?.row?.updated_at || '', known_objects: Object.keys(cached?.objects || {}) });
   if (error) throw error;
   if (!response) { await cacheAccountMaps(key, null).catch(() => {}); return null; }
   const { data, objects } = decodeWire(response, cached?.objects);

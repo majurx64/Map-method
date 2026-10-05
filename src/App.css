@@ -2032,7 +2032,7 @@ button:disabled {
 
 .map-card-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   justify-content: space-between;
   gap: 20px;
 }
@@ -2061,7 +2061,7 @@ button:disabled {
 
 .map-card-percent {
   flex-shrink: 0;
-  font-size: 18px !important;
+  font-size: 22px !important;
   letter-spacing: -0.03em;
 }
 

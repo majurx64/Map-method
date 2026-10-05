@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';
 import {applySyncDelta,knownVersions} from '../src/lib/syncCache.js';import {decodeWire,dataPatch,applyEventDelta} from '../src/lib/syncWire.js';
 const cache=new Map(),calls=[];let handle;
-const dependencies={supabase:{rpc:async(name,args)=>{calls.push({name,args});return handle(name,args)}},readAccountCache:async key=>cache.get(key)||[],cacheAccountMaps:async(key,value)=>cache.set(key,structuredClone(value)),applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta};
+const dependencies={supabase:{rpc:(name,args)=>{calls.push({name,args});const request=Promise.resolve().then(()=>handle(name,args));request.abortSignal=signal=>{calls.at(-1).signal=signal;return request};return request}},readAccountCache:async key=>cache.get(key)||[],cacheAccountMaps:async(key,value)=>cache.set(key,structuredClone(value)),applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta};
 globalThis.__mmRemoteTest=dependencies;
 const source=(await fs.readFile(new URL('../src/lib/remoteMaps.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 const remote=await import('data:text/javascript;base64,'+Buffer.from('const {supabase,readAccountCache,cacheAccountMaps,applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta}=globalThis.__mmRemoteTest;\n'+source).toString('base64'));
@@ -19,4 +19,23 @@ test('a validated no-op receipt retains field manifests for the next small refre
 });
 test('a revoked public link never displays its durable cached body',async()=>{
  cache.set('public-share-v2:revoked',{row:{id:'revoked',data:{name:'Cached map'},fields:{},updated_at:'before'},objects:{}});handle=async()=>({data:null});assert.equal(await remote.loadPublicMap('revoked'),null);assert.equal(cache.get('public-share-v2:revoked'),null);
+});
+
+test('a stalled refresh releases the account queue and ignores its late stale response',async(t)=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ calls.length=0;const row=seed('mobile-timeout-owner');let release;
+ const unchanged={data:{format:'mm-wire-1',objects:{},value:['o',{personal:['o',{ids:['a',['map']],changes:['a',[]]}],shared:['o',{ids:['a',[]],changes:['a',[]]}]}]}};
+ handle=()=>calls.length===1?new Promise(resolve=>{release=resolve}):unchanged;
+ const stalled=remote.loadRemoteMaps('mobile-timeout-owner');
+ const rejected=assert.rejects(stalled,/map-sync-timeout/);
+ const recovery=remote.loadRemoteMaps('mobile-timeout-owner');
+ for(let i=0;i<30&&!release;i++)await Promise.resolve();
+ assert.equal(typeof release,'function');assert.equal(calls.length,1);
+ t.mock.timers.tick(15000);
+ await rejected;const recovered=await recovery;
+ assert.equal(calls[0].signal.aborted,true);assert.equal(calls.length,2);
+ assert.deepEqual(recovered.personal,[row]);
+ release({data:{format:'mm-wire-1',objects:{},value:['o',{personal:['o',{ids:['a',[]],changes:['a',[]]}],shared:['o',{ids:['a',[]],changes:['a',[]]}]}]}});
+ for(let i=0;i<10;i++)await Promise.resolve();
+ assert.deepEqual((await remote.loadRemoteMaps('mobile-timeout-owner')).personal,[row]);
 });

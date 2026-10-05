@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import { collaborativeVersions } from './collaborativeHistory.js';
 import { stableDrawingColors } from './drawingColors.js';
-import { compactCollaborativeRpc } from './remoteMaps';
+import { compactCollaborativeRpc, requestRpc } from './remoteMaps';
 
 export const INVITE_KEY = 'mm-collaborative-invite';
 export const JOIN_KEY = 'mm-collaborative-join';
@@ -43,7 +43,7 @@ export async function collaborativeRpc(name, args) {
     if (!data.session?.user.id) throw new Error('login-required');
     return compactCollaborativeRpc(data.session.user.id, name, args);
   }
-  const { data, error } = await supabase.rpc(name, args);
+  const { data, error } = await requestRpc(name, args);
   if (error) throw error;
   return data;
 }
