@@ -8,6 +8,7 @@ import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPan
 import EditorColorPicker from './EditorColorPicker';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
+import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from './lib/historyVersions';
 import { cachedAccountUser, syncFailureMessage } from './lib/startup';
 import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap } from './lib/remoteMaps';
 import { equalJSON } from './lib/syncWire';
@@ -1657,7 +1658,7 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem(LIBRARY_USAGE_KEY) || "{}"); } catch { return {}; }
   });
   const [historyMapId, setHistoryMapId] = useState(null);
-  const [historyPreviewIndex, setHistoryPreviewIndex] = useState(0);
+  const [historyPreviewSelection, setHistoryPreviewSelection] = useState({ id: null, index: 0 });
   const [historyPlaying, setHistoryPlaying] = useState(false);
   const [historyPlaybackSpeed, setHistoryPlaybackSpeed] = useState(1);
   const [historyViewMode, setHistoryViewMode] = useState("changes");
@@ -1666,7 +1667,7 @@ export default function App() {
   const [deletingVersionId, setDeletingVersionId] = useState("");
   const [restoredVersionId, setRestoredVersionId] = useState("");
   const [versionUndoNotice, setVersionUndoNotice] = useState(null);
-  const [versionUndoClosing, setVersionUndoClosing] = useState(false);
+  const versionUndoClosing = Boolean(versionUndoNotice?.closing);
   const [featureStatus, setFeatureStatus] = useState("");
   const [activityClearStatus, setActivityClearStatus] = useState("");
   const [activityClearingDate, setActivityClearingDate] = useState("");
@@ -2133,6 +2134,11 @@ export default function App() {
   const historyReadyRef = useRef(false);
   const historyNavigationRef = useRef(false);
   const historyCloseTimerRef = useRef(null);
+  const historyMutationRef = useRef(null);
+  const historyMutationSequenceRef = useRef(0);
+  const historyOpenIdRef = useRef(historyMapId);
+  historyOpenIdRef.current = historyMapId;
+  const versionUndoActionRef = useRef(null);
   const versionUndoTimerRef = useRef(null);
   const versionUndoCloseTimerRef = useRef(null);
   const historyPlaybackFrameRef = useRef(null);
@@ -2468,6 +2474,9 @@ export default function App() {
   const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const historyReadOnly = historyMapId === "public-share";
   const historyMap = historyReadOnly ? (sharedView?.settings?.showHistory ? sharedView.map : null) : maps.find((map) => map.id === historyMapId) || null;
+  function setHistoryPreviewIndex(index, map = historyMap) {
+    setHistoryPreviewSelection({ index, id: map?.versions?.[index]?.id || null });
+  }
   historyTeamRef.current = historyMap?.collaboration?.id || null;
   useEffect(() => { if (historyMapId) liveRefreshRef.current?.(); }, [historyMapId]);
   const historyVersionEntries = useMemo(() => {
@@ -3837,14 +3846,15 @@ export default function App() {
         const queue = remoteSaveQueueRef.current;
         await queue;
         // Wait for local gestures before requesting data, not after downloading it.
-        if (isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current) {
+        if (isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current || historyMutationRef.current) {
           clearTimeout(retryTimer); retryTimer = setTimeout(refresh, 500); return;
         }
+        const historySequence = historyMutationSequenceRef.current;
         const remote = await loadRemoteMaps(owner, historyTeamRef.current);
         const data = remote.personal, shared = remote.shared.map(collaborativeMap);
         const pending = await pendingMapSaves(owner);
         if (cancelled || latestOwnerRef.current !== owner) return;
-        if (queue !== remoteSaveQueueRef.current || isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current) {
+        if (queue !== remoteSaveQueueRef.current || historySequence !== historyMutationSequenceRef.current || isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current || historyMutationRef.current) {
           clearTimeout(retryTimer);
           retryTimer = setTimeout(refresh, 500);
           return;
@@ -4084,6 +4094,7 @@ export default function App() {
       isDrawingRef.current ||
       gameFillAnimationRef.current ||
       collaborativeGridBusyRef.current ||
+      historyMutationRef.current ||
       !activeMapId ||
       !user ||
       publicLibraryEditContext
@@ -4095,6 +4106,7 @@ export default function App() {
     clearTimeout(saveTimerRef.current);
 
     saveTimerRef.current = setTimeout(() => {
+      if (historyMutationRef.current) return;
       const current = buildCurrentMap();
       const map = current ? normalizeMap(addChangeSnapshot(current, pendingVersionSequenceRef.current)) : null;
       pendingVersionSequenceRef.current = [];
@@ -7616,7 +7628,7 @@ export default function App() {
     setHistoryViewMode("changes");
     setHistoryPreviewMode("template");
     setHistoryMapId(screen === "shared" ? "public-share" : map.id);
-    setHistoryPreviewIndex(Math.max(0, (map.versions?.length || 1) - 1));
+    setHistoryPreviewIndex(Math.max(0, (map.versions?.length || 1) - 1), map);
     setHistoryPlaying(false);
     setFeatureStatus("");
   }
@@ -7629,11 +7641,12 @@ export default function App() {
     historyCloseTimerRef.current = window.setTimeout(() => {
       setHistoryMapId(null);
       setHistoryClosing(false);
-      setDeletingVersionId("");
+      if (!historyMutationRef.current) setDeletingVersionId("");
     }, 190);
   }
 
   function changeHistoryViewMode(mode) {
+    if (historyMutationRef.current) return;
     setHistoryPlaying(false);
     setHistoryViewMode(mode);
     const entries = (historyMap?.versions || []).map((version, index) => ({ version, index }));
@@ -7657,7 +7670,8 @@ export default function App() {
           return gameStart >= 0 ? historyVersionEntries.slice(gameStart) : historyVersionEntries;
         })()
       : historyVersionEntries;
-    const currentPosition = nextEntries.findIndex((entry) => entry.index === historyPreviewIndex);
+    const selected = chooseHistoryEntry(historyVersionEntries, historyPreviewSelection);
+    const currentPosition = nextEntries.findIndex((entry) => entry.version.id === selected?.version.id);
     const nextPosition = Math.max(0, currentPosition);
     historyPlaybackPositionRef.current = nextPosition;
     if (nextEntries[nextPosition]) setHistoryPreviewIndex(nextEntries[nextPosition].index);
@@ -7678,80 +7692,138 @@ export default function App() {
     return normalized;
   }
 
-  async function deleteMapVersion(map, version, event) {
-    if (!map || !version || deletingVersionId) return;
-    const row = event?.currentTarget.closest(".history-version-row");
-    if (row) row.style.setProperty("--version-row-height", `${row.getBoundingClientRect().height}px`);
-    setHistoryPlaying(false);
-    setDeletingVersionId(version.id);
+  function showVersionUndoFeedback(notice) {
+    versionUndoActionRef.current = notice.actionId;
     window.clearTimeout(versionUndoTimerRef.current);
     window.clearTimeout(versionUndoCloseTimerRef.current);
-    setVersionUndoClosing(false);
     setDeleteCountdownNow(Date.now());
-    setVersionUndoNotice({ mapId: map.id, versionId: version.id, label: version.label, pending: true, deadline: Date.now() + 5000 });
-    window.setTimeout(async () => {
-      const current = maps.find((item) => item.id === map.id) || map;
-      const index = (current.versions || []).findIndex((item) => item.id === version.id);
-      if (index < 0) {
-        setVersionUndoNotice(null);
+    setVersionUndoNotice({ ...notice, closing: false });
+    if (notice.pending) return;
+    versionUndoTimerRef.current = window.setTimeout(() => closeVersionUndoFeedback(notice.actionId), 5000);
+  }
+
+  function closeVersionUndoFeedback(actionId) {
+    if (versionUndoActionRef.current !== actionId) return;
+    window.clearTimeout(versionUndoTimerRef.current);
+    window.clearTimeout(versionUndoCloseTimerRef.current);
+    setVersionUndoNotice((notice) => notice?.actionId === actionId ? { ...notice, closing: true } : notice);
+    versionUndoCloseTimerRef.current = window.setTimeout(() => {
+      if (versionUndoActionRef.current !== actionId) return;
+      versionUndoActionRef.current = null;
+      setVersionUndoNotice((notice) => notice?.actionId === actionId ? null : notice);
+    }, 300);
+  }
+
+  async function flushCellsBeforeHistoryChange(map) {
+    const current = activeMapId === map.id ? buildCurrentMap() : map;
+    const saved = collaborativeSavedRef.current.get(`${user.id}:${map.collaboration.id}`);
+    const before = saved?.revision === map.collaboration.revision ? saved : null;
+    const changes = [...drawingChanges(before?.drawing || map.collaboration.baseDrawing || { completed: map.completed, colors: map.colors }, current),
+      ...progressChanges(before?.progress || map.collaboration.baseProgress || [], current.progressCompleted)];
+    if (changes.length) {
+      const error = await remoteSave(current);
+      if (error) throw error;
+    } else await remoteSaveQueueRef.current;
+  }
+
+  async function deleteMapVersion(map, version, event) {
+    if (!map || !version || featureBusyRef.current || historyMutationRef.current || (map.collaboration && !version.eventId)) return;
+    const action = { actionId: ++historyMutationSequenceRef.current, owner: user?.id || null, mapId: map.id };
+    let committed = false;
+    historyMutationRef.current = action;
+    setHistoryPlaying(false);
+    setDeletingVersionId(version.id);
+    clearTimeout(saveTimerRef.current);
+    const row = event?.currentTarget.closest(".history-version-row");
+    const animation = animateHistoryRemoval(row, window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    showVersionUndoFeedback({ ...action, versionId: version.id, label: version.label, pending: true, deadline: Date.now() + 5000 });
+    try {
+      const accepted = map.collaboration ? (async () => {
+        await flushCellsBeforeHistoryChange(map);
+        await collaborativeRpc('set_collaborative_version_visibility', { team_id: map.collaboration.id, event_id: version.eventId, hide: true });
+      })() : Promise.resolve();
+      // Commit only when the actual animation and server operation have both finished.
+      await Promise.all([animation.finished, accepted]);
+      if (latestOwnerRef.current !== action.owner) return;
+      const latest = liveStateRef.current.maps.find((item) => item.id === map.id);
+      if (!latest) return;
+      const index = latest.versions.findIndex((item) => item.id === version.id);
+      if (index < 0) return;
+      const deleted = { owner: action.owner, mapId: map.id, version: latest.versions[index], index,
+        previousId: latest.versions[index - 1]?.id, nextId: latest.versions[index + 1]?.id };
+      const next = removeHistoryVersion(latest, version.id);
+      deletedVersionsRef.current = [deleted, ...deletedVersionsRef.current].slice(0, 20);
+      if (next.id === activeMapId) activeMapRef.current = next;
+      setMaps((stored) => stored.map((item) => item.id === next.id ? removeHistoryVersion(item, version.id) : item));
+      if (historyOpenIdRef.current === next.id) {
+        setHistoryPreviewSelection((selection) => {
+          const entry = chooseHistoryEntry(next.versions.map((item, index) => ({ version: item, index })), selection);
+          return { id: entry?.version.id || null, index: entry?.index || 0 };
+        });
+      }
+      committed = true;
+      showVersionUndoFeedback({ ...action, versionId: version.id, label: version.label, deadline: Date.now() + 5000 });
+      if (!map.collaboration) {
+        // Private changes use the durable outbox. Shared visibility is already
+        // accepted above and must not save an old canvas/history snapshot again.
+        void remoteSave(next).then((error) => {
+          if (historyMutationSequenceRef.current === action.actionId && latestOwnerRef.current === action.owner && error) setFeatureStatus("Версия удалена на устройстве. Ожидаем синхронизации.");
+        });
+      }
+    } catch {
+      await animation.rollback();
+      closeVersionUndoFeedback(action.actionId);
+      if (latestOwnerRef.current === action.owner) setFeatureStatus('Не удалось удалить версию. Попробуйте ещё раз.');
+    } finally {
+      if (!committed) closeVersionUndoFeedback(action.actionId);
+      if (historyMutationRef.current === action) {
+        historyMutationRef.current = null;
         setDeletingVersionId("");
-        return;
+        if (map.collaboration) void liveRefreshRef.current?.();
       }
-      const nextVersions = current.versions.filter((item) => item.id !== version.id);
-      if (current.collaboration && version.eventId) {
-        try { await collaborativeRpc('set_collaborative_version_visibility', { team_id: current.collaboration.id, event_id: version.eventId, hide: true }); }
-        catch { setVersionUndoNotice(null); setFeatureStatus('Не удалось удалить версию. Попробуйте ещё раз.'); setDeletingVersionId(''); return; }
-      }
-      deletedVersionsRef.current = [{ mapId: current.id, version, index }, ...deletedVersionsRef.current].slice(0, 20);
-      const saving = persistFeatureMap({ ...current, versions: nextVersions });
-      setHistoryPreviewIndex((selected) => Math.min(Math.max(0, selected - (selected > index ? 1 : 0)), Math.max(0, nextVersions.length - 1)));
-      setDeletingVersionId("");
-      const notice = { mapId: current.id, versionId: version.id, label: version.label, deadline: Date.now() + 5000 };
-      setVersionUndoClosing(false);
-      setVersionUndoNotice(notice);
-      setDeleteCountdownNow(Date.now());
-      window.clearTimeout(versionUndoTimerRef.current);
-      window.clearTimeout(versionUndoCloseTimerRef.current);
-      versionUndoTimerRef.current = window.setTimeout(() => {
-        setVersionUndoClosing(true);
-        versionUndoCloseTimerRef.current = window.setTimeout(() => {
-          setVersionUndoNotice((currentNotice) => currentNotice?.versionId === version.id ? null : currentNotice);
-          setVersionUndoClosing(false);
-        }, 360);
-      }, 5000);
-      await saving;
-    }, 280);
+    }
   }
 
   async function undoDeletedVersion() {
-    if (versionUndoNotice?.pending) return;
-    const deleted = deletedVersionsRef.current.shift();
+    if (featureBusyRef.current || historyMutationRef.current || versionUndoNotice?.pending) return;
+    const deletedIndex = deletedVersionsRef.current.findIndex((entry) => entry.owner === (user?.id || null));
+    const deleted = deletedVersionsRef.current[deletedIndex];
     if (!deleted) return;
-    const map = maps.find((item) => item.id === deleted.mapId);
-    if (!map) {
-      setFeatureStatus("Карта для этой версии больше не найдена.");
-      return;
+    const map = liveStateRef.current.maps.find((item) => item.id === deleted.mapId);
+    if (!map) { setFeatureStatus("Карта для этой версии больше не найдена."); return; }
+    const action = { actionId: ++historyMutationSequenceRef.current, owner: user?.id || null, mapId: map.id };
+    historyMutationRef.current = action;
+    setDeletingVersionId(deleted.version.id);
+    setHistoryPlaying(false);
+    clearTimeout(saveTimerRef.current);
+    try {
+      if (map.collaboration && deleted.version.eventId) {
+        await flushCellsBeforeHistoryChange(map);
+        await collaborativeRpc('set_collaborative_version_visibility', { team_id: map.collaboration.id, event_id: deleted.version.eventId, hide: false });
+      }
+      if (latestOwnerRef.current !== action.owner) return;
+      const latest = liveStateRef.current.maps.find((item) => item.id === map.id);
+      if (!latest) return;
+      const next = restoreHistoryVersion(latest, deleted);
+      deletedVersionsRef.current.splice(deletedIndex, 1);
+      if (next.id === activeMapId) activeMapRef.current = next;
+      setMaps((stored) => stored.map((item) => item.id === next.id ? restoreHistoryVersion(item, deleted) : item));
+      if (historyOpenIdRef.current !== next.id) openHistoryModal(next);
+      setHistoryPreviewIndex(next.versions.findIndex((version) => version.id === deleted.version.id), next);
+      setRestoredVersionId(deleted.version.id);
+      if (versionUndoNotice) closeVersionUndoFeedback(versionUndoNotice.actionId);
+      window.setTimeout(() => setRestoredVersionId(""), 650);
+      if (!map.collaboration) void remoteSave(next).then((error) => {
+        if (historyMutationSequenceRef.current === action.actionId && latestOwnerRef.current === action.owner && error) setFeatureStatus("Версия возвращена на устройстве. Ожидаем синхронизации.");
+      });
+    } catch { if (latestOwnerRef.current === action.owner) setFeatureStatus('Не удалось вернуть версию. Попробуйте ещё раз.'); }
+    finally {
+      if (historyMutationRef.current === action) {
+        historyMutationRef.current = null;
+        setDeletingVersionId("");
+        if (map.collaboration) void liveRefreshRef.current?.();
+      }
     }
-    const versions = [...(map.versions || [])];
-    if (map.collaboration && deleted.version.eventId) {
-      try { await collaborativeRpc('set_collaborative_version_visibility', { team_id: map.collaboration.id, event_id: deleted.version.eventId, hide: false }); }
-      catch { deletedVersionsRef.current.unshift(deleted); setFeatureStatus('Не удалось вернуть версию. Попробуйте ещё раз.'); return; }
-    }
-    if (!versions.some((version) => version.id === deleted.version.id)) {
-      versions.splice(Math.min(deleted.index, versions.length), 0, deleted.version);
-    }
-    const restored = await persistFeatureMap({ ...map, versions });
-    if (historyMapId !== restored.id) openHistoryModal(restored);
-    setHistoryPreviewIndex(restored.versions.findIndex((version) => version.id === deleted.version.id));
-    setRestoredVersionId(deleted.version.id);
-    window.clearTimeout(versionUndoTimerRef.current);
-    window.clearTimeout(versionUndoCloseTimerRef.current);
-    setVersionUndoClosing(true);
-    versionUndoCloseTimerRef.current = window.setTimeout(() => {
-      setVersionUndoNotice(null);
-      setVersionUndoClosing(false);
-    }, 360);
-    window.setTimeout(() => setRestoredVersionId(""), 650);
   }
 
   async function clearActivityDay(item) {
@@ -7790,9 +7862,45 @@ export default function App() {
   }
 
   async function saveMapVersion(map, label = "Сохранённая версия") {
-    if (featureBusyRef.current) return;
+    if (featureBusyRef.current || historyMutationRef.current) return;
     featureBusyRef.current = true;
+    const action = { actionId: ++historyMutationSequenceRef.current, owner: user?.id || null, mapId: map.id };
+    historyMutationRef.current = action;
+
     setFeatureStatus("Сохраняем…");
+    try {
+    const current = map.id === activeMapId ? buildCurrentMap() || map : map;
+    if (current.collaboration) {
+      const error = await remoteSave(current);
+      if (error) { setFeatureStatus('Не удалось сохранить версию. Попробуйте ещё раз.'); return; }
+      const data = await collaborativeRpc('apply_collaborative_changes', { team_id: current.collaboration.id, cell_changes: [], save_version: true });
+      const next = normalizeMap(collaborativeMap(data));
+      setMaps((items) => mergeCollaborativeMaps(items, [next]));
+      setHistoryMapId(next.id); setHistoryPreviewIndex(next.versions.length - 1, next);
+      setFeatureStatus('');
+      return;
+    }
+    const versioned = normalizeMap({ ...current, versions: [...(current.versions || []), createMapSnapshot(current, label)] });
+    await persistFeatureMap(versioned);
+    setHistoryMapId(versioned.id);
+    setHistoryPreviewIndex(versioned.versions.length - 1, versioned);
+    } catch { setFeatureStatus('Не удалось сохранить версию. Повторите после обновления карты.'); }
+    finally {
+      featureBusyRef.current = false;
+      if (historyMutationRef.current === action) {
+        historyMutationRef.current = null;
+        if (map.collaboration) void liveRefreshRef.current?.();
+      }
+    }
+  }
+
+  async function restoreMapVersion(map, snapshot) {
+    if (featureBusyRef.current || historyMutationRef.current) return;
+    featureBusyRef.current = true;
+    const action = { actionId: ++historyMutationSequenceRef.current, owner: user?.id || null, mapId: map.id };
+    historyMutationRef.current = action;
+
+    setFeatureStatus("Восстанавливаем…");
     try {
     const current = map.id === activeMapId ? buildCurrentMap() || map : map;
     if (current.collaboration) {
@@ -7815,38 +7923,21 @@ export default function App() {
       else setMaps((stored) => stored.map((item) => item.id === map.id ? normalizeMap(collaborativeMap(canonical)) : item));
       setFeatureStatus('Версия восстановлена'); setHistoryPlaying(false); return;
     }
-    if (current.collaboration) {
-      const error = await remoteSave(current);
-      if (error) { setFeatureStatus('Не удалось сохранить версию. Попробуйте ещё раз.'); return; }
-      const data = await collaborativeRpc('apply_collaborative_changes', { team_id: current.collaboration.id, cell_changes: [], save_version: true });
-      const next = normalizeMap(collaborativeMap(data));
-      setMaps((items) => mergeCollaborativeMaps(items, [next]));
-      setHistoryMapId(next.id); setHistoryPreviewIndex(next.versions.length - 1);
-      setFeatureStatus('');
-      return;
-    }
-    const versioned = normalizeMap({ ...current, versions: [...(current.versions || []), createMapSnapshot(current, label)] });
-    await persistFeatureMap(versioned);
-    setHistoryMapId(versioned.id);
-    setHistoryPreviewIndex(versioned.versions.length - 1);
-    } catch { setFeatureStatus('Не удалось восстановить версию. Повторите после обновления карты.'); }
-    finally { featureBusyRef.current = false; }
-  }
-
-  async function restoreMapVersion(map, snapshot) {
-    if (featureBusyRef.current) return;
-    featureBusyRef.current = true;
-    setFeatureStatus("Восстанавливаем…");
-    try {
-    const current = map.id === activeMapId ? buildCurrentMap() || map : map;
     const withCurrent = { ...current, versions: [...(current.versions || []), createMapSnapshot(current, "Перед восстановлением")] };
     const restored = normalizeMap(restoreSnapshot(withCurrent, snapshot));
     if (restored.id === activeMapId) openMap(restored);
     await persistFeatureMap(restored);
     setHistoryMapId(restored.id);
     setHistoryPlaying(false);
-    setHistoryPreviewIndex(Math.max(0, restored.versions.length - 1));
-    } finally { featureBusyRef.current = false; }
+    setHistoryPreviewIndex(Math.max(0, restored.versions.length - 1), restored);
+    } catch { setFeatureStatus('Не удалось восстановить версию. Повторите после обновления карты.'); }
+    finally {
+      featureBusyRef.current = false;
+      if (historyMutationRef.current === action) {
+        historyMutationRef.current = null;
+        if (map.collaboration) void liveRefreshRef.current?.();
+      }
+    }
   }
 
   function closeShareDialog() {
@@ -11303,15 +11394,15 @@ export default function App() {
           <div className={`create-modal history-modal${historyMap.collaboration ? ' collaborative-history-modal' : ''}`} onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="account-eyebrow">ВСЕ ВЕРСИИ</span><h2>История «{historyMap.name}»</h2></div><button type="button" className="modal-close" onClick={closeHistoryModal}>×</button></div>
             <p className="feature-modal-intro">{historyReadOnly ? "История прогресса опубликована владельцем. Выбирай этапы или включи воспроизведение." : "Автоматическая версия создаётся после каждого завершённого изменения. Историю можно сгруппировать по дням."}</p>
-            {historyMap.collaboration && <CollaborativeHistory map={historyMap} Select={AnimatedSelect} participant={historyParticipant} onParticipant={(value) => { setHistoryParticipant(value); setHistoryPlaying(false); setHistoryPreviewIndex(0); }} />}
+            {historyMap.collaboration && <CollaborativeHistory map={historyMap} Select={AnimatedSelect} participant={historyParticipant} onParticipant={(value) => { if (historyMutationRef.current) return; setHistoryParticipant(value); setHistoryPlaying(false); setHistoryPreviewIndex(0); }} />}
             <div className={`history-view-switch is-${historyViewMode}`} role="group" aria-label="Отображение истории">
-              <button type="button" className={historyViewMode === "changes" ? "active" : ""} onClick={() => changeHistoryViewMode("changes")}>Все изменения</button>
-              <button type="button" className={historyViewMode === "days" ? "active" : ""} onClick={() => changeHistoryViewMode("days")}>По дням</button>
+              <button type="button" className={historyViewMode === "changes" ? "active" : ""} disabled={Boolean(deletingVersionId)} onClick={() => changeHistoryViewMode("changes")}>Все изменения</button>
+              <button type="button" className={historyViewMode === "days" ? "active" : ""} disabled={Boolean(deletingVersionId)} onClick={() => changeHistoryViewMode("days")}>По дням</button>
             </div>
             {!historyReadOnly && featureStatus && <p className="feature-status" role="status">{featureStatus}</p>}
-            {!historyReadOnly && <button type="button" className="feature-primary" onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>}
+            {!historyReadOnly && <button type="button" className="feature-primary" disabled={Boolean(deletingVersionId)} onClick={() => saveMapVersion(historyMap)}>Сохранить текущую версию</button>}
             {historyVersionEntries.length ? (() => {
-              const selectedEntry = historyVersionEntries.find((entry) => entry.index === historyPreviewIndex) || historyVersionEntries.at(-1);
+              const selectedEntry = chooseHistoryEntry(historyVersionEntries, historyPreviewSelection);
               const snapshot = selectedEntry.version;
               const preview = normalizeMap({ ...historyMap, ...snapshot });
               const dimensions = getGridDimensions(preview.totalCells, preview.imageRatio, preview.gridMode, preview.manualRows, preview.manualCols);
@@ -11338,15 +11429,15 @@ export default function App() {
                     {[0.5, 1, 1.5, 2, 4, 8, 16].map((speed) => <button type="button" key={speed} className={historyPlaybackSpeed === speed ? "active" : ""} onClick={() => changeHistoryPlaybackSpeed(speed)}>{String(speed).replace(".", ",")}×</button>)}
                   </div>
                 </div>
-                {!historyReadOnly && <div className="history-actions"><button type="button" className="feature-primary" onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>}
-                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && (!historyMap.collaboration || version.eventId) && <button type="button" className="history-version-delete" aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={(event) => deleteMapVersion(historyMap, version, event)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
+                {!historyReadOnly && <div className="history-actions"><button type="button" className="feature-primary" disabled={Boolean(deletingVersionId)} onClick={() => restoreMapVersion(historyMap, snapshot)}>Восстановить эту версию</button></div>}
+                <div className="history-version-list" key={historyViewMode}>{[...historyVersionEntries].reverse().map(({ version, index }) => <div className={`history-version-row${index === selectedEntry.index ? " active" : ""}${deletingVersionId === version.id ? " is-deleting" : ""}${restoredVersionId === version.id ? " is-restored" : ""}`} key={version.id}><button type="button" className="history-version-select" onClick={() => { setHistoryPlaying(false); setHistoryPreviewIndex(index); }}><span>{version.label}</span><small>{new Date(version.createdAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {version.filled}/{version.total}</small></button>{!historyReadOnly && (!historyMap.collaboration || version.eventId) && <button type="button" className="history-version-delete" disabled={Boolean(deletingVersionId)} aria-label={`Удалить версию ${version.label}`} data-tooltip="Удалить версию" onClick={(event) => deleteMapVersion(historyMap, version, event)}><svg className="history-version-delete-icon" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2L2 10" /></svg></button>}</div>)}</div>
               </>;
             })() : <p className="feature-empty">{historyMap.collaboration && !historyMap.collaboration.historyLoaded ? 'Загрузка истории…' : historyReadOnly ? "Владелец пока не добавил версии в историю." : "Версий пока нет. Внесите изменение в карту или сохраните важный этап вручную."}</p>}
           </div>
-          {!historyReadOnly && <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoNotice && !versionUndoClosing ? " is-visible" : ""}`} role="status" aria-hidden={!versionUndoNotice || versionUndoClosing} onMouseDown={(event) => event.stopPropagation()}>
-            {versionUndoNotice && (() => {
+          {!historyReadOnly && <div className={`delete-undo-bar version-undo-bar history-version-undo${versionUndoNotice?.mapId === historyMap.id && !versionUndoClosing ? " is-visible" : ""}`} role="status" aria-hidden={versionUndoNotice?.mapId !== historyMap.id || versionUndoClosing} onMouseDown={(event) => event.stopPropagation()}>
+            {versionUndoNotice?.mapId === historyMap.id && (() => {
               const remainingMs = Math.max(0, Math.min(5000, versionUndoNotice.deadline - deleteCountdownNow));
-              return <><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}»</span><strong>{versionUndoNotice.pending ? "…" : `${Math.max(1, Math.ceil(remainingMs / 1000))} сек.`}</strong><button type="button" disabled={versionUndoNotice.pending} onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>{versionUndoNotice.pending ? "Удаляем версию…" : "Версия удалена. Позже её также можно вернуть сочетанием Ctrl+Z"}</small><i><b style={{ width: `${versionUndoNotice.pending ? 100 : remainingMs / 50}%` }} /></i></>;
+              return <><div className="delete-undo-copy"><span>Версия «{versionUndoNotice.label}»</span><strong>{versionUndoNotice.pending ? "…" : `${Math.max(1, Math.ceil(remainingMs / 1000))} сек.`}</strong><button type="button" disabled={versionUndoNotice.pending || Boolean(deletingVersionId)} onClick={() => void undoDeletedVersion()}>Отменить</button></div><small>{versionUndoNotice.pending ? "Удаляем версию…" : "Версия удалена. Позже её также можно вернуть сочетанием Ctrl+Z"}</small><i><b style={{ width: `${versionUndoNotice.pending ? 100 : remainingMs / 50}%` }} /></i></>;
             })()}
           </div>}
         </div>

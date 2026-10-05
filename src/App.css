@@ -3617,7 +3617,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .history-version-row .history-version-select { min-width:0; padding:10px 12px; border:0; border-radius:9px; background:transparent; }
 .history-version-row .history-version-delete { position:relative; display:grid; width:30px; height:30px; align-self:center; place-items:center; padding:0; border:1px solid transparent; border-radius:8px; background:transparent; color:#a35a50; cursor:pointer; font:18px/1 Arial,sans-serif; transition:background 180ms ease,border-color 180ms ease,transform 180ms ease; }
 .history-version-row .history-version-delete:hover { border-color:#dfc1bb; background:#fff1ee; transform:scale(1.06); }
-.history-version-row.is-deleting { min-height:0; box-sizing:border-box; overflow:hidden; pointer-events:none; animation:history-version-remove 280ms cubic-bezier(.4,0,.2,1) forwards; }
+.history-version-row.is-deleting { min-height:0; box-sizing:border-box; overflow:hidden; pointer-events:none;  }
 .history-version-row.is-restored { animation:history-version-restore 620ms cubic-bezier(.16,1,.3,1) both; }
 .history-overlay.is-closing { animation:history-overlay-close 190ms ease forwards; }
 .history-overlay.is-closing .history-modal { animation:history-modal-close 190ms cubic-bezier(.4,0,1,1) forwards; }
@@ -3625,7 +3625,6 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 @keyframes history-preview-swap { from { opacity:.25; transform:translateX(10px) scale(.985); filter:blur(2px); } to { opacity:1; transform:translateX(0) scale(1); filter:blur(0); } }
 @keyframes history-copy-swap { from { opacity:0; transform:translateY(5px); } }
 @keyframes history-list-swap { from { opacity:0; transform:translateY(7px); } }
-@keyframes history-version-remove { from { height:var(--version-row-height,44px); margin-bottom:0; } to { height:0; margin-bottom:-6px; border-width:0; opacity:0; transform:translateX(12px); } }
 @keyframes history-version-restore { from { opacity:0; transform:translateY(14px) scale(.97); } 60% { background:#dfeedd; } }
 @keyframes history-overlay-close { to { opacity:0; backdrop-filter:blur(0); } }
 @keyframes history-modal-close { to { opacity:0; transform:translateY(18px) scale(.96); filter:blur(3px); } }
@@ -4044,3 +4043,8 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .history-version-undo > i { height:4px; margin-top:9px; }
 
 .maps-page.is-ready .maps-list.is-category-idle { animation:none; }
+
+/* Flex flow preserves the closing row gap exactly; grid tracks clamp negative sizes. */
+.history-modal .history-version-list { display:flex; flex-direction:column; height:190px; max-height:190px; gap:6px; }
+.history-version-list .history-version-row { flex:0 0 auto; min-height:0; box-sizing:border-box; }
+.history-version-delete:disabled::before,.history-version-delete:disabled::after { display:none !important; }

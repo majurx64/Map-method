@@ -152,7 +152,7 @@ export function normalizeVersions(versions) {
 }
 
 export function addDailySnapshot(previous, next) {
-  if (!previous || !next) return next;
+  if (!previous || !next || next.collaboration) return next;
   const changed = JSON.stringify(previous.progressCompleted || []) !== JSON.stringify(next.progressCompleted || [])
     || JSON.stringify(previous.completed || []) !== JSON.stringify(next.completed || [])
     || JSON.stringify(previous.colors || []) !== JSON.stringify(next.colors || [])
@@ -181,8 +181,10 @@ function snapshotMatchesMap(snapshot, map) {
     && JSON.stringify(snapshot.colors) === JSON.stringify(map.colors || []);
 }
 
+// Shared history consists only of accepted server events; local mode toggles and
+// visibility edits must never append a second, client-only version.
 export function addChangeSnapshot(map, cellSequence = []) {
-  if (!map) return map;
+  if (!map || map.collaboration) return map;
   const versions = normalizeVersions(map.versions);
   if (snapshotMatchesMap(versions.at(-1), map)) return { ...map, versions };
   return { ...map, versions: [...versions, createMapSnapshot(map, "Изменение", cellSequence)] };

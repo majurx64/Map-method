@@ -64,6 +64,17 @@ test('Change history keeps separate settled edits without duplicating the same s
   assert.equal(second.versions.length, 2);
   assert.deepEqual(second.versions.at(-1).cellSequence, [4, 2, 1]);
 });
+test('Shared autosave cannot append a local version while waiting for an accepted server event', () => {
+  const shared = { ...map, collaboration: { id: 'team' }, isGameMode: true,
+    completed: [1], progressCompleted: [1],
+    versions: [{ ...createMapSnapshot({ ...map, completed: [1], isGameMode: false }), createdAt: '2026-09-01T12:00:00Z' }] };
+  for (const changed of [shared, { ...shared, progressCompleted: [] }, { ...shared, completed: [1, 2] }, { ...shared, name: 'Renamed' }]) {
+    const saved = addChangeSnapshot(changed, [1]);
+    assert.equal(saved, changed);
+    assert.equal(saved.versions, shared.versions);
+    assert.equal(addDailySnapshot(shared, changed), changed);
+  }
+});
 test('Malformed history arrays cannot crash normalisation', () => {
   assert.deepEqual(normalizeVersions([{ ...createMapSnapshot(map), progressCompleted: {} }])[0].progressCompleted, []);
 });
