@@ -18,6 +18,16 @@ function wireResponse(data) {
  return {data:{format:'mm-wire-1',objects:{},value:encode(data)}};
 }
 
+test('simultaneous refreshes reuse checked canonical data but notifications and history requests fetch immediately', async () => {
+ calls.length=0; const row=seed('dedup-owner');
+ handle=async()=>wireResponse({personal:{ids:['map'],changes:[]},shared:{ids:[],changes:[]}});
+ await Promise.all([remote.loadRemoteMaps('dedup-owner'),remote.loadRemoteMaps('dedup-owner')]);
+ assert.equal(calls.length,1);
+ assert.deepEqual((await remote.loadRemoteMaps('dedup-owner')).personal,[row]); assert.equal(calls.length,1);
+ await remote.loadRemoteMaps('dedup-owner',null,{force:true}); assert.equal(calls.length,2);
+ await remote.loadRemoteMaps('dedup-owner','team'); assert.equal(calls.length,3);
+});
+
 test('a revision conflict refreshes and replays only local edits instead of uploading a stale full map',async()=>{
  calls.length=0;const row=seed('conflict-owner');row.data={isGameMode:true,completed:[0,1,2],progressCompleted:[0],colors:['#fff','#fff','#fff'],activityLog:[],lastPaintedAt:'2026-10-04T10:00:00Z',versions:[]};
  const base=structuredClone(row),local={...row,data:{...row.data,progressCompleted:[0,1],activityLog:[{date:'2026-10-05',cells:1}],lastPaintedAt:'2026-10-05T10:00:00Z'}};

@@ -3569,6 +3569,9 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .backup-archive h2 { margin:6px 0; font-size:24px; }
 .backup-archive p { margin:0; color:#737970; font-size:13px; line-height:1.65; }
 .backup-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(150px,.5fr); gap:14px; }
+.desktop-backup-path { overflow-wrap:anywhere; }
+.desktop-backup-settings { display:flex; align-items:flex-start; gap:8px; color:#596a59; font-size:12px; line-height:1.6; }
+.desktop-backup-settings input { flex:none; margin-top:3px; accent-color:#32624f; }
 .backup-filters label { display:grid; gap:7px; color:#596a59; font-size:12px; font-weight:700; }
 .backup-filters select { width:100%; box-sizing:border-box; min-height:42px; padding:8px 11px; border:1px solid #d5d0c6; border-radius:10px; background:#fffefb; color:#293b2d; font:inherit; font-size:14px; }
 .backup-archive .backup-retention-note { font-size:11px; }

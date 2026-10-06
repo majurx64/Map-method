@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['desktop/**', '.github/workflows/desktop.yml', 'package.json', 'package-lock.json']
+    paths: ['desktop/**', 'src/lib/mapBackups.js', 'tests/desktop*.mjs', '.github/workflows/desktop.yml', 'package.json', 'package-lock.json']
 permissions:
   contents: write
 jobs:
@@ -16,7 +16,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: node --test tests/desktop.test.mjs
+      - run: node --test tests/desktop.test.mjs tests/desktopBackups.test.mjs
       - run: npm run desktop:build
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

@@ -33,7 +33,7 @@ export async function requestRpc(name, args) {
 async function initialize(state, owner, reload = false) {
   if (state.ready && !reload) return;
   const cache = await readAccountCache(`remote-v1:${owner}`).catch(() => null);
-  if (cache?.personal && cache?.shared) Object.assign(state, cache);
+  if (cache?.personal && cache?.shared) { Object.assign(state, cache); state.canonicalLoaded = true; }
   state.ready = true;
 }
 function persist(state, owner) {
@@ -68,12 +68,21 @@ async function refreshRemoteState(state, owner, historyTeam = null) {
     state.personal = personal; state.shared = shared; state.objects = objects;
     state.histories = Object.fromEntries(Object.entries(histories).filter(([id]) => data.shared.ids.includes(id)));
     if (changed) await persist(state, owner);
+    state.canonicalLoaded = true;
+    state.checked = { at: Date.now(), historyTeam };
+    await cacheAccountMaps(`remote-check-v1:${owner}`, state.checked).catch(() => {});
     return { personal, shared };
 }
-export function loadRemoteMaps(owner, historyTeam = null) {
+export function loadRemoteMaps(owner, historyTeam = null, { force = false } = {}) {
   const state = account(owner);
   return enqueue(state, () => withAccountLock(owner, async () => {
     await initialize(state, owner, Boolean(globalThis.navigator?.locks));
+    const checked = globalThis.navigator?.locks ? await readAccountCache(`remote-check-v1:${owner}`).catch(() => null) : state.checked;
+    // Collapse simultaneous tab/focus/startup requests. Explicit invalidations and
+    // revision-conflict retries still fetch immediately, even inside this window.
+    if (!force && state.canonicalLoaded && checked?.historyTeam === historyTeam && Date.now() >= checked.at && Date.now() - checked.at < 1500) {
+      return { personal: state.personal, shared: state.shared };
+    }
     return refreshRemoteState(state, owner, historyTeam);
   }));
 }
