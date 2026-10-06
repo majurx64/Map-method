@@ -58,9 +58,22 @@ export function pendingMapSaves(owner) {
   });
 }
 export function acknowledgeMapSave(entry) {
-  return transaction("outbox", "readwrite", (store) => {
+  return transaction("outbox", "readwrite", (store, done) => {
     store.get(entry.key).onsuccess = (event) => {
-      if (event.target.result?.revision === entry.revision) store.delete(entry.key);
+      const matches = event.target.result?.revision === entry.revision;
+      if (matches) store.delete(entry.key);
+      done(matches);
+    };
+  });
+}
+// Explicit conflict resolution replaces only the reviewed revision and its base.
+// An edit made in another tab while the choice is open must survive unchanged.
+export function replacePendingMapSave(entry, map, base) {
+  return transaction("outbox", "readwrite", (store, done) => {
+    store.get(entry.key).onsuccess = (event) => {
+      if (event.target.result?.revision !== entry.revision) { done(null); return; }
+      const next = { ...entry, map, base, revision: crypto.randomUUID() };
+      store.put(next); done(next);
     };
   });
 }

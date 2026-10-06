@@ -8,6 +8,11 @@ import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPan
 import EditorColorPicker from './EditorColorPicker';
 import EditorTutorial, { EDITOR_TUTORIAL_STEPS } from './EditorTutorial';
 import EditorSelection from './EditorSelection';
+import BackupArchive from './BackupArchive';
+import SaveHealth, { useSaveHealth } from './SaveHealth';
+import MeasurementFields from './MeasurementFields';
+import { archiveMaps, archiveMap, detachedBackupMap, listSaveConflicts, preserveSaveConflict, clearSaveConflict } from './lib/mapBackups';
+import { normalizeMeasurement, quantityInCells, formatQuantity } from './lib/mapUnits';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from './lib/historyVersions';
@@ -17,7 +22,7 @@ import { equalJSON } from './lib/syncWire';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
-import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache } from "./lib/offlineMaps";
+import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache, replacePendingMapSave } from "./lib/offlineMaps";
 import { liveCellChanges, mergeLiveMaps } from "./lib/liveMaps";
 import { stageSiteUpdate } from "./lib/siteUpdate";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridViewportAnchor, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
@@ -1050,6 +1055,7 @@ function normalizeMap(map = {}) {
       typeof map.showImage === "boolean" ? map.showImage : true,
     description:
       typeof map.description === "string" ? map.description : "",
+    measurement: normalizeMeasurement(map.measurement),
     category: typeof map.category === "string" && map.category.trim().slice(0, 36) ? map.category.trim().slice(0, 36) : "Личное",
     deadline: /^\d{4}-\d{2}-\d{2}$/.test(map.deadline || "") ? map.deadline : "",
     lastPaintedAt: typeof map.lastPaintedAt === "string" && Number.isFinite(Date.parse(map.lastPaintedAt))
@@ -1696,6 +1702,9 @@ export default function App() {
   });
   const [backupStatus, setBackupStatus] = useState("");
   const [syncStatus, setSyncStatus] = useState("");
+  const [archiveError, setArchiveError] = useState('');
+  const [archiveRevision, setArchiveRevision] = useState(0);
+  const conflictsRef = useRef(new Map());
   const loadedOwnerRef = useRef(null);
   const latestOwnerRef = useRef(null);
   useLayoutEffect(() => { latestOwnerRef.current = user?.id || null; }, [user?.id]);
@@ -1751,7 +1760,7 @@ export default function App() {
   const [isGameFillOpen, setIsGameFillOpen] = useState(false);
   const [gameFillCount, setGameFillCount] = useState(() => {
     const saved = localStorage.getItem(GAME_FILL_COUNT_KEY);
-    return Number.isSafeInteger(Number(saved)) && Number(saved) > 0 ? saved : '1';
+    return Number.isFinite(Number(saved)) && Number(saved) > 0 ? saved : '1';
   });
   const [gameFillRandom, setGameFillRandom] = useState(false);
   const [showVictory, setShowVictory] = useState(false);
@@ -1908,6 +1917,8 @@ export default function App() {
   const [newMapCategory, setNewMapCategory] = useState("Личное");
   const [newMapDeadline, setNewMapDeadline] = useState("");
   const [newMapPlanMode, setNewMapPlanMode] = useState("balanced");
+  const [newMapUnit, setNewMapUnit] = useState('');
+  const [newMapPerCell, setNewMapPerCell] = useState('1');
   const [newCategoryDraft, setNewCategoryDraft] = useState("");
   const [isLibraryCategoryAdding, setIsLibraryCategoryAdding] = useState(false);
   const [customCategories, setCustomCategories] = useState(() => {
@@ -1949,6 +1960,8 @@ export default function App() {
     setRenameValue,
   ] = useState("");
   const [renameDescription, setRenameDescription] = useState("");
+  const [renameUnit, setRenameUnit] = useState('');
+  const [renamePerCell, setRenamePerCell] = useState('1');
   const [renameCategory, setRenameCategory] = useState("Личное");
   const [renameDeadline, setRenameDeadline] = useState("");
   const [renamePlanMode, setRenamePlanMode] = useState("balanced");
@@ -2140,6 +2153,17 @@ export default function App() {
   const cachedBootstrapRef = useRef(false);
   const dirtyMapsRef = useRef(new Map());
   const mapBaselinesRef = useRef(new Map());
+  const { health: saveHealth, refresh: refreshSaveHealth, start: startServerSave, finish: finishServerSave } = useSaveHealth(user?.id || null, dirtyMapsRef);
+  const updateConflicts = useCallback((conflicts) => {
+    conflictsRef.current = new Map(conflicts.map((conflict) => [conflict.mapId, conflict]));
+    void refreshSaveHealth({ conflicts: conflicts.length });
+  }, [refreshSaveHealth]);
+  useEffect(() => {
+    let alive = true;
+    conflictsRef.current.clear();
+    if (user?.id) listSaveConflicts(user.id).then((conflicts) => { if (alive) updateConflicts(conflicts); }).catch(() => { if (alive) setArchiveError('Не удалось открыть архив: проверьте свободное место на устройстве.'); });
+    return () => { alive = false; };
+  }, [user?.id, updateConflicts]);
   const liveStateRef = useRef(null);
   const activeMapRef = useRef(activeMap);
   const hydrationReleaseTimerRef = useRef(null);
@@ -3362,6 +3386,9 @@ export default function App() {
       saveMapsLocally(maps);
       if (user?.id && loadedOwnerRef.current === user.id) {
         void cacheAccountMaps(user.id, [...maps, ...personalLibrary]).catch(() => setSyncStatus("Не удалось сохранить офлайн-копию: проверьте свободное место на устройстве."));
+        void archiveMaps(user.id, [...maps, ...personalLibrary]).then(() => {
+          if (latestOwnerRef.current === user.id) setArchiveError('');
+        }).catch(() => { if (latestOwnerRef.current === user.id) setArchiveError('Автоматическая копия не записана. Проверьте свободное место и скачайте резервную копию вручную.'); });
       }
     };
     const whenSettled = () => {
@@ -3945,6 +3972,7 @@ export default function App() {
         }
         cachedBootstrapRef.current = false;
         if (!pending.length && !dirtyMapsRef.current.size) setSyncStatus('');
+        void refreshSaveHealth({ verified: true, offline: false });
         const current = liveStateRef.current;
         const local = [...current.maps, ...current.personalLibrary];
         const blocked = new Set([...deletingIdsRef.current, ...pendingDeletesRef.current.map((entry) => entry.map.id)]);
@@ -3955,11 +3983,22 @@ export default function App() {
                 ...(!map.collaboration ? { gridMode: current.editor.gridMode } : {}),
                 drawColor: current.editor.drawColor, customColors: current.editor.customColors } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
+        const mapsChanged = !equalJSON(current.maps, nextMaps);
+        const libraryChanged = !equalJSON(current.personalLibrary, nextLibrary);
+        if (mapsChanged || libraryChanged) {
+          const dirtyBeforeArchive = [...dirtyMapsRef.current];
+          try {
+            await archiveMaps(owner, local);
+            await archiveMaps(owner, [...data.map(mapFromSupabaseRow), ...shared], 'server');
+          } catch { if (!cancelled && latestOwnerRef.current === owner) setArchiveError('Не удалось записать автоматическую копию. Скачайте резервную копию вручную.'); }
+          if (cancelled || latestOwnerRef.current !== owner) return;
+          if (queue !== remoteSaveQueueRef.current || !equalJSON(dirtyBeforeArchive, [...dirtyMapsRef.current]) || isDrawingRef.current || gameFillAnimationRef.current || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current || historySequence !== historyMutationSequenceRef.current || current.activeMapId !== liveStateRef.current.activeMapId) {
+            clearTimeout(retryTimer); retryTimer = setTimeout(refresh, 500); return;
+          }
+        }
         for (const map of [...nextMaps, ...nextLibrary]) {
           if (!dirtyMapsRef.current.has(map.id) && !pending.some((entry) => entry.map.id === map.id)) mapBaselinesRef.current.set(map.id, mapToSupabaseRow(map, owner));
         }
-        const mapsChanged = !equalJSON(current.maps, nextMaps);
-        const libraryChanged = !equalJSON(current.personalLibrary, nextLibrary);
         const nextActive = nextMaps.find((map) => map.id === current.activeMapId);
         const oldActive = current.maps.find((map) => map.id === current.activeMapId);
         const activeChanged = !current.publicLibraryEditContext && nextActive
@@ -3993,6 +4032,7 @@ export default function App() {
       } catch (error) {
         if (!cancelled) {
           setSyncStatus(syncFailureMessage(error));
+          void refreshSaveHealth({ offline: true });
           clearTimeout(retryTimer);
           retryTimer = setTimeout(refresh, 3000);
         }
@@ -4033,7 +4073,7 @@ export default function App() {
       if (liveChannelRef.current === channel) liveChannelRef.current = null;
       void supabase.removeChannel(channel);
     };
-  }, [user?.id, isMapInitialized]);
+  }, [user?.id, isMapInitialized, refreshSaveHealth]);
 
   useEffect(() => {
     if (!window.mapMethodDesktop?.isDesktop) return;
@@ -4057,6 +4097,19 @@ export default function App() {
     return () => { if (window.mapMethodPrepareUpdate === prepare) delete window.mapMethodPrepareUpdate; };
   }, [user?.id, isMapInitialized, buildCurrentMap, publicLibraryEditContext]);
 
+  const rememberSaveConflict = useCallback(async (pending, server) => {
+    if (!pending || latestOwnerRef.current !== pending.owner) return;
+    const entries = await pendingMapSaves(pending.owner);
+    if (!entries.some((entry) => entry.key === pending.key && entry.revision === pending.revision)) return;
+    const conflict = await preserveSaveConflict(pending.owner, pending, server);
+    if (latestOwnerRef.current !== pending.owner) return;
+    const latest = await pendingMapSaves(pending.owner);
+    if (!latest.some((entry) => entry.key === pending.key && entry.revision === pending.revision)) { await clearSaveConflict(conflict); return; }
+    conflictsRef.current.set(pending.map.id, conflict);
+    void refreshSaveHealth({ conflicts: conflictsRef.current.size });
+    setArchiveRevision((value) => value + 1);
+  }, [refreshSaveHealth]);
+
   const remoteSave = useCallback(
     (map, queuedEntry = null) => {
       if (!user || !map) {
@@ -4066,16 +4119,26 @@ export default function App() {
       const editRevision = dirtyMapsRef.current.get(map.id);
       const queued = queuedEntry ? Promise.resolve(queuedEntry) : queueMapSave(user.id, normalizeMap(map), mapBaselinesRef.current.get(map.id) || null).catch(() => {
         setSyncStatus("Не удалось сохранить офлайн-копию. Скачайте резервную копию.");
+        void refreshSaveHealth({ error: true });
         return null;
       });
       const run = async () => {
         const pending = await queued;
+        void refreshSaveHealth();
         if (queuedEntry) {
           const entries = await pendingMapSaves(user.id);
           if (!entries.some((entry) => entry.key === queuedEntry.key && entry.revision === queuedEntry.revision)) return null;
         }
         if (deletingIdsRef.current.has(map.id)) return null;
         if (latestOwnerRef.current !== user.id) return new Error("account-changed");
+        if (pending && conflictsRef.current.get(map.id)?.revision === pending.revision) {
+          return Object.assign(new Error('unresolved-map-conflict'), { code: 'MM_SYNC_CONFLICT' });
+        }
+        try { await archiveMap(user.id, map); }
+        catch { if (latestOwnerRef.current === user.id) setArchiveError('Автоматическая копия не записана. Проверьте свободное место и скачайте копию вручную.'); }
+        if (latestOwnerRef.current !== user.id) return new Error('account-changed');
+        startServerSave(!pending);
+        let confirmed = false;
         try {
           if (map.collaboration) {
             const key = `${user.id}:${map.collaboration.id}`;
@@ -4084,17 +4147,28 @@ export default function App() {
             const beforeDrawing = (saved && saved.revision === map.collaboration.revision ? saved.drawing : map.collaboration.baseDrawing) || { completed: map.completed, colors: map.colors };
             const cellChanges = [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)];
             if (cellChanges.length) await collaborativeRpc('save_collaborative_cells', { team_id: map.collaboration.id, expected_revision: map.collaboration.revision, expected_grid: getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols), cell_changes: cellChanges });
+            if (latestOwnerRef.current !== user.id) return new Error('account-changed');
             collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted, drawing: { completed: map.completed, colors: map.colors } });
             if (pending) await acknowledgeMapSave(pending);
             if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
+            confirmed = true;
+            if (conflictsRef.current.has(map.id)) {
+              await clearSaveConflict(conflictsRef.current.get(map.id)); conflictsRef.current.delete(map.id);
+              void refreshSaveHealth({ conflicts: conflictsRef.current.size }); setArchiveRevision((value) => value + 1);
+            }
             setSyncStatus('');
             return null;
           }
           const row = mapToSupabaseRow(map, user.id);
-          const { error } = await upsertRemoteMap(row, pending?.base);
+          const { error } = await upsertRemoteMap(row, pending ? pending.base : mapBaselinesRef.current.get(map.id));
+          if (latestOwnerRef.current !== user.id) return new Error('account-changed');
 
           if (error) {
             setSyncStatus(error.code === 'MM_SYNC_CONFLICT' ? "Карта изменилась на другом устройстве. Правки сохранены локально; устаревшая копия не отправлена." : "Сохранено на устройстве. Сервер пока недоступен.");
+            if (error.code === 'MM_SYNC_CONFLICT') {
+              try { await rememberSaveConflict(pending, error.remoteMap ? mapFromSupabaseRow(error.remoteMap) : null); }
+              catch { setArchiveError('Не удалось записать конфликт в архив. Правки остаются в очереди; скачайте резервную копию.'); }
+            }
             console.error(
               "Ошибка автосохранения:",
               error
@@ -4134,17 +4208,31 @@ export default function App() {
           const current = liveStateRef.current;
           const currentMap = current.activeMapId === map.id ? current.editor : [...current.maps, ...current.personalLibrary].find((item) => item.id === map.id);
           if (dirtyMapsRef.current.get(map.id) === editRevision && (!queuedEntry || (currentMap && equalJSON(mapToSupabaseRow(currentMap, user.id), row)))) dirtyMapsRef.current.delete(map.id);
+          confirmed = true;
+          if (conflictsRef.current.has(map.id)) {
+            await clearSaveConflict(conflictsRef.current.get(map.id)); conflictsRef.current.delete(map.id);
+            void refreshSaveHealth({ conflicts: conflictsRef.current.size }); setArchiveRevision((value) => value + 1);
+          }
           setSyncStatus("");
           void liveRefreshRef.current?.();
           return null;
         } catch (error) {
           if (map.collaboration) setSyncStatus('Сохранено на устройстве. Совместный прогресс отправится после восстановления связи.');
+          if (map.collaboration && (error.code === '40001' || error.message?.includes('map-changed'))) {
+            try {
+              const fresh = await collaborativeRpc('get_collaborative_map', { team_id: map.collaboration.id });
+              await rememberSaveConflict(pending, fresh ? normalizeMap(collaborativeMap(fresh)) : null);
+              setSyncStatus('Общая карта изменилась. Обе версии сохранены; выберите их в личном кабинете.');
+            } catch { setArchiveError('Правки общей карты остаются локально. Скачайте резервную копию.'); }
+          }
           console.error(
             "Ошибка автосохранения:",
             error
           );
 
           return error;
+        } finally {
+          finishServerSave(confirmed);
         }
       };
 
@@ -4159,7 +4247,7 @@ export default function App() {
 
       return request;
     },
-    [user]
+    [user, refreshSaveHealth, startServerSave, finishServerSave, rememberSaveConflict]
   );
 
   useEffect(() => {
@@ -4219,6 +4307,7 @@ export default function App() {
     }
 
     dirtyMapsRef.current.set(activeMapId, (dirtyMapsRef.current.get(activeMapId) || 0) + 1);
+    void refreshSaveHealth({ writing: true });
     clearTimeout(saveTimerRef.current);
 
     saveTimerRef.current = setTimeout(() => {
@@ -4799,7 +4888,10 @@ export default function App() {
     const factor = displayedTotal > 1000 ? 100 : 10;
     const percent = displayedTotal ? Math.round(count / displayedTotal * 100 * factor) / factor : 0;
     progressPercentRef.current?.set(percent);
-    if (progressHeaderRef.current) progressHeaderRef.current.textContent = count + ' / ' + displayedTotal + ' ' + t('cells');
+    if (progressHeaderRef.current) {
+      const measurement = activeMapRef.current?.measurement;
+      progressHeaderRef.current.textContent = measurement ? `${formatQuantity(count * measurement.perCell)} / ${formatQuantity(displayedTotal * measurement.perCell)} ${measurement.unit}` : count + ' / ' + displayedTotal + ' ' + t('cells');
+    }
     if (progressCountRef.current) progressCountRef.current.textContent = String(count);
     if (progressBarRef.current) progressBarRef.current.style.width = percent + '%';
     if (!gameFillAnimationRef.current) {
@@ -6540,7 +6632,9 @@ export default function App() {
   }
 
   function fillGameCells() {
-    const count = Math.max(1, Number(gameFillCount) || 1);
+    const quantity = quantityInCells(gameFillCount, activeMapRef.current?.measurement);
+    if (!quantity.valid) return;
+    const count = quantity.cells;
     const targets = mapType === "image"
       ? Array.from({ length: actualTotal }, (_, index) => index)
       : [...completedRef.current];
@@ -6765,6 +6859,8 @@ export default function App() {
     setNewMapCategory("Личное");
     setNewMapDeadline("");
     setNewMapPlanMode("balanced");
+    setNewMapUnit('');
+    setNewMapPerCell('1');
     setNewCategoryDraft("");
     setNewMapType("free");
     setNewMapGridMode("auto");
@@ -6804,7 +6900,7 @@ export default function App() {
   }
 
   async function createMap() {
-    if (newMapInvalid) return;
+    if (newMapInvalid || (newMapUnit.trim() && !normalizeMeasurement({ unit: newMapUnit, perCell: newMapPerCell }))) return;
     const map = normalizeMap({
       id: createMapId(),
       order: Math.max(0, ...maps.map((map) => map.order || 0)) + 1,
@@ -6812,6 +6908,7 @@ export default function App() {
         newMapName.trim() ||
         "Новая карта",
       description: newMapDescription.trim(),
+      measurement: normalizeMeasurement({ unit: newMapUnit, perCell: newMapPerCell }),
       category: newMapCategory === "__custom__" ? "Личное" : newMapCategory,
       deadline: newMapDeadline,
       planMode: newMapPlanMode,
@@ -7005,6 +7102,8 @@ export default function App() {
       map.name || ""
     );
     setRenameDescription(map.description || "");
+    setRenameUnit(map.measurement?.unit || '');
+    setRenamePerCell(String(map.measurement?.perCell || 1));
     setRenameCategory(map.category || "Личное");
     setRenameDeadline(map.deadline || "");
     setRenamePlanMode(PLAN_MODES[map.planMode] ? map.planMode : "balanced");
@@ -7016,6 +7115,7 @@ export default function App() {
   }
 
   async function saveRename() {
+    if (renameUnit.trim() && !normalizeMeasurement({ unit: renameUnit, perCell: renamePerCell })) return;
     const name =
       renameValue.trim();
 
@@ -7039,6 +7139,7 @@ export default function App() {
         ...old,
         name,
         description: renameDescription.trim(),
+        measurement: old.collaboration ? old.measurement : normalizeMeasurement({ unit: renameUnit, perCell: renamePerCell }),
         category: renameCategory === "__custom__" ? old.category || "Личное" : renameCategory,
         deadline: renameDeadline,
         planMode: renamePlanMode,
@@ -7076,14 +7177,8 @@ export default function App() {
         );
 
       if (err) {
-        setMaps((p) =>
-          p.map((m) =>
-            m.id === renameMapId
-              ? old
-              : m
-          )
-        );
-
+        // Keep the queued metadata visible while offline; reverting it would hide
+        // the very version that is waiting to be uploaded.
         return;
       }
     }
@@ -8288,9 +8383,7 @@ export default function App() {
     try {
       if (file.size > 50 * 1024 * 1024) throw new Error("backup-too-large");
       const imported = parseBackup(await file.text()).map((map, index) => normalizeMap({
-        ...map,
-        id: createMapId(),
-        shareId: "",
+        ...detachedBackupMap(map, createMapId()),
         order: maps.length + index,
       }));
       setMaps((current) => [...current, ...imported.filter((map) => !map.privateLibraryItem)]);
@@ -8299,6 +8392,73 @@ export default function App() {
       setBackupStatus(`Добавлено карт и эскизов: ${imported.length}.${errors.some(Boolean) ? " Есть несинхронизированные данные; сохраните файл копии до восстановления связи." : ""}`);
     } catch {
       setBackupStatus("Не удалось прочитать эту резервную копию.");
+    } finally { featureBusyRef.current = false; }
+  }
+
+  async function createArchivedCopy(source, suffix = 'восстановленная копия') {
+    const owner = user?.id;
+    if (!owner || latestOwnerRef.current !== owner) throw new Error('Войдите в аккаунт для восстановления.');
+    const map = normalizeMap({ ...detachedBackupMap(source, createMapId()), name: `${source.name} — ${suffix}`, order: Math.max(0, ...maps.map((item) => item.order || 0)) + 1 });
+    const pending = await queueMapSave(owner, map, null);
+    try { await archiveMap(owner, map); }
+    catch { setArchiveError('Восстановленная карта сохранена локально, но архив не обновился. Скачайте файл копии.'); }
+    if (latestOwnerRef.current !== owner) throw new Error('Аккаунт сменился. Копия сохранена в исходном аккаунте.');
+    if (map.privateLibraryItem) setPrivateLibrary((current) => ({ ...current, [owner]: [...(current[owner] || []), map] }));
+    else setMaps((current) => [...current, map]);
+    void remoteSave(map, pending);
+    setArchiveRevision((value) => value + 1);
+    return map;
+  }
+
+  async function restoreArchivedMap(source) {
+    if (featureBusyRef.current) throw new Error('Дождитесь завершения текущего сохранения.');
+    featureBusyRef.current = true;
+    try { await createArchivedCopy(source); }
+    finally { featureBusyRef.current = false; }
+  }
+
+  async function resolveArchivedConflict(conflict, versions, choice) {
+    const owner = user?.id;
+    if (!owner || owner !== conflict.owner || latestOwnerRef.current !== owner) throw new Error('Аккаунт сменился. Откройте архив заново.');
+    if (featureBusyRef.current || isDrawingRef.current || gameFillAnimationRef.current) throw new Error('Дождитесь завершения текущего действия.');
+    featureBusyRef.current = true;
+    try {
+      const pending = (await pendingMapSaves(owner)).find((entry) => entry.map.id === conflict.mapId);
+      if (!pending || pending.revision !== conflict.revision) throw new Error('Появилась более свежая версия. Откройте архив заново.');
+      const live = liveStateRef.current;
+      const current = live.activeMapId === conflict.mapId ? live.editor : [...live.maps, ...live.personalLibrary].find((map) => map.id === conflict.mapId);
+      if (current && !equalJSON(mapToSupabaseRow(current, owner), mapToSupabaseRow(pending.map, owner))) {
+        void remoteSave(current);
+        throw new Error('Есть более свежие правки. Обновляем версии — повторите выбор после сохранения.');
+      }
+      // Make the additional copy durable before removing the old queue entry.
+      if (choice === 'both') await createArchivedCopy(versions.local, 'локальная копия');
+      if (latestOwnerRef.current !== owner) throw new Error('Аккаунт сменился. Откройте архив заново.');
+      const selected = choice === 'local' ? versions.local : versions.server;
+      const replacement = selected ? normalizeMap(selected) : null;
+      const localPending = choice === 'local' ? await replacePendingMapSave(pending, replacement, mapToSupabaseRow(versions.server, owner)) : null;
+      if (choice === 'local' ? !localPending : !await acknowledgeMapSave(pending)) throw new Error('В другом окне появились новые правки. Обновите архив перед выбором.');
+      try { await clearSaveConflict(conflict); }
+      catch { setArchiveError('Выбор сохранён, но список конфликтов не обновился. Копии остаются в архиве.'); }
+      if (latestOwnerRef.current !== owner) throw new Error('Аккаунт сменился. Выбор сохранён в исходном аккаунте.');
+      conflictsRef.current.delete(conflict.mapId);
+      dirtyMapsRef.current.delete(conflict.mapId);
+      if (versions.server) mapBaselinesRef.current.set(conflict.mapId, mapToSupabaseRow(versions.server, owner));
+      else mapBaselinesRef.current.delete(conflict.mapId);
+      if (replacement?.collaboration) collaborativeSavedRef.current.set(`${owner}:${replacement.collaboration.id}`, { revision: replacement.collaboration.revision, progress: replacement.progressCompleted, drawing: { completed: replacement.completed, colors: replacement.colors } });
+      setMaps((currentMaps) => currentMaps.flatMap((map) => map.id === conflict.mapId ? replacement && !replacement.privateLibraryItem ? [replacement] : [] : [map]));
+      setPrivateLibrary((currentLibrary) => ({ ...currentLibrary, [owner]: (currentLibrary[owner] || []).flatMap((map) => map.id === conflict.mapId ? replacement?.privateLibraryItem ? [replacement] : [] : [map]) }));
+      if (activeMapId === conflict.mapId) {
+        if (replacement) openMap(replacement);
+        else { setActiveMapId(null); setScreen('maps'); }
+      }
+      setSyncStatus('');
+      void refreshSaveHealth({ conflicts: conflictsRef.current.size });
+      setArchiveRevision((value) => value + 1);
+      if (choice === 'local' && replacement) {
+        const error = await remoteSave(replacement, localPending);
+        if (error) throw new Error('Локальная версия сохранена на устройстве. Если сервер изменился снова, выберите свежие версии в архиве.');
+      } else void liveRefreshRef.current?.();
     } finally { featureBusyRef.current = false; }
   }
 
@@ -8378,7 +8538,7 @@ export default function App() {
         setMaps((current) => mergeCollaborativeMaps(current, [next]));
         openMap(next); setScreen('editor');
       }} />
-      {syncStatus && <div className="sync-status" role="status">{syncStatus}</div>}
+      {syncStatus && <div className="sync-status" role="status">{syncStatus}{saveHealth.phase === 'conflict' && <button type="button" onClick={() => setScreen('account')}>Открыть версии</button>}</div>}
       {showVictory && (
         <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status" onPointerDown={dismissVictory}>
           <div className="victory-confetti" aria-hidden="true">
@@ -8488,6 +8648,7 @@ export default function App() {
         </a>
 
         <div className="header-actions">
+          {user && (screen === 'editor' || screen === 'maps') && <SaveHealth value={saveHealth} working={isDrawing || movingArtwork || Boolean(gameFillAnimationRef.current) || dirtyMapsRef.current.size > 0} onOpen={() => setScreen('account')} />}
           {isLibraryOwner && <div className="developer-site-version" role="status">
             <span>Сайт: <b>{__MM_SITE_VERSION__}</b><small>Последняя: {latestSiteVersion || 'проверяем…'}</small></span>
             <button type="button" onClick={updateDeveloperSite} disabled={!latestSiteVersion || latestSiteVersion === __MM_SITE_VERSION__ || siteUpdateStatus === 'updating'}>
@@ -9556,6 +9717,7 @@ export default function App() {
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
+              <div className="account-save-health"><SaveHealth value={saveHealth} working={isDrawing || movingArtwork || Boolean(gameFillAnimationRef.current) || dirtyMapsRef.current.size > 0} onOpen={() => document.getElementById('backup-archive')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })} /></div>
               <div className={`app-launch-help${appHelpOpen && !appStandalone ? " is-open" : ""}`} aria-hidden={!appHelpOpen || appStandalone} inert={!appHelpOpen || appStandalone}>
                 <div><section>
                   <button type="button" className="modal-close" aria-label="Закрыть подсказку" onClick={() => setAppHelpOpen(false)}>×</button>
@@ -9566,6 +9728,8 @@ export default function App() {
                 </section></div>
               </div>
             </section>
+
+            <BackupArchive owner={user.id} revision={archiveRevision} archiveError={archiveError} onRestore={restoreArchivedMap} onResolve={resolveArchivedConflict} onConflicts={updateConflicts} />
 
             <section className="account-achievements">
               <div className="account-section-title">
@@ -10143,11 +10307,7 @@ export default function App() {
 
                         <div className="map-card-footer">
                           <span>
-                            {done} /{" "}
-                            {playableTotal}{" "}
-                            {t(
-                              "cells"
-                            )}
+                            {map.measurement ? `${formatQuantity(done * map.measurement.perCell)} / ${formatQuantity(playableTotal * map.measurement.perCell)} ${map.measurement.unit}` : `${done} / ${playableTotal} ${t('cells')}`}
                           </span>
 
                           <div className="map-card-actions">
@@ -10623,20 +10783,21 @@ export default function App() {
                     {isGameMode && (
                       <div className="game-fill-control">
                         <button className="game-fill-btn" onClick={() => setIsGameFillOpen((open) => !open)}>
-                          Заполнить клетки
+                          {activeMap?.measurement ? 'Отметить выполненное' : 'Заполнить клетки'}
                         </button>
                         {isGameFillOpen && (
                           <div className="game-fill-inline">
-                            <label>Сколько <input type="number" min="1" value={gameFillCount} onChange={(event) => {
+                            <label>{activeMap?.measurement ? activeMap.measurement.unit : 'Сколько'} <input type="number" min={activeMap?.measurement?.perCell || 1} step={activeMap?.measurement?.perCell || 1} value={gameFillCount} onChange={(event) => {
                               const value = event.target.value;
                               setGameFillCount(value);
-                              if (Number.isSafeInteger(Number(value)) && Number(value) > 0) localStorage.setItem(GAME_FILL_COUNT_KEY, value);
+                              if (Number.isFinite(Number(value)) && Number(value) > 0) localStorage.setItem(GAME_FILL_COUNT_KEY, value);
                             }} /></label>
+                            {activeMap?.measurement && <small className="game-fill-units">1 клетка = {formatQuantity(activeMap.measurement.perCell)} {activeMap.measurement.unit}. {quantityInCells(gameFillCount, activeMap.measurement).valid ? `Будет заполнено клеток: ${Math.min(quantityInCells(gameFillCount, activeMap.measurement).cells, Math.max(0, displayedTotal - displayedCompleted.length))}.` : `Введите количество, кратное ${formatQuantity(activeMap.measurement.perCell)}.`}</small>}
                             <div>
                               <button type="button" className={!gameFillRandom ? "active" : ""} onClick={() => setGameFillRandom(false)}>По порядку</button>
                               <button type="button" className={gameFillRandom ? "active" : ""} onClick={() => setGameFillRandom(true)}>Хаотично</button>
                             </div>
-                            <button type="button" className="game-fill-apply" onClick={fillGameCells}>Заполнить</button>
+                            <button type="button" className="game-fill-apply" disabled={!quantityInCells(gameFillCount, activeMap?.measurement).valid} onClick={fillGameCells}>Заполнить</button>
                           </div>
                         )}
                       </div>
@@ -10757,7 +10918,7 @@ export default function App() {
                 </h1>
               </div>
 
-              <span className="painted-count" ref={progressHeaderRef}>{displayedCompleted.length + " / " + displayedTotal + " " + t("cells")}</span>
+              <span className="painted-count" ref={progressHeaderRef}>{isGameMode && activeMap?.measurement ? `${formatQuantity(displayedCompleted.length * activeMap.measurement.perCell)} / ${formatQuantity(displayedTotal * activeMap.measurement.perCell)} ${activeMap.measurement.unit}` : displayedCompleted.length + " / " + displayedTotal + " " + t("cells")}</span>
             </div>
 
             <div className="canvas-card">
@@ -11149,6 +11310,8 @@ export default function App() {
               />
             </div>
 
+            <MeasurementFields unit={newMapUnit} perCell={newMapPerCell} onUnit={setNewMapUnit} onPerCell={setNewMapPerCell} />
+
             <div className="modal-inline-fields">
               <div className="modal-field">
                 <label>Категория</label>
@@ -11330,7 +11493,7 @@ export default function App() {
             <button
               type="submit"
               className="modal-create-btn"
-              disabled={newMapInvalid}
+              disabled={newMapInvalid || Boolean(newMapUnit.trim() && !normalizeMeasurement({ unit: newMapUnit, perCell: newMapPerCell }))}
             >
               {t(
                 "createMap"
@@ -11719,6 +11882,8 @@ export default function App() {
               />
             </div>
 
+            {!maps.find((map) => map.id === renameMapId)?.collaboration && <MeasurementFields unit={renameUnit} perCell={renamePerCell} onUnit={setRenameUnit} onPerCell={setRenamePerCell} />}
+
             <div className="modal-inline-fields">
               <div className="modal-field">
                 <label>Категория</label>
@@ -11741,6 +11906,7 @@ export default function App() {
 
             <button
               className="modal-create-btn"
+              disabled={Boolean(renameUnit.trim() && !normalizeMeasurement({ unit: renameUnit, perCell: renamePerCell }))}
               onClick={
                 saveRename
               }

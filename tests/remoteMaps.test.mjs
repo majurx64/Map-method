@@ -44,6 +44,13 @@ test('autosave does not resurrect a map deleted on another device',async()=>{
  const result=await remote.upsertRemoteMap(base,base);assert.equal(result.error.code,'MM_SYNC_CONFLICT');
  assert.deepEqual(calls.map(call=>call.name),['save_personal_map_patch','sync_map_bundle_v2']);
 });
+test('a structural conflict returns the server version for preserving both copies without a write',async()=>{
+ calls.length=0;const row=seed('geometry-owner');row.data={mapType:'free',gridMode:'manual',manualRows:'10',manualCols:'10',totalCells:'100',completed:[0],progressCompleted:[],colors:['#fff']};
+ const base=structuredClone(row),local={...row,data:{...row.data,completed:[0,1]}},latest={...row,data:{...row.data,manualCols:'11',totalCells:'110'}};
+ cache.set('remote-v1:geometry-owner',{personal:[latest],shared:[],objects:{},histories:{}});
+ const result=await remote.upsertRemoteMap(local,base);
+ assert.equal(result.error.code,'MM_SYNC_CONFLICT');assert.deepEqual(result.error.remoteMap,latest);assert.equal(calls.length,0);
+});
 test('a validated no-op receipt retains field manifests for the next small refresh',async()=>{
  calls.length=0;const row=seed('noop-owner');handle=async()=>({data:{id:'map',sync_revision:7,updated_at:'unchanged'}});await remote.upsertRemoteMap(row);
  assert.deepEqual(calls[0].args.patch,{fields:{},removed:[],versions:null});assert.deepEqual(cache.get('remote-v1:noop-owner').personal[0].fields,row.fields);
