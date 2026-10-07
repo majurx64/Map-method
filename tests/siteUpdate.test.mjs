@@ -68,6 +68,37 @@ test('worker leaves account and map API responses outside the shell cache', () =
   assert.equal(respond({ method: 'GET', mode: 'cors', url: 'https://project.supabase.co/rest/v1/maps' }), undefined);
 });
 
+test('an old worker serves newly staged bundles even though its compiled asset list is older', async () => {
+  let calls = 0;
+  const respond = workerFetch({ cached: new Response('staged new bundle'), fetcher: () => { calls++; throw Error('network unavailable'); } });
+  const response = await respond({ method: 'GET', mode: 'cors', url: 'https://map-method-chi.vercel.app/assets/new-build.js' });
+  assert.ok(response, 'the worker must intercept the newer build from the staged shell');
+  assert.equal(await response.text(), 'staged new bundle');
+  assert.equal(calls, 0);
+});
+
+test('activating a new worker preserves the prior complete build and serves its in-flight bundles', async () => {
+  const handlers = {}, current = 'map-method-v2-new', previous = 'map-method-v2-old', incomplete = 'map-method-v2-failed';
+  const url = 'https://map-method-chi.vercel.app/assets/old.js';
+  const stores = new Map([[current, new Map()], [previous, new Map([['/', `<script src="${url}"></script>`], [url, 'old bundle']])], [incomplete, new Map([['/', '<script src="https://map-method-chi.vercel.app/assets/missing.js"></script>']])]]);
+  let claimed = 0;
+  runInNewContext(readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8').replace('"map-method-v2-__BUILD_ID__"', JSON.stringify(current)), {
+    self: { location: { origin }, clients: { claim: async () => claimed++ }, addEventListener: (type, handler) => { handlers[type] = handler; } },
+    caches: { keys: async () => [...stores.keys()], delete: async (name) => stores.delete(name), open: async (name) => ({ match: async (request) => {
+      const value = stores.get(name)?.get(typeof request === 'string' ? request : request.url);
+      return value === undefined ? undefined : new Response(value);
+    } }) },
+    fetch: () => { throw Error('old asset removed from server'); }, URL, Response, AbortController, setTimeout, clearTimeout,
+  });
+  let activation;
+  handlers.activate({ waitUntil: (promise) => { activation = promise; } });
+  await activation;
+  assert.equal(stores.has(previous), true); assert.equal(stores.has(incomplete), false); assert.equal(claimed, 1);
+  let response;
+  handlers.fetch({ request: { method: 'GET', mode: 'cors', url }, respondWith: (promise) => { response = promise; } });
+  assert.equal(await (await response).text(), 'old bundle');
+});
+
 
 test('worker installation uses the asset origin and writes only a complete matching shell', async () => {
   const urls = [], writes = new Map(), installed = [];

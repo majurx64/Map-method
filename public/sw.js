@@ -29,7 +29,21 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith("map-method-") && key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
+  event.waitUntil((async () => {
+    const names = (await caches.keys()).filter((key) => key.startsWith("map-method-") && key !== CACHE);
+    let previous;
+    // An old page may still be loading when the new worker takes control.
+    // Retain one complete previous build until the next successful update.
+    for (const name of names.slice().reverse()) {
+      const cache = await caches.open(name), shell = await cache.match('/');
+      if (!shell) continue;
+      const html = await shell.text();
+      const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map((match) => new URL(match[1], self.location.origin).href);
+      if (assets.length && (await Promise.all(assets.map((asset) => cache.match(asset)))).every(Boolean)) { previous = name; break; }
+    }
+    await Promise.all(names.filter((name) => name !== previous).map((name) => caches.delete(name)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
@@ -53,6 +67,21 @@ self.addEventListener("fetch", (event) => {
     })());
     return;
   }
-  if (!SHELL.some((asset) => new URL(asset, self.location.origin).href === url.href)) return;
-  event.respondWith(caches.open(CACHE).then(async (cache) => (await cache.match(event.request)) || fetch(event.request)));
+  const bundle = url.origin === ASSET_ORIGIN && /^\/assets\/[^/]+\.(?:js|css)$/.test(url.pathname);
+  if (!bundle && !SHELL.some((asset) => new URL(asset, self.location.origin).href === url.href)) return;
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const saved = await cache.match(event.request);
+    if (saved) return saved;
+    if (bundle) {
+      // stageSiteUpdate can put newer bundles into an older worker's cache.
+      // The build-time ASSETS list must not prevent serving those staged files.
+      const previous = (await caches.keys()).filter((name) => name.startsWith('map-method-') && name !== CACHE).reverse();
+      for (const name of previous) {
+        const response = await (await caches.open(name)).match(event.request);
+        if (response) return response;
+      }
+    }
+    return fetch(event.request);
+  })());
 });
