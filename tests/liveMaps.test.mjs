@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { liveCellChanges, mergeLiveMaps } from '../src/lib/liveMaps.js';
+import { compareMapOrder, liveCellChanges, mergeLiveMaps } from '../src/lib/liveMaps.js';
 import { collaborativeVersions } from '../src/lib/collaborativeHistory.js';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from '../src/lib/historyVersions.js';
 import { rebasePersonalMap } from '../src/lib/personalMapMerge.js';
@@ -53,6 +53,30 @@ test('another session updates clean maps without replacing unsaved or offline ed
 
 test('pending local deletion remains removed even when the server or outbox still has it', () => {
   assert.deepEqual(mergeLiveMaps([{ id: 'deleted' }], [{ id: 'deleted' }], [{ map: { id: 'deleted' } }], new Map([['deleted', 1]]), new Set(['deleted'])), []);
+});
+
+test('equal card positions remain stable through changing server and save-receipt array order', () => {
+  const first = { id: 'pullups', order: 0, createdAt: '2026-09-22T10:00:00Z' };
+  const second = { id: 'test', order: 0, createdAt: '2026-10-01T10:00:00Z' };
+  const ids = (maps) => maps.sort(compareMapOrder).map((map) => map.id);
+  assert.deepEqual(ids([second, first]), ['pullups', 'test']);
+  assert.deepEqual(ids([first, second]), ['pullups', 'test']);
+  assert.deepEqual(ids([{ ...first, order: 2 }, { ...second, order: 1 }]), ['test', 'pullups']);
+  assert.deepEqual(ids([{ id: 'b' }, { id: 'a' }]), ['a', 'b']);
+  assert.deepEqual(ids([{ id: 'a' }, { id: 'b' }]), ['a', 'b']);
+});
+
+test('shared updates preserve participant card order and background choice without blocking new cells or personal cloud settings', () => {
+  const local = [{ id: 'shared', order: 1, showCardBackground: false, progressCompleted: [0], collaboration: { id: 'team' } },
+    { id: 'personal', order: 0, showCardBackground: false }];
+  const remote = [{ id: 'shared', order: 0, showCardBackground: true, progressCompleted: [0, 1], collaboration: { id: 'team', revision: 2 } },
+    { id: 'personal', order: 2, showCardBackground: true }];
+  const result = mergeLiveMaps(remote, local, [], new Map(), new Set());
+  assert.equal(result[0].order, 1); assert.equal(result[0].showCardBackground, false);
+  assert.deepEqual(result[0].progressCompleted, [0, 1]); assert.equal(result[0].collaboration.revision, 2);
+  assert.deepEqual(result[1], remote[1]);
+  const pending = { ...local[0], progressCompleted: [0, 3] };
+  assert.deepEqual(mergeLiveMaps(remote, local, [{ map: pending }], new Map(), new Set())[0], pending);
 });
 
 test('remote drawing, erasing and recolouring animate only the changed cells', () => {

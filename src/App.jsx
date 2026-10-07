@@ -25,7 +25,7 @@ import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache, replacePendingMapSave } from "./lib/offlineMaps";
-import { liveCellChanges, mergeLiveMaps } from "./lib/liveMaps";
+import { compareMapOrder, liveCellChanges, mergeLiveMaps } from "./lib/liveMaps";
 import { stageSiteUpdate } from "./lib/siteUpdate";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridViewportAnchor, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, publicSharedSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
@@ -1055,6 +1055,7 @@ function normalizeMap(map = {}) {
 
     showImage:
       typeof map.showImage === "boolean" ? map.showImage : true,
+    showCardBackground: map.showCardBackground !== false,
     description:
       typeof map.description === "string" ? map.description : "",
     measurement: normalizeMeasurement(map.measurement),
@@ -1146,7 +1147,7 @@ function mapFromSupabaseRow(row) {
   });
 }
 
-const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false, animationKey = "", showTemplate = true, playbackActive = false, playbackSpeedRef = null }) {
+const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing = false, previewBounds = null, animateChanges = false, animationKey = "", showTemplate = true, templateOpacity = null, playbackActive = false, playbackSpeedRef = null }) {
   const canvasRef = useRef(null);
   const previewAnimationFrameRef = useRef(0);
   const previousPreviewMapRef = useRef(map);
@@ -1154,6 +1155,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
   const completedCells = new Set(map.progressCompleted || []);
   const drawingCells = new Set(map.completed || []);
   const densePreview = dimensions.actualTotal >= 2000;
+  const backgroundOpacity = templateOpacity ?? (densePreview ? 0.38 : 0.52);
   const meaningfulCells = [...drawingCells].filter((index) => (
     map.mapType !== "free" || normalizeHexColor(map.colors?.[index]) !== UTILITY_COLOR
   ));
@@ -1199,7 +1201,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       opacity: filled
         ? 1
         : backgroundDrawingCell
-          ? densePreview ? 0.38 : 0.52
+          ? backgroundOpacity
           : densePreview ? 0.34 : 0.62,
     };
   };
@@ -1270,7 +1272,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
         context.globalAlpha = filled
           ? 1
           : backgroundDrawingCell
-            ? densePreview ? 0.38 : 0.52
+            ? backgroundOpacity
             : densePreview ? 0.34 : 0.62;
         const row = Math.floor(index / dimensions.cols) - startRow;
         const column = index % dimensions.cols - startCol;
@@ -1364,7 +1366,7 @@ const MapCardGrid = memo(function MapCardGrid({ map, dimensions, cropToDrawing =
       observer.disconnect();
       window.removeEventListener("resize", redraw);
     };
-  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, visibleIndices, animateChanges, animationKey, showTemplate, playbackActive, playbackSpeedRef]);
+  }, [map, dimensions.cols, cropToDrawing, visibleCols, visibleRows, startRow, startCol, densePreview, backgroundOpacity, visibleIndices, animateChanges, animationKey, showTemplate, playbackActive, playbackSpeedRef]);
 
   if (!cropToDrawing) {
     return (
@@ -7381,8 +7383,20 @@ export default function App() {
     }
   }
 
+  function toggleCardBackground(source, visible) {
+    const latest = liveStateRef.current.maps.find((map) => map.id === source.id) || source;
+    const updated = normalizeMap({ ...latest, showCardBackground: visible });
+    if (activeMapRef.current?.id === source.id) activeMapRef.current = { ...activeMapRef.current, showCardBackground: visible };
+    setMaps((current) => current.map((map) => map.id === source.id ? { ...map, showCardBackground: visible } : map));
+    if (user && !updated.collaboration) {
+      void remoteSave(updated).then((error) => {
+        if (error) setMapActionError('Настройка фона сохранена на устройстве. Она отправится на сервер после восстановления связи.');
+      });
+    }
+  }
+
   function reorderCardsToIndex(id, targetIndex) {
-    const ordered = [...maps].sort((a, b) => a.order - b.order);
+    const ordered = [...maps].sort(compareMapOrder);
     const visible = ordered.filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
     const from = visible.findIndex((map) => map.id === id);
     if (from < 0) return;
@@ -7399,14 +7413,15 @@ export default function App() {
     setMaps(next);
     saveMapsLocally(next);
     if (user) {
-      Promise.all(next.map((map) => remoteSave(map))).then((errors) => {
+      // Shared card order is a local view preference, not a drawing edit.
+      Promise.all(next.filter((map) => !map.collaboration).map((map) => remoteSave(map))).then((errors) => {
         if (errors.some(Boolean)) setMapActionError("Порядок сохранён на этом устройстве. Не удалось синхронизировать его с сервером.");
       });
     }
   }
 
   function reorderCards(id, targetId) {
-    const visible = [...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
+    const visible = [...maps].sort(compareMapOrder).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
     const targetIndex = visible.findIndex((map) => map.id === targetId);
     if (targetIndex >= 0) reorderCardsToIndex(id, targetIndex);
   }
@@ -7518,12 +7533,12 @@ export default function App() {
   }
 
   function beginCardDrag(event, id) {
-    if (event.button !== 0 || event.target.closest("button, input, textarea, a") || deletingIdsRef.current.has(id)) return;
+    if (event.button !== 0 || event.target.closest("button, input, textarea, select, a, label") || deletingIdsRef.current.has(id)) return;
     cardAnimationsRef.current.forEach((animation) => animation.cancel());
     cardAnimationsRef.current = [];
     setCardSettling(null);
     const element = event.currentTarget;
-    const visible = [...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
+    const visible = [...maps].sort(compareMapOrder).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
     const drag = { id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, scrollX: window.scrollX, scrollY: window.scrollY, dx: 0, dy: 0, targetIndex: visible.findIndex((map) => map.id === id), dropRect: null, active: false };
     cardDragRef.current = drag;
     suppressCardClick.current = false;
@@ -10122,7 +10137,7 @@ export default function App() {
       )}
 
       {screen === "maps" && (
-        <section className={`maps-page${authLoading || mapsLoading || !isMapInitialized ? " is-loading" : " is-ready"}${pendingDeletes.length ? " has-delete-undo" : ""}`}>
+        <section className={`maps-page maps-list-page${authLoading || mapsLoading || !isMapInitialized ? " is-loading" : " is-ready"}${pendingDeletes.length ? " has-delete-undo" : ""}`}>
           <div className="maps-page-header">
             <div>
               <h1>
@@ -10243,7 +10258,7 @@ export default function App() {
             {mapActionError && <p className="field-error" role="alert">{mapActionError}</p>}
             <div className={`maps-list maps-list-columns-${mapColumns}${mapCategoryMotion ? ` is-category-${mapCategoryMotion.phase}` : ""}${cardSettling ? " is-reordering" : ""}`} style={{ "--map-columns": mapColumns }}>
               {cardDrag?.dropRect && <div className="map-drop-indicator" aria-hidden="true" style={cardDrag.dropRect} />}
-              {[...maps].sort((a, b) => a.order - b.order).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
+              {[...maps].sort(compareMapOrder).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter).map(
                 (map) => {
                   const d =
                     getGridDimensions(
@@ -10275,7 +10290,7 @@ export default function App() {
                       onKeyDown={(event) => {
                         if (event.target !== event.currentTarget || !event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
                         event.preventDefault();
-                        const ordered = [...maps].sort((a, b) => a.order - b.order).filter((item) => mapCategoryFilter === "Все" || item.category === mapCategoryFilter);
+                        const ordered = [...maps].sort(compareMapOrder).filter((item) => mapCategoryFilter === "Все" || item.category === mapCategoryFilter);
                         const index = ordered.findIndex((item) => item.id === map.id);
                         const next = ordered[index + (event.key === "ArrowUp" ? -1 : 1)];
                         if (next) reorderCards(map.id, next.id);
@@ -10291,7 +10306,7 @@ export default function App() {
                       >
                       {deletingIds.includes(map.id) && <div className="card-debris" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ "--x": (i % 6) * 20 + "%", "--y": Math.floor(i / 6) * 30 + "%", "--dx": ((i * 37) % 180 - 90) + "px", "--dy": (40 + i * 7) + "px", "--turn": (i * 47) + "deg" }} />)}</div>}
                       <div className="map-card-preview">
-                        <MapCardGrid map={map} dimensions={d} />
+                        <MapCardGrid map={map} dimensions={d} showTemplate={map.showCardBackground !== false} templateOpacity={0.16} animateChanges />
                       </div>
 
                       <div className="map-card-body">
@@ -10362,9 +10377,15 @@ export default function App() {
                         </div>
 
                         <div className="map-card-footer">
+                          <div className="map-card-footer-summary">
                           <span>
                             {map.measurement ? `${formatQuantity(done * map.measurement.perCell)} / ${formatQuantity(playableTotal * map.measurement.perCell)} ${map.measurement.unit}` : `${done} / ${playableTotal} ${t('cells')}`}
                           </span>
+                          <label className="map-card-background-toggle" title="Показывать фоновый рисунок в карточке" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+                            <input type="checkbox" checked={map.showCardBackground !== false} onChange={(event) => toggleCardBackground(map, event.target.checked)} />
+                            <span>Фон рисунка</span>
+                          </label>
+                          </div>
 
                           <div className="map-card-actions">
                             <button

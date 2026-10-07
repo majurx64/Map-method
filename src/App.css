@@ -2925,6 +2925,8 @@ body {
   padding-bottom: 88px;
 }
 
+.maps-page.maps-list-page { padding-top:28px; }
+
 .maps-page-header {
   margin-bottom: 34px;
 }
@@ -3508,6 +3510,12 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 
 /* Варианты плотности списка карт и единая плавная раскладка. */
 .maps-page-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; }
+.map-card-footer-summary { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; width:100%; }
+.map-card-footer-summary > span { color:#737970; font-size:14px; line-height:1.4; }
+.map-card-background-toggle { display:inline-flex; align-items:center; gap:6px; min-height:30px; color:#687366; font-size:12px; cursor:pointer; user-select:none; transition:color 180ms ease; }
+.map-card-background-toggle:hover { color:#32624f; }
+.map-card-background-toggle input { width:15px; height:15px; margin:0; accent-color:#32624f; cursor:pointer; }
+.map-card-background-toggle input:focus-visible { outline:2px solid #32624f; outline-offset:3px; }
 .maps-view-switch { display:flex; align-items:center; gap:4px; padding:4px; border:1px solid #d8d1c5; border-radius:11px; background:#fffdf9; box-shadow:0 5px 14px rgba(51,46,38,.04); }
 .maps-view-switch > span { padding:0 6px; color:#77776f; font-size:12px; font-weight:700; white-space:nowrap; }
 .maps-view-switch button { width:32px; height:32px; padding:0; border:0; border-radius:8px; background:transparent; color:#5f665e; cursor:pointer; font:inherit; font-size:13px; font-weight:800; transition:color 180ms ease,background-color 180ms ease,transform 180ms cubic-bezier(.2,.8,.2,1); }
@@ -3542,6 +3550,7 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   .maps-list-columns-3,.maps-list-columns-4 { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media (max-width:720px) {
+  .maps-page.maps-list-page { padding-top:24px; }
   .maps-page-actions { width:100%; align-items:stretch; flex-direction:column-reverse; }
   .maps-view-switch { align-self:flex-start; }
   .maps-list { grid-template-columns:1fr; }
