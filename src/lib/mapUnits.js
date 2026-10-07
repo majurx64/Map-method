@@ -4,6 +4,13 @@ export function normalizeMeasurement(value) {
   return unit && Number.isFinite(perCell) && perCell >= 0.001 && perCell <= 1000000 ? { unit, perCell } : null;
 }
 
+export function measurementInputError(unit, perCell) {
+  if (!unit.trim()) return '';
+  if (!/\p{L}/u.test(unit)) return 'Укажите название, например «страниц» или «подтягиваний». Число задаётся справа.';
+  if (!normalizeMeasurement({ unit, perCell })) return 'Количество в одной клетке должно быть от 0,001 до 1 000 000.';
+  return '';
+}
+
 export function quantityInCells(amount, measurement) {
   const value = Number(amount);
   const size = normalizeMeasurement(measurement)?.perCell || 1;

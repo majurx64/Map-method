@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['desktop/**', 'src/lib/mapBackups.js', 'tests/desktop*.mjs', '.github/workflows/desktop.yml', 'package.json', 'package-lock.json']
+    paths: ['desktop/**', 'src/lib/mapBackups.js', 'src/lib/deviceBackupSchedule.js', 'tests/desktop*.mjs', '.github/workflows/desktop.yml', 'package.json', 'package-lock.json']
 permissions:
   contents: write
 jobs:

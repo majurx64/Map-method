@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { archiveMap, listBackups, readBackup, preserveSaveConflict, listSaveConflicts, clearSaveConflict, retainedBackups, packBackup, unpackBackup, detachedBackupMap } from '../src/lib/mapBackups.js';
 import { queueMapSave, acknowledgeMapSave, pendingMapSaves, replacePendingMapSave } from '../src/lib/offlineMaps.js';
-import { normalizeMeasurement, quantityInCells } from '../src/lib/mapUnits.js';
+import { normalizeMeasurement, measurementInputError, quantityInCells } from '../src/lib/mapUnits.js';
 
 // A small request/transaction mock verifies storage behavior without a browser.
 // Completion follows request callbacks, matching the IndexedDB event contract.
@@ -115,6 +115,10 @@ test('late save acknowledgement cannot clear a newer local revision or its origi
 });
 
 test('units count complete cells exactly and reject silent rounding, invalid values, and unsafe settings', () => {
+  assert.match(measurementInputError('1', 5), /название/);
+  assert.equal(measurementInputError('страниц', 5), '');
+  assert.equal(measurementInputError('', 0), '');
+  assert.match(measurementInputError('минут', 0), /Количество/);
   assert.deepEqual(quantityInCells(30, { unit: 'страниц', perCell: 5 }), { cells: 6, valid: true, perCell: 5 });
   assert.equal(quantityInCells(31, { unit: 'страниц', perCell: 5 }).valid, false);
   assert.equal(quantityInCells(0.3, { unit: 'часов', perCell: 0.1 }).cells, 3);

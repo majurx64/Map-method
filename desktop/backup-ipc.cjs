@@ -1,8 +1,11 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { trustedBackupSender } = require('./backups.cjs');
+const { createDeviceBackups } = require('./device-backups.cjs');
 
 function registerBackupIPC({ ipcMain, store, getWindow, offlineURL, shell, dialog }) {
+  let root;
+  const device = createDeviceBackups({ getRoot: async () => root ||= (await store.info()).path });
   const handle = (name, operation) => ipcMain.handle(`mm-backup:${name}`, async (event, ...args) => {
     if (!trustedBackupSender(event, getWindow(), offlineURL)) throw new Error('untrusted-backup-request');
     return operation(...args);
@@ -11,6 +14,22 @@ function registerBackupIPC({ ipcMain, store, getWindow, offlineURL, shell, dialo
   handle('save', (owner, snapshot) => store.save(owner, snapshot));
   handle('list', (owner) => store.list(owner));
   handle('read', (owner, id) => store.read(owner, id));
+  handle('schedule-info', (owner) => device.info(owner));
+  handle('schedule-configure', (owner, settings) => device.configure(owner, settings));
+  handle('schedule-choose-folder', async (owner, intervalDays) => {
+    const previous = await device.info(owner);
+    const { canceled, filePaths } = await dialog.showOpenDialog(getWindow(), {
+      title: 'Папка для резервных копий Map Method', properties: ['openDirectory', 'createDirectory'],
+      ...(previous.folder ? { defaultPath: previous.folder } : {}),
+    });
+    if (canceled || !filePaths?.[0]) return previous;
+    return device.configure(owner, { enabled: true, intervalDays }, filePaths[0]);
+  });
+  handle('schedule-save', (owner, snapshot) => device.save(owner, snapshot));
+  handle('schedule-open-folder', async (owner) => {
+    const { folder } = await device.info(owner);
+    if (!folder || await shell.openPath(folder)) throw new Error('backup-folder-unavailable');
+  });
   handle('open-folder', async () => {
     const { path: folder } = await store.info();
     await fs.mkdir(folder, { recursive: true });

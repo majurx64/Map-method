@@ -11,10 +11,12 @@ import EditorSelection from './EditorSelection';
 import BackupArchive from './BackupArchive';
 import DesktopBackupPanel from './DesktopBackupPanel';
 import useDesktopBackups from './useDesktopBackups';
+import useDeviceBackups from './useDeviceBackups';
+import useCardBackgrounds from './useCardBackgrounds';
 import SaveHealth, { useSaveHealth } from './SaveHealth';
 import MeasurementFields from './MeasurementFields';
 import { archiveMaps, archiveMap, detachedBackupMap, listSaveConflicts, preserveSaveConflict, clearSaveConflict, readBackup } from './lib/mapBackups';
-import { normalizeMeasurement, quantityInCells, formatQuantity } from './lib/mapUnits';
+import { normalizeMeasurement, measurementInputError, quantityInCells, formatQuantity } from './lib/mapUnits';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from './lib/historyVersions';
@@ -25,7 +27,7 @@ import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
 import { acknowledgeMapSave, cacheAccountMaps, discardPendingMap, mergePendingMaps, pendingMapSaves, queueMapSave, readAccountCache, replacePendingMapSave } from "./lib/offlineMaps";
-import { compareMapOrder, liveCellChanges, mergeLiveMaps } from "./lib/liveMaps";
+import { compareMapOrder, nextMapOrder, liveCellChanges, mergeLiveMaps } from "./lib/liveMaps";
 import { stageSiteUpdate } from "./lib/siteUpdate";
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, imagePlacement, zoomScrollDelta, gridViewportAnchor, gridResizeShift, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from "./lib/grid";
 import { PLAN_MODES, adaptiveDailyTarget, addChangeSnapshot, addDailySnapshot, calculateStreaks, createBackup, createMapSnapshot, decodeSharedSnapshot, normalizeVersions, parseBackup, publicSnapshot, publicSharedSnapshot, shouldUpdateSharedMap, restoreSnapshot } from "./lib/productFeatures";
@@ -2431,6 +2433,14 @@ export default function App() {
     { icon: "♛", title: "Серия побед", text: "Завершить 5 карт", current: accountFinishedMaps, goal: 5 },
   ];
   const libraryUserKey = user?.id || "guest";
+  const cardBackgrounds = useCardBackgrounds(libraryUserKey);
+  const insertionOrderRef = useRef({ owner: libraryUserKey, order: 0 });
+  function reserveMapOrder(count = 1) {
+    const reserved = insertionOrderRef.current.owner === libraryUserKey ? insertionOrderRef.current.order : 0;
+    const order = nextMapOrder(liveStateRef.current.maps || maps, reserved) - Math.max(0, count - 1);
+    insertionOrderRef.current = { owner: libraryUserKey, order };
+    return order;
+  }
   const personalLibrary = useMemo(() => Array.isArray(privateLibrary[libraryUserKey]) ? privateLibrary[libraryUserKey] : [], [privateLibrary, libraryUserKey]);
   useLayoutEffect(() => { liveStateRef.current = { maps, personalLibrary, activeMapId, publicLibraryEditContext }; });
 
@@ -2960,7 +2970,7 @@ export default function App() {
       versions: [],
       shareId: "",
       privateLibraryItem: false,
-      order: maps.length,
+      order: reserveMapOrder(),
       name: item.name,
       progressCompleted: [],
       progressExtra: 0,
@@ -3954,7 +3964,7 @@ export default function App() {
     const live = liveStateRef.current;
     const editor = live.activeMapId && !live.publicLibraryEditContext ? buildCurrentMap() : null;
     const saved = mergePendingMaps([...live.maps, ...live.personalLibrary.map((map) => ({ ...map, privateLibraryItem: true }))], pending)
-      .filter((map) => !deletingIdsRef.current.has(map.id)).map((map) => map.id === editor?.id ? { ...editor, privateLibraryItem: map.privateLibraryItem } : map);
+      .filter((map) => !deletingIdsRef.current.has(map.id)).map((map) => ({ ...(map.id === editor?.id ? { ...editor, privateLibraryItem: map.privateLibraryItem } : map), showCardBackground: cardBackgrounds.visible(map) }));
     const conflicts = await listSaveConflicts(owner);
     for (const conflict of conflicts) {
       for (const [kind, id] of [['локальная версия', conflict.localId], ['серверная версия', conflict.serverId]]) {
@@ -3967,9 +3977,11 @@ export default function App() {
     const preferences = Object.fromEntries([LANGUAGE_KEY, CUSTOM_COLORS_KEY, CUSTOM_CATEGORIES_KEY, CATEGORY_ORDER_KEY, GAME_FILL_COUNT_KEY]
       .map((key) => [key, localStorage.getItem(key)]).filter(([, value]) => value !== null));
     return { owner, maps: saved, pending, preferences, profile: { displayName: user.user_metadata?.username || user.user_metadata?.display_name || user.email || owner } };
-  }, [user?.id, isMapInitialized, buildCurrentMap]);
+  }, [user?.id, isMapInitialized, buildCurrentMap, cardBackgrounds.visible]);
   const desktopBackups = useDesktopBackups({ owner: user?.id, ready: isMapInitialized && loadedOwnerRef.current === user?.id,
     capture: captureDesktopSnapshot, changes: [maps, personalLibrary, language, customColors, customCategories, categoryOrder, gameFillCount] });
+  const deviceBackups = useDeviceBackups({ owner: user?.id, ready: isMapInitialized && loadedOwnerRef.current === user?.id,
+    capture: captureDesktopSnapshot, changes: [maps, personalLibrary, language, customColors, customCategories, categoryOrder, gameFillCount, cardBackgrounds.values] });
 
   useEffect(() => {
     if (!user?.id || !isMapInitialized || loadedOwnerRef.current !== user.id) return;
@@ -6935,10 +6947,10 @@ export default function App() {
   }
 
   async function createMap() {
-    if (newMapInvalid || (newMapUnit.trim() && !normalizeMeasurement({ unit: newMapUnit, perCell: newMapPerCell }))) return;
+    if (newMapInvalid || measurementInputError(newMapUnit, newMapPerCell)) return;
     const map = normalizeMap({
       id: createMapId(),
-      order: Math.max(0, ...maps.map((map) => map.order || 0)) + 1,
+      order: reserveMapOrder(),
       name:
         newMapName.trim() ||
         "Новая карта",
@@ -7150,7 +7162,7 @@ export default function App() {
   }
 
   async function saveRename() {
-    if (renameUnit.trim() && !normalizeMeasurement({ unit: renameUnit, perCell: renamePerCell })) return;
+    if (measurementInputError(renameUnit, renamePerCell)) return;
     const name =
       renameValue.trim();
 
@@ -7384,15 +7396,8 @@ export default function App() {
   }
 
   function toggleCardBackground(source, visible) {
-    const latest = liveStateRef.current.maps.find((map) => map.id === source.id) || source;
-    const updated = normalizeMap({ ...latest, showCardBackground: visible });
-    if (activeMapRef.current?.id === source.id) activeMapRef.current = { ...activeMapRef.current, showCardBackground: visible };
-    setMaps((current) => current.map((map) => map.id === source.id ? { ...map, showCardBackground: visible } : map));
-    if (user && !updated.collaboration) {
-      void remoteSave(updated).then((error) => {
-        if (error) setMapActionError('Настройка фона сохранена на устройстве. Она отправится на сервер после восстановления связи.');
-      });
-    }
+    try { cardBackgrounds.set(source, visible); }
+    catch { setMapActionError('Фон изменён, но браузер не сохранил выбор. Проверьте разрешение на хранение данных сайта.'); }
   }
 
   function reorderCardsToIndex(id, targetIndex) {
@@ -7818,7 +7823,7 @@ export default function App() {
     const groupedMaps = Array.isArray(message.submission_data?.maps) ? message.submission_data.maps : null;
     const source = groupedMaps ? groupedMaps[submissionIndex] : message.submission_data;
     if (!source || source.approved_library_id) return;
-    const draft = normalizeMap({ ...source, id: createMapId(), progressCompleted: [] });
+    const draft = normalizeMap({ ...source, id: createMapId(), order: reserveMapOrder(), progressCompleted: [] });
     setMaps((current) => [...current, draft]);
     setSubmissionEditContext({
       messageId: message.id,
@@ -8430,9 +8435,11 @@ export default function App() {
     setBackupStatus("Импортируем…");
     try {
       if (file.size > 50 * 1024 * 1024) throw new Error("backup-too-large");
-      const imported = parseBackup(await file.text()).map((map, index) => normalizeMap({
+      const sources = parseBackup(await file.text());
+      const firstOrder = reserveMapOrder(sources.length);
+      const imported = sources.map((map, index) => normalizeMap({
         ...detachedBackupMap(map, createMapId()),
-        order: maps.length + index,
+        order: firstOrder + index,
       }));
       setMaps((current) => [...current, ...imported.filter((map) => !map.privateLibraryItem)]);
       setPrivateLibrary((current) => ({ ...current, [user.id]: [...(current[user.id] || []), ...imported.filter((map) => map.privateLibraryItem)] }));
@@ -8446,7 +8453,7 @@ export default function App() {
   async function createArchivedCopy(source, suffix = 'восстановленная копия') {
     const owner = user?.id;
     if (!owner || latestOwnerRef.current !== owner) throw new Error('Войдите в аккаунт для восстановления.');
-    const map = normalizeMap({ ...detachedBackupMap(source, createMapId()), name: `${source.name} — ${suffix}`, order: Math.max(0, ...maps.map((item) => item.order || 0)) + 1 });
+    const map = normalizeMap({ ...detachedBackupMap(source, createMapId()), name: `${source.name} — ${suffix}`, order: reserveMapOrder() });
     const pending = await queueMapSave(owner, map, null);
     try { await archiveMap(owner, map); }
     catch { setArchiveError('Восстановленная карта сохранена локально, но архив не обновился. Скачайте файл копии.'); }
@@ -8544,7 +8551,7 @@ export default function App() {
     featureBusyRef.current = true;
     try {
       const demo = normalizeMap({
-        id: createMapId(), order: 0, name: "Моя первая карта", description: "Небольшая карта, чтобы попробовать Map Method",
+        id: createMapId(), order: reserveMapOrder(), name: "Моя первая карта", description: "Небольшая карта, чтобы попробовать Map Method",
         category: "Личное", mapType: "free", gridMode: "manual", totalCells: "64", manualRows: "8", manualCols: "8",
         completed: [18,19,20,21,25,26,27,28,29,30,34,35,36,37,42,43,44,51], colors: [], createdAt: new Date().toISOString(), isGameMode: true,
       });
@@ -8667,13 +8674,13 @@ export default function App() {
       <header className={`header${isLibraryOwner ? ' has-developer-tools' : ''}`}>
         <div className="header-back-links">
           <button
-            className="back-link"
+            className="back-link editor-back-to-maps"
             onClick={() => {
               setMapCategoryFilter("Все");
               setScreen("maps");
             }}
           >
-            ← {t("myMaps")}
+            <span className="back-to-maps-arrow" aria-hidden="true">←</span><span>{t("myMaps")}</span>
           </button>
           {publicLibraryEditContext && (
             <button className="back-link library-return-link" onClick={() => finishPublicLibraryEditing(false)}>
@@ -9782,7 +9789,7 @@ export default function App() {
                   if (!/Windows NT/.test(navigator.userAgent)) { installApp(); return; }
                   setClosingModal("");
                   setWindowsInstallHelp(true);
-                  window.location.assign("https://github.com/majurx64/Map-method/releases/download/v1.0.4/Map-Method-Setup.exe");
+                  window.location.assign("https://github.com/majurx64/Map-method/releases/download/v1.0.5/Map-Method-Setup.exe");
                 }} disabled={appStandalone}>{appStandalone ? "Приложение уже открыто" : /Windows NT/.test(navigator.userAgent) ? "Скачать для Windows" : installPrompt ? "Установить Map Method" : "Открыть приложение"}</button>
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
@@ -9799,8 +9806,8 @@ export default function App() {
               </div>
             </section>
 
-            <BackupArchive owner={user.id} revision={archiveRevision} archiveError={archiveError} onRestore={restoreArchivedMap} onResolve={resolveArchivedConflict} onConflicts={updateConflicts} />
-            <DesktopBackupPanel key={user.id} owner={user.id} health={desktopBackups.health} onRestore={restoreDesktopCopies} />
+            <BackupArchive owner={user.id} revision={archiveRevision} archiveError={archiveError} onRestore={restoreArchivedMap} onResolve={resolveArchivedConflict} onConflicts={updateConflicts} conflictsOnly />
+            <DesktopBackupPanel key={user.id} owner={user.id} health={desktopBackups.health} onRestore={restoreDesktopCopies} device={deviceBackups} capture={captureDesktopSnapshot} />
 
             <section className="account-achievements">
               <div className="account-section-title">
@@ -10306,7 +10313,7 @@ export default function App() {
                       >
                       {deletingIds.includes(map.id) && <div className="card-debris" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ "--x": (i % 6) * 20 + "%", "--y": Math.floor(i / 6) * 30 + "%", "--dx": ((i * 37) % 180 - 90) + "px", "--dy": (40 + i * 7) + "px", "--turn": (i * 47) + "deg" }} />)}</div>}
                       <div className="map-card-preview">
-                        <MapCardGrid map={map} dimensions={d} showTemplate={map.showCardBackground !== false} templateOpacity={0.16} animateChanges />
+                        <MapCardGrid map={map} dimensions={d} showTemplate={cardBackgrounds.visible(map)} templateOpacity={0.16} animateChanges />
                       </div>
 
                       <div className="map-card-body">
@@ -10382,7 +10389,8 @@ export default function App() {
                             {map.measurement ? `${formatQuantity(done * map.measurement.perCell)} / ${formatQuantity(playableTotal * map.measurement.perCell)} ${map.measurement.unit}` : `${done} / ${playableTotal} ${t('cells')}`}
                           </span>
                           <label className="map-card-background-toggle" title="Показывать фоновый рисунок в карточке" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-                            <input type="checkbox" checked={map.showCardBackground !== false} onChange={(event) => toggleCardBackground(map, event.target.checked)} />
+                            <input type="checkbox" checked={cardBackgrounds.visible(map)} onChange={(event) => toggleCardBackground(map, event.target.checked)} />
+                            <span className="map-card-background-switch" aria-hidden="true"><i /></span>
                             <span>Фон рисунка</span>
                           </label>
                           </div>
@@ -11570,7 +11578,7 @@ export default function App() {
             <button
               type="submit"
               className="modal-create-btn"
-              disabled={newMapInvalid || Boolean(newMapUnit.trim() && !normalizeMeasurement({ unit: newMapUnit, perCell: newMapPerCell }))}
+              disabled={newMapInvalid || Boolean(measurementInputError(newMapUnit, newMapPerCell))}
             >
               {t(
                 "createMap"

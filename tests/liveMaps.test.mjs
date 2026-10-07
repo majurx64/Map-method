@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareMapOrder, liveCellChanges, mergeLiveMaps } from '../src/lib/liveMaps.js';
+import { compareMapOrder, nextMapOrder, liveCellChanges, mergeLiveMaps } from '../src/lib/liveMaps.js';
 import { collaborativeVersions } from '../src/lib/collaborativeHistory.js';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from '../src/lib/historyVersions.js';
 import { rebasePersonalMap } from '../src/lib/personalMapMerge.js';
@@ -64,6 +64,14 @@ test('equal card positions remain stable through changing server and save-receip
   assert.deepEqual(ids([{ ...first, order: 2 }, { ...second, order: 1 }]), ['test', 'pullups']);
   assert.deepEqual(ids([{ id: 'b' }, { id: 'a' }]), ['a', 'b']);
   assert.deepEqual(ids([{ id: 'a' }, { id: 'b' }]), ['a', 'b']);
+});
+
+test('new cards precede existing negative positions and reservations made before state refresh', () => {
+  const maps = [{ id: 'old', order: -4 }, { id: 'other', order: 2 }];
+  const first = nextMapOrder(maps), second = nextMapOrder(maps, first);
+  assert.equal(first, -5); assert.equal(second, -6);
+  assert.deepEqual([...maps, { id: 'new', order: second }].sort(compareMapOrder).map((map) => map.id), ['new', 'old', 'other']);
+  assert.equal(nextMapOrder([]), -1);
 });
 
 test('shared updates preserve participant card order and background choice without blocking new cells or personal cloud settings', () => {

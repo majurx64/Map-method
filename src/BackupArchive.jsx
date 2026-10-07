@@ -26,7 +26,7 @@ function ConflictChoice({ conflict, owner, onResolve, onChanged }) {
   };
   return <article className="backup-conflict">
     <strong>Выберите версию: {conflict.name}</strong>
-    <p>Автоматическое объединение остановлено, чтобы сохранить ваши правки. Обе копии остаются в архиве.</p>
+    <p>Эти версии нельзя безопасно объединить автоматически. Обе сохранены на этом устройстве. Можно оставить обе отдельными картами или выбрать нужную.</p>
     <div className="backup-comparison">{['local', 'server'].map((key) => {
       const map = versions?.[key];
       const stats = map && getMapStats(map);
@@ -41,7 +41,7 @@ function ConflictChoice({ conflict, owner, onResolve, onChanged }) {
   </article>;
 }
 
-export default function BackupArchive({ owner, revision, archiveError, onRestore, onResolve, onConflicts }) {
+export default function BackupArchive({ owner, revision, archiveError, onRestore, onResolve, onConflicts, conflictsOnly = false }) {
   const [entries, setEntries] = useState([]);
   const [conflicts, setConflicts] = useState([]);
   const [mapId, setMapId] = useState('');
@@ -50,19 +50,19 @@ export default function BackupArchive({ owner, revision, archiveError, onRestore
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
   const reload = useCallback(async () => {
-    const [backups, savedConflicts] = await Promise.all([listBackups(owner), listSaveConflicts(owner)]);
+    const [backups, savedConflicts] = await Promise.all([conflictsOnly ? [] : listBackups(owner), listSaveConflicts(owner)]);
     setEntries(backups); setConflicts(savedConflicts); onConflicts(savedConflicts);
-  }, [owner, onConflicts]);
+  }, [owner, onConflicts, conflictsOnly]);
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    Promise.all([listBackups(owner), listSaveConflicts(owner)]).then(([backups, savedConflicts]) => {
+    Promise.all([conflictsOnly ? [] : listBackups(owner), listSaveConflicts(owner)]).then(([backups, savedConflicts]) => {
       if (!alive) return;
       setEntries(backups); setConflicts(savedConflicts); onConflicts(savedConflicts); setNotice('');
     }).catch(() => { if (alive) setNotice('Архив недоступен. Проверьте свободное место и разрешение на хранение данных сайта.'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [owner, revision, onConflicts]);
+  }, [owner, revision, onConflicts, conflictsOnly]);
   const maps = [...new Map(entries.map((entry) => [entry.mapId, entry.name])).entries()];
   const selectedId = maps.some(([id]) => id === mapId) ? mapId : maps[0]?.[0] || '';
   const days = [...new Set(entries.filter((entry) => entry.mapId === selectedId).map((entry) => entry.day))].sort().reverse();
@@ -87,6 +87,11 @@ export default function BackupArchive({ owner, revision, archiveError, onRestore
     } catch (error) { setNotice(error.message || 'Не удалось прочитать копию.'); }
     finally { setBusy(''); }
   }
+  if (conflictsOnly) return conflicts.length || archiveError || notice ? <section className="backup-archive" id="backup-conflicts">
+    {conflicts.length > 0 && <h2>Выберите сохранённую версию</h2>}
+    {conflicts.map((conflict) => <ConflictChoice key={`${conflict.key}:${conflict.revision}`} conflict={conflict} owner={owner} onResolve={onResolve} onChanged={reload} />)}
+    {(archiveError || notice) && <p className="feature-status error" role="alert">{archiveError || notice}</p>}
+  </section> : null;
   return <section className="backup-archive" id="backup-archive">
     <div><span className="account-eyebrow">АВТОМАТИЧЕСКИЕ КОПИИ</span><h2>Архив за 30 дней</h2><p>Копии создаются при работе с сайтом и хранятся отдельно от синхронизации, в этом браузере или приложении. Для переноса и защиты от очистки устройства скачайте файл резервной копии.</p></div>
     {archiveError && <p className="feature-status error" role="alert">{archiveError}</p>}

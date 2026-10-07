@@ -1,56 +1,95 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { BACKUP_INTERVALS, portableBackup } from './lib/deviceBackupSchedule';
+import { parseBackup } from './lib/productFeatures';
 
 const dateTime = (at) => new Date(at).toLocaleString('ru-RU');
-export default function DesktopBackupPanel({ owner, health, onRestore }) {
+const installer = 'https://github.com/majurx64/Map-method/releases/download/v1.0.5/Map-Method-Setup.exe';
+export default function DesktopBackupPanel({ owner, health, onRestore, device, capture }) {
   const api = window.mapMethodDesktop?.backups;
+  const { settings, supported, native, configure, allowFolder } = device;
   const [entries, setEntries] = useState([]);
-  const [folder, setFolder] = useState('');
+  const [archiveFolder, setArchiveFolder] = useState('');
   const [id, setId] = useState('');
   const [mapId, setMapId] = useState('');
   const [restorePreferences, setRestorePreferences] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const input = useRef(null);
   useEffect(() => {
-    if (!api) return;
+    if (!api || !archiveOpen) return;
     let alive = true;
     Promise.allSettled([api.list(owner), api.info()]).then(([copies, info]) => {
       if (!alive) return;
-      if (info.status === 'fulfilled') setFolder(info.value.path);
+      if (info.status === 'fulfilled') setArchiveFolder(info.value.path);
       if (copies.status === 'fulfilled') setEntries(copies.value);
-      else setNotice('Не удалось прочитать копии на диске. Проверьте доступ к папке приложения и профиль Windows.');
+      else setNotice('Не удалось прочитать защищённые копии. Проверьте профиль Windows и папку приложения.');
     });
     return () => { alive = false; };
-  }, [api, owner, health.revision]);
-  if (!window.mapMethodDesktop?.isDesktop) return null;
-  if (!api) return <section className="backup-archive"><h2>Копии на диске компьютера</h2><p>Для автоматического архива на диске обновите Windows-приложение до версии 1.0.4 или новее. Копии в браузере продолжают работать.</p><a href="https://github.com/majurx64/Map-method/releases/download/v1.0.4/Map-Method-Setup.exe">Скачать обновление</a></section>;
+  }, [api, owner, archiveOpen, health.revision]);
   const selected = entries.find((entry) => entry.id === id) || entries[0];
   const selectedMap = selected?.maps.some((map) => map.id === mapId) ? mapId : '';
-  async function act(operation) {
-    if (busy) return;
+  const locked = busy || device.busy;
+  async function act(operation, file) {
+    if (locked) return;
     setBusy(true); setNotice('');
     try {
-      if (operation === 'folder') await api.openFolder();
-      else if (!selected) throw new Error('Сначала дождитесь первой копии.');
+      if (operation === 'download') {
+        const snapshot = await capture(false);
+        if (!snapshot || snapshot.owner !== owner) throw new Error('Дождитесь загрузки карт и завершения рисования.');
+        const text = portableBackup(snapshot);
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+        link.download = `map-method-backup-${new Date().toISOString().slice(0, 10)}.json`; link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        setNotice('Файл передан браузеру для сохранения. Проверьте папку «Загрузки» или выбранное место.');
+      } else if (operation === 'import') {
+        if (file.size > 50 * 1024 * 1024) throw new Error('Файл больше 50 МБ. Выберите копию поменьше.');
+        const text = await file.text(), maps = parseBackup(text);
+        await onRestore(maps, restorePreferences ? JSON.parse(text).profile?.preferences : null);
+        setNotice(`Восстановлено отдельными копиями: ${maps.length}. Дождитесь подтверждения синхронизации.`);
+      } else if (operation === 'device-folder') await api.openBackupFolder(owner);
+      else if (operation === 'archive-folder') await api.openFolder();
+      else if (!selected) throw new Error('Дождитесь первой защищённой копии.');
       else if (operation === 'export') {
         const result = await api.export(owner, selected.id, selectedMap);
-        if (!result.canceled) setNotice(`Сохранён файл ${result.name}. Он содержит данные в открытом виде: храните его в надёжном месте.`);
+        if (!result.canceled) setNotice(`Сохранён файл ${result.name}.`);
       } else {
         const snapshot = await api.read(owner, selected.id);
         const restored = snapshot.maps.filter((map) => !selectedMap || map.id === selectedMap);
         await onRestore(restored, restorePreferences ? snapshot.preferences : null);
-        setNotice(`Восстановлено отдельными копиями: ${restored.length}. Их синхронизацию можно проверить по индикатору сохранения.`);
+        setNotice(`Восстановлено отдельными копиями: ${restored.length}. Дождитесь подтверждения синхронизации.`);
       }
-    } catch (error) { setNotice(operation === 'restore' ? error.message || 'Копия не прочитана. Попробуйте другую дату.' : 'Не удалось выполнить действие. Проверьте папку копий и свободное место. Для большого архива выберите одну карту.'); }
-    finally { setBusy(false); }
+    } catch (error) {
+      setNotice(error.message === 'export-too-large' ? 'Набор больше 50 МБ или 1000 карт. Скачайте карты частями.'
+        : operation === 'import' ? 'Не удалось восстановить весь файл. Проверьте формат. Уже добавленные копии сохранены; при повторе они могут продублироваться.'
+          : ['download', 'restore'].includes(operation) ? error.message || 'Копия недоступна.' : 'Не удалось открыть или сохранить файл. Проверьте папку и свободное место.');
+    } finally { setBusy(false); }
   }
-  return <section className="backup-archive desktop-backups">
-    <div><span className="account-eyebrow">КОПИИ НА КОМПЬЮТЕРЕ</span><h2>Архив на диске за 90 дней</h2><p>Автоматически сохраняем карты, историю, личные эскизы и правки, ещё не отправленные на сервер. Очистка кэша приложения не удаляет этот архив.</p></div>
-    <p>{entries[0] ? `Последняя копия: ${dateTime(entries[0].at)}. Карт и эскизов: ${entries[0].maps.length}.` : 'Первая копия появится после загрузки ваших карт.'}</p>
-    {folder && <p className="desktop-backup-path">Папка: {folder}</p>}
-    <p className="backup-retention-note">Сохраняем начало дня, последнее состояние каждого часа и 24 последних состояния за день. Самая новая копия остаётся даже после долгого перерыва. Зашифрованный архив доступен в этом профиле Windows. Для переноса или поломки компьютера сохраните JSON-файл на другом носителе.</p>
-    {selected && <div className="backup-filters"><label>Состояние<select value={selected.id} onChange={(event) => { setId(event.target.value); setMapId(''); }} disabled={busy}>{entries.map((entry) => <option key={entry.id} value={entry.id}>{dateTime(entry.at)} · {entry.maps.length} карт · не отправлено: {entry.pending}</option>)}</select></label><label>Восстановить или скачать<select value={selectedMap} onChange={(event) => setMapId(event.target.value)} disabled={busy}><option value="">Все карты и эскизы</option>{selected.maps.map((map) => <option key={map.id} value={map.id}>{map.name}</option>)}</select></label></div>}
-    {selected && <label className="desktop-backup-settings"><input type="checkbox" checked={restorePreferences} onChange={(event) => setRestorePreferences(event.target.checked)} disabled={busy} />Также восстановить язык, свои цвета, категории и последнее число заполнения на этом устройстве</label>}
-    <div className="backup-conflict-actions"><button type="button" disabled={busy} onClick={() => act('folder')}>Открыть папку</button><button type="button" disabled={busy || !selected} onClick={() => act('export')}>Сохранить переносимый файл</button><button type="button" className="feature-primary" disabled={busy || !selected} onClick={() => act('restore')}>{busy ? 'Подождите…' : 'Восстановить копиями'}</button></div>
-    {(health.error || notice) && <p className={`feature-status${health.error ? ' error' : ''}`} role={health.error ? 'alert' : 'status'}>{health.error || notice}</p>}
+  return <section className="backup-archive device-backups" id="backup-archive">
+    <div><span className="account-eyebrow">РЕЗЕРВНЫЕ КОПИИ</span><h2>Копии на это устройство</h2><p>Отдельный файл поможет вернуть карты после ошибки, очистки данных сайта или потери доступа к аккаунту. Карты по-прежнему синхронизируются через сервер; резервные файлы место на Supabase не занимают.</p></div>
+    {supported ? <div className="device-backup-options">
+      <label className="animated-setting-toggle device-backup-toggle"><input type="checkbox" checked={settings.enabled} disabled={locked || settings.loading} onChange={(event) => configure({ enabled: event.target.checked, intervalDays: settings.intervalDays }, event.target.checked && !settings.folder)} /><span className="setting-switch" aria-hidden="true"><i /></span><span><strong>Сохранять файлы автоматически</strong><small>Только на этом устройстве и для этого аккаунта</small></span></label>
+      <label className="device-backup-frequency">Как часто<select value={settings.intervalDays} disabled={locked || settings.loading} onChange={(event) => configure({ enabled: settings.enabled, intervalDays: Number(event.target.value) })}>{BACKUP_INTERVALS.map((days) => <option key={days} value={days}>{days === 1 ? 'Каждый день' : days === 3 ? 'Раз в 3 дня' : `Раз в ${days} дней`}</option>)}</select></label>
+      <div className="device-backup-destination"><p className="desktop-backup-path">{settings.folder ? `Папка: ${settings.folder}` : 'Выберите папку для файлов резервных копий.'}</p><div className="backup-conflict-actions"><button type="button" disabled={locked || settings.loading} onClick={() => configure({ enabled: true, intervalDays: settings.intervalDays }, true)}>{settings.folder ? 'Изменить папку' : 'Выбрать папку и включить'}</button>{native && settings.folder && <button type="button" disabled={locked} onClick={() => act('device-folder')}>Открыть папку</button>}{settings.needsPermission && <button type="button" className="feature-primary" disabled={locked} onClick={allowFolder}>Разрешить запись</button>}</div></div>
+      <p className="device-backup-last" role="status">{settings.lastAt ? `Последний автоматический файл: ${dateTime(settings.lastAt)}.` : settings.enabled ? 'Первый файл появится после загрузки карт и завершения текущего действия.' : 'Автоматическое сохранение файлов выключено.'}</p>
+    </div> : <p className="device-backup-availability">{window.mapMethodDesktop?.isDesktop ? 'Для выбора папки и частоты обновите Windows-приложение до 1.0.5.' : 'Автоматическая запись в выбранную папку доступна в Chrome/Edge на компьютере и в Windows-приложении 1.0.5. В этом браузере можно скачать копию вручную.'}{/Windows NT/.test(navigator.userAgent) && <> <a href={installer}>Скачать приложение для Windows</a></>}</p>}
+    <p className="backup-retention-note">Файл создаётся при открытом сайте или приложении. Если срок пропущен, копия появится при следующем открытии. При отсутствии доступа к папке показываем ошибку. Выключение копирования не удаляет уже сохранённые файлы.</p>
+    <div className="backup-conflict-actions"><button type="button" className="feature-primary" disabled={locked} onClick={() => act('download')}>Скачать копию сейчас</button><button type="button" disabled={locked} onClick={() => input.current?.click()}>Восстановить из файла</button></div>
+    <input ref={input} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void act('import', file); }} />
+    <label className="desktop-backup-settings"><input type="checkbox" checked={restorePreferences} onChange={(event) => setRestorePreferences(event.target.checked)} disabled={locked} />При восстановлении также вернуть язык, цвета, категории и последнее число заполнения</label>
+    <details className="device-backup-help"><summary>Что сохраняется, куда и как восстановить?</summary><div>
+      <p>Файл JSON содержит загруженные карты, их рисунки, прогресс, сохранённую историю, личные эскизы, местные настройки и текущие правки, включая ещё не отправленные на сервер. Пароли и токены входа не копируются.</p>
+      <p>Автоматические файлы находятся в выбранной вами папке. В браузере показываем её название; полный путь можно увидеть в окне выбора папки. Ручное скачивание обычно попадает в «Загрузки», либо браузер предлагает выбрать место.</p>
+      <p>Для восстановления войдите в аккаунт, нажмите «Восстановить из файла» и выберите нужный JSON. Появятся отдельные карты; действующие карты сохранятся. После подтверждения синхронизации новые копии появятся на телефоне и ПК. Совместная карта восстановится как личная, без старых приглашений.</p>
+      <p>Файлы переносимы между компьютерами и содержат данные в открытом виде. Храните их приватно; для защиты от поломки диска выбирайте внешний носитель или папку своего облака. Старые файлы автоматически не удаляем — чистите ненужные даты самостоятельно.</p>
+      <p>Настройки действуют отдельно для браузера, приложения и каждого устройства. После очистки данных браузера может понадобиться снова выбрать папку или разрешить запись.</p>
+    </div></details>
+    {api && <details className="device-backup-help" onToggle={(event) => setArchiveOpen(event.currentTarget.open)}><summary>Восстановить из защищённых копий приложения</summary><div>
+      <p>Приложение дополнительно хранит сжатые зашифрованные состояния за 90 дней. Это страховка от ошибок и очистки кэша. Архив привязан к этому профилю Windows; для другого компьютера используйте JSON-файл.</p>
+      {archiveFolder && <p className="desktop-backup-path">Папка: {archiveFolder}</p>}
+      {selected ? <><div className="backup-filters"><label>Состояние<select value={selected.id} onChange={(event) => { setId(event.target.value); setMapId(''); }} disabled={locked}>{entries.map((entry) => <option key={entry.id} value={entry.id}>{dateTime(entry.at)} · {entry.maps.length} карт</option>)}</select></label><label>Карты<select value={selectedMap} onChange={(event) => setMapId(event.target.value)} disabled={locked}><option value="">Все карты и эскизы</option>{selected.maps.map((map) => <option key={map.id} value={map.id}>{map.name}</option>)}</select></label></div><div className="backup-conflict-actions"><button type="button" disabled={locked} onClick={() => act('archive-folder')}>Открыть папку архива</button><button type="button" disabled={locked} onClick={() => act('export')}>Сохранить JSON</button><button type="button" className="feature-primary" disabled={locked} onClick={() => act('restore')}>Восстановить копиями</button></div></> : <p>Первая защищённая копия появится после загрузки карт.</p>}
+    </div></details>}
+    {(settings.error || health.error || notice) && <p className={`feature-status${settings.error || health.error ? ' error' : ''}`} role={settings.error || health.error ? 'alert' : 'status'}>{settings.error || health.error || notice}</p>}
   </section>;
 }

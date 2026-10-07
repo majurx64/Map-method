@@ -3512,10 +3512,15 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .maps-page-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; }
 .map-card-footer-summary { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; width:100%; }
 .map-card-footer-summary > span { color:#737970; font-size:14px; line-height:1.4; }
-.map-card-background-toggle { display:inline-flex; align-items:center; gap:6px; min-height:30px; color:#687366; font-size:12px; cursor:pointer; user-select:none; transition:color 180ms ease; }
-.map-card-background-toggle:hover { color:#32624f; }
-.map-card-background-toggle input { width:15px; height:15px; margin:0; accent-color:#32624f; cursor:pointer; }
-.map-card-background-toggle input:focus-visible { outline:2px solid #32624f; outline-offset:3px; }
+.map-card-background-toggle { position:relative; display:inline-flex; align-items:center; gap:7px; min-height:34px; padding:2px 8px; border:1px solid #dde3d9; border-radius:18px; background:#f5f7f1; color:#53644f; font-size:12px; cursor:pointer; user-select:none; transition:color 180ms ease,background 180ms ease,border-color 180ms ease,transform 180ms ease; }
+.map-card-background-toggle:hover { color:#32624f; background:#edf3e9; border-color:#bacdb5; }
+.map-card-background-toggle:active { transform:scale(.97); }
+.map-card-background-toggle input,.animated-setting-toggle > input { position:absolute; width:1px; height:1px; opacity:0; }
+.map-card-background-switch,.setting-switch { display:block; position:relative; flex:none; width:30px; height:18px; border-radius:20px; background:#ccd2c7; box-shadow:inset 0 1px 2px #24351e12; transition:background 220ms ease; }
+.map-card-background-switch i,.setting-switch i { position:absolute; top:3px; left:3px; width:12px; height:12px; border-radius:50%; background:#fffefa; box-shadow:0 1px 3px #20352225; transition:transform 240ms cubic-bezier(.2,.75,.3,1); }
+.map-card-background-toggle input:checked + .map-card-background-switch,.animated-setting-toggle input:checked + .setting-switch { background:#32624f; }
+.map-card-background-toggle input:checked + .map-card-background-switch i,.animated-setting-toggle input:checked + .setting-switch i { transform:translateX(12px); }
+.map-card-background-toggle input:focus-visible + span,.animated-setting-toggle input:focus-visible + span { outline:2px solid #32624f; outline-offset:3px; }
 .maps-view-switch { display:flex; align-items:center; gap:4px; padding:4px; border:1px solid #d8d1c5; border-radius:11px; background:#fffdf9; box-shadow:0 5px 14px rgba(51,46,38,.04); }
 .maps-view-switch > span { padding:0 6px; color:#77776f; font-size:12px; font-weight:700; white-space:nowrap; }
 .maps-view-switch button { width:32px; height:32px; padding:0; border:0; border-radius:8px; background:transparent; color:#5f665e; cursor:pointer; font:inherit; font-size:13px; font-weight:800; transition:color 180ms ease,background-color 180ms ease,transform 180ms cubic-bezier(.2,.8,.2,1); }
@@ -3601,6 +3606,35 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .measurement-fields legend { padding:0 6px; color:#32624f; font-size:13px; font-weight:750; }
 .measurement-fields .modal-field { margin-bottom:8px; }.measurement-fields .modal-field input { margin-top:7px; box-sizing:border-box; width:100%; }
 .measurement-fields small,.game-fill-units { display:block; color:#66775f; font-size:11px; line-height:1.6; }
+.measurement-fields .measurement-intro { margin:0 0 12px; color:#63745b; font-size:12px; line-height:1.55; }
+.measurement-example { display:grid; gap:6px; padding:10px 12px; border-radius:9px; background:#eaf1e4; }
+.measurement-example strong { color:#32624f; font-size:13px; }
+.measurement-fields .measurement-error { color:#a63c35; }
+.editor-back-to-maps { display:inline-flex; align-items:center; gap:8px; min-height:38px; padding:7px 13px; border:1px solid #d8dfd2; border-radius:11px; background:#f5f7ef; color:#32624f; font-weight:650; transition:background 200ms ease,border-color 200ms ease,box-shadow 200ms ease,transform 200ms ease; }
+.editor-back-to-maps:hover { background:#e9f0e3; border-color:#bacdb5; box-shadow:0 3px 10px #2748310c; }
+.editor-back-to-maps:active { transform:scale(.97); }
+.editor-back-to-maps:focus-visible { outline:2px solid #32624f; outline-offset:3px; }
+.back-to-maps-arrow { display:inline-block; font-size:18px; line-height:1; transition:transform 220ms ease; }
+.editor-back-to-maps:hover .back-to-maps-arrow { transform:translateX(-3px); }
+.device-backup-options { display:grid; grid-template-columns:minmax(0,1fr) 190px; gap:16px; padding:18px; margin:18px 0 12px; border:1px solid #dce4d5; border-radius:14px; background:#f2f6ed; }
+.animated-setting-toggle { position:relative; display:flex; align-items:center; gap:12px; cursor:pointer; color:#32624f; }
+.animated-setting-toggle > span:last-child { display:grid; gap:4px; }
+.animated-setting-toggle strong { font-size:14px; }.animated-setting-toggle small { color:#6e7c65; font-size:11px; }
+.animated-setting-toggle:has(input:disabled) { opacity:.65; cursor:wait; }
+.device-backup-frequency { display:grid; gap:7px; color:#52664a; font-size:12px; font-weight:700; }
+.device-backup-frequency select { width:100%; min-height:40px; padding:8px 10px; border:1px solid #cbd7c5; border-radius:9px; background:#fffefb; color:#293b2d; font:inherit; }
+.device-backup-destination,.device-backup-last { grid-column:1/-1; }
+.device-backup-options .device-backup-last { margin:0; font-size:12px; color:#32624f; }
+.device-backup-destination p { margin:0 0 10px; }
+.device-backups > .desktop-backup-settings { margin:14px 0; }
+.device-backup-help { padding:14px 16px; margin-top:12px; border:1px solid #e0dfd5; border-radius:12px; background:#fafaf4; }
+.device-backup-help summary { cursor:pointer; color:#32624f; font-size:13px; font-weight:700; line-height:1.5; }
+.device-backup-help > div { padding-top:8px; }
+.device-backup-help[open] > div { animation:device-help-open 220ms ease both; }
+.device-backup-help .backup-conflict-actions { margin-top:12px; }
+@keyframes device-help-open { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+@media(max-width:600px) { .device-backup-options { grid-template-columns:1fr; padding:14px; }.device-backup-help { padding:12px; }.device-backups > .backup-conflict-actions > button { flex:1; }.device-backup-toggle { min-height:42px; } }
+@media(prefers-reduced-motion:reduce) { .map-card-background-toggle,.map-card-background-switch,.map-card-background-switch i,.setting-switch,.setting-switch i,.editor-back-to-maps,.back-to-maps-arrow { transition:none; }.device-backup-help[open] > div { animation:none; } }
 .game-fill-apply:disabled { opacity:.5; cursor:not-allowed; }
 @keyframes save-health-pulse { 50% { opacity:.35; transform:scale(.75); } }
 @keyframes backup-conflict-in { from { opacity:0; transform:translateY(6px); } }

@@ -8,6 +8,9 @@ import { createHash } from 'node:crypto';
 const require = createRequire(import.meta.url);
 const { createBackupStore, keptSnapshots, trustedBackupSender } = require('../desktop/backups.cjs');
 const { registerBackupIPC } = require('../desktop/backup-ipc.cjs');
+const { createDeviceBackups } = require('../desktop/device-backups.cjs');
+import { backupIsDue, portableBackup } from '../src/lib/deviceBackupSchedule.js';
+import { parseBackup } from '../src/lib/productFeatures.js';
 const config = require('../desktop/electron-builder.cjs');
 const safeStorage = { isEncryptionAvailable: () => true, encryptString: (text) => Buffer.from(`test-key:${text}`),
   decryptString: (bytes) => { const value = bytes.toString(); if (!value.startsWith('test-key:')) throw new Error('wrong-profile'); return value.slice(9); } };
@@ -18,7 +21,7 @@ async function fixture(t) {
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   let at = Date.UTC(2026, 9, 6, 12);
   const open = () => createBackupStore({ root, safeStorage, now: () => at });
-  return { root, open, advance: (ms) => { at += ms; } };
+  return { root, open, now: () => at, advance: (ms) => { at += ms; } };
 }
 const map = () => ({ id: 'map', name: 'Подтягивания', mapType: 'free', totalCells: '500', completed: [0, 1],
   image: `data:image/png;base64,${'a'.repeat(6000)}`, colors: ['#000', '#000'], versions: [{ id: 'version', snapshot: { completed: [0] } }] });
@@ -120,4 +123,61 @@ test('native backup IPC rejects foreign pages, subframes and arbitrary filesyste
   await assert.rejects(handlers.get('mm-backup:save')(event, 'account', payload('account')), /untrusted-backup-request/);
   assert.equal(handlers.has('mm-backup:write-file'), false);
   assert.ok(config.files.includes('src/lib/mapBackups.js')); // codec ships inside the installer
+  assert.ok(config.files.includes('src/lib/deviceBackupSchedule.js'));
+  await assert.rejects(handlers.get('mm-backup:schedule-save')(event, 'account', payload('account')), /untrusted-backup-request/);
+});
+
+test('scheduled device files are opt-in, portable, serial and survive application restart', async (t) => {
+  const f = await fixture(t), folder = path.join(f.root, 'selected-folder');
+  await fs.mkdir(folder);
+  const open = () => createDeviceBackups({ getRoot: async () => f.root, now: f.now });
+  const writer = open(), snapshot = payload();
+  await writer.save(snapshot.owner, snapshot);
+  assert.deepEqual(await fs.readdir(folder), []);
+  await writer.configure(snapshot.owner, { enabled: true, intervalDays: 3 }, folder);
+  // Configuring a folder before the first encrypted copy must not look like a lost key.
+  await f.open().save(snapshot.owner, snapshot);
+  await Promise.all([writer.save(snapshot.owner, snapshot), writer.save(snapshot.owner, snapshot)]);
+  const names = await fs.readdir(folder);
+  assert.equal(names.length, 1);
+  const text = await fs.readFile(path.join(folder, names[0]), 'utf8');
+  assert.deepEqual(parseBackup(text), snapshot.maps);
+  assert.deepEqual(JSON.parse(text).profile.preferences, snapshot.preferences);
+  f.advance(2 * 86400000);
+  await open().save(snapshot.owner, snapshot);
+  assert.equal((await fs.readdir(folder)).length, 1);
+  f.advance(86400000);
+  await open().save(snapshot.owner, snapshot);
+  assert.equal((await fs.readdir(folder)).length, 2);
+  await open().configure(snapshot.owner, { enabled: false, intervalDays: 3 });
+  f.advance(10 * 86400000); await open().save(snapshot.owner, snapshot);
+  assert.equal((await fs.readdir(folder)).length, 2);
+});
+
+test('failed scheduled writes preserve the last receipt and cannot redirect writes from renderer settings', async (t) => {
+  const f = await fixture(t), folder = path.join(f.root, 'device-files'), snapshot = payload();
+  await fs.mkdir(folder);
+  const writer = createDeviceBackups({ getRoot: async () => f.root, now: f.now });
+  await assert.rejects(writer.configure('../outside', { enabled: false, intervalDays: 1 }), /invalid-backup-owner/);
+  await assert.rejects(writer.configure(snapshot.owner, { enabled: true, intervalDays: 2 }, folder), /invalid-backup-settings/);
+  await assert.rejects(writer.configure(snapshot.owner, { enabled: true, intervalDays: 1, folder }), /backup-folder-required/);
+  await writer.configure(snapshot.owner, { enabled: true, intervalDays: 1 }, folder);
+  await writer.save(snapshot.owner, snapshot);
+  const lastAt = (await writer.info(snapshot.owner)).lastAt;
+  await fs.rename(folder, path.join(f.root, 'unplugged-files'));
+  f.advance(86400000);
+  await assert.rejects(writer.save(snapshot.owner, snapshot), /ENOENT/);
+  assert.equal((await writer.info(snapshot.owner)).lastAt, lastAt);
+  assert.equal((await fs.readdir(path.join(f.root, 'unplugged-files'))).length, 1);
+});
+
+test('backup intervals use calendar days, catch up after inactivity and validate restorable payloads', () => {
+  const late = new Date(2026, 9, 7, 23, 58).getTime(), morning = new Date(2026, 9, 8, 8).getTime();
+  assert.equal(backupIsDue({ enabled: true, intervalDays: 1, lastAt: late }, morning), true);
+  assert.equal(backupIsDue({ enabled: true, intervalDays: 3, lastAt: late }, morning), false);
+  assert.equal(backupIsDue({ enabled: true, intervalDays: 7, lastAt: late }, morning + 30 * 86400000), true);
+  assert.equal(backupIsDue({ enabled: false, intervalDays: 1, lastAt: 0 }, morning), false);
+  assert.throws(() => portableBackup({ maps: [{ ...map(), totalCells: 10001 }] }), /invalid-backup-map/);
+  const result = JSON.parse(portableBackup({ ...payload(), token: 'excluded', password: 'excluded' }));
+  assert.equal(result.token, undefined); assert.equal(result.password, undefined);
 });

@@ -1,5 +1,9 @@
 // Server responses and save receipts can reorder their arrays. Equal display
 // positions must always use immutable identity rather than response order.
+export function nextMapOrder(maps, reserved = 0) {
+  return Math.min(0, Number.isFinite(reserved) ? reserved : 0, ...maps.map((map) => Number.isFinite(map.order) ? map.order : 0)) - 1;
+}
+
 export function compareMapOrder(a, b) {
   const order = (Number.isFinite(a.order) ? a.order : 0) - (Number.isFinite(b.order) ? b.order : 0);
   if (order) return order;
