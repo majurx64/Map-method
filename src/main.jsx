@@ -7,15 +7,22 @@ import { rememberCollaborativeInvite } from './lib/collaboration'
 // Keep the invitation before the authentication callback cleans up the URL.
 rememberCollaborativeInvite()
 
-// Allow a direct diagnostic visit without changing the normal canonical URL.
-const directCheck = new URLSearchParams(window.location.search).get('mm_direct') === '1'
+// Keep an explicit direct visit on this origin through navigation and auth callbacks.
+const assetOriginVisit = window.location.hostname === 'map-method-chi.vercel.app'
+let directCheck = new URLSearchParams(window.location.search).get('mm_direct') === '1'
+if (assetOriginVisit) {
+  try {
+    if (directCheck) window.sessionStorage.setItem('mm-direct-origin', '1')
+    else directCheck = window.sessionStorage.getItem('mm-direct-origin') === '1'
+  } catch { /* A denied storage permission must not prevent startup. */ }
+}
 const updateUrl = new URL(window.location.href)
 if (updateUrl.searchParams.has('site-update')) {
   updateUrl.searchParams.delete('site-update')
   window.history.replaceState(window.history.state, '', updateUrl.href)
 }
 
-if (window.location.hostname === 'map-method-chi.vercel.app' && !directCheck) {
+if (assetOriginVisit && !directCheck) {
   window.location.replace(
     `https://www.mapmethod.ru${window.location.pathname}${window.location.search}${window.location.hash}`,
   )
