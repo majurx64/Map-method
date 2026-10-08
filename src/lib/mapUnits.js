@@ -35,11 +35,66 @@ export function measurementQuantityStep(value) {
   return measurement.steps / a;
 }
 
+// Common units also accept old plural names. Productive noun endings cover
+// custom singular names without loading a full morphological dictionary.
+const unitNames = [
+  ['шаг', 'шага', 'шагов', 'шаги'], ['клетка', 'клетки', 'клеток'],
+  ['страница', 'страницы', 'страниц'], ['минута', 'минуты', 'минут'],
+  ['секунда', 'секунды', 'секунд'], ['час', 'часа', 'часов', 'часы'],
+  ['день', 'дня', 'дней', 'дни'], ['неделя', 'недели', 'недель'],
+  ['месяц', 'месяца', 'месяцев', 'месяцы'], ['год', 'года', 'лет', 'годы'],
+  ['раз', 'раза', 'раз', 'разы'], ['задача', 'задачи', 'задач'],
+  ['книга', 'книги', 'книг'], ['тренировка', 'тренировки', 'тренировок'],
+  ['попытка', 'попытки', 'попыток'], ['проверка', 'проверки', 'проверок'],
+  ['поездка', 'поездки', 'поездок'], ['покупка', 'покупки', 'покупок'],
+  ['статья', 'статьи', 'статей'], ['серия', 'серии', 'серий'],
+  ['цель', 'цели', 'целей'], ['запись', 'записи', 'записей'],
+  ['встреча', 'встречи', 'встреч'], ['песня', 'песни', 'песен'],
+  ['слово', 'слова', 'слов'], ['письмо', 'письма', 'писем'], ['дело', 'дела', 'дел'],
+  ['очко', 'очка', 'очков', 'очки'], ['балл', 'балла', 'баллов', 'баллы'],
+  ['урок', 'урока', 'уроков', 'уроки'], ['пункт', 'пункта', 'пунктов', 'пункты'],
+  ['метр', 'метра', 'метров', 'метры'], ['километр', 'километра', 'километров', 'километры'],
+  ['грамм', 'грамма', 'граммов', 'граммы'], ['килограмм', 'килограмма', 'килограммов', 'килограммы'],
+  ['литр', 'литра', 'литров', 'литры'], ['рубль', 'рубля', 'рублей', 'рубли'],
+  ['человек', 'человека', 'человек', 'люди', 'людей'],
+];
+const knownUnitForms = new Map(unitNames.flatMap((forms) => forms.map((name) => [name, forms.slice(0, 3)])));
+
+function unitForms(unit) {
+  const word = unit.trim().toLocaleLowerCase('ru-RU');
+  if (knownUnitForms.has(word)) return knownUnitForms.get(word);
+  // Keep abbreviations and unfamiliar phrases intact rather than invent forms.
+  if (!/^[а-яё]{3,}$/u.test(word)) return [unit, unit, unit];
+  const action = word.match(/^(.*[нт])и[еяй]$/u);
+  if (action) return [`${action[1]}ие`, `${action[1]}ия`, `${action[1]}ий`];
+  const tion = word.match(/^(.*)ци[яий]$/u);
+  if (tion) return [`${tion[1]}ция`, `${tion[1]}ции`, `${tion[1]}ций`];
+  const stem = word.slice(0, -1);
+  if (word.endsWith('а')) {
+    const plural = stem.replace(/([бвгджзклмнпрстфхцчшщ])к$/u, (_, consonant) => `${consonant}${/[жчшщ]$/u.test(consonant) ? 'е' : 'о'}к`);
+    return [word, `${stem}${/[гкхжчшщц]$/u.test(stem) ? 'и' : 'ы'}`, plural];
+  }
+  if (word.endsWith('я')) return [word, `${stem}и`, `${stem}${/[аеёиоуыэюя]$/u.test(stem) ? 'й' : 'ь'}`];
+  if (word.endsWith('о')) return [word, `${stem}а`, stem];
+  if (word.endsWith('й')) return [word, `${stem}я`, `${stem}ев`];
+  if (/[бвгджзклмнпрстфхцчшщ]$/u.test(word)) return [word, `${word}а`, `${word}${/[жчшщ]$/u.test(word) ? 'ей' : /ц$/u.test(word) ? 'ев' : 'ов'}`];
+  return [unit, unit, unit];
+}
+
 export function quantityLabel(value, unit) {
-  const forms = { шагов: ['шаг', 'шага', 'шагов'], страниц: ['страница', 'страницы', 'страниц'], клеток: ['клетка', 'клетки', 'клеток'] }[unit];
+  const forms = unitForms(unit);
   const number = Math.abs(Number(value)), last = number % 10, lastTwo = number % 100;
-  const name = forms ? forms[!Number.isInteger(number) ? 1 : lastTwo >= 11 && lastTwo <= 14 ? 2 : last === 1 ? 0 : last >= 2 && last <= 4 ? 1 : 2] : unit;
+  const name = forms[!Number.isInteger(number) ? 1 : lastTwo >= 11 && lastTwo <= 14 ? 2 : last === 1 ? 0 : last >= 2 && last <= 4 ? 1 : 2];
   return `${formatQuantity(Number(value))} ${name}`;
+}
+
+export function measurementUnitLabel(value) {
+  return unitForms(normalizeMeasurement(value)?.unit || 'шагов')[2];
+}
+
+export function measurementProgressLabel(completed, total, value) {
+  const measurement = normalizeMeasurement(value) || { unit: 'клеток', perCell: 1 };
+  return `${formatQuantity(completed * measurement.perCell)} / ${quantityLabel(total * measurement.perCell, measurement.unit)}`;
 }
 
 export function measurementDescription(value) {

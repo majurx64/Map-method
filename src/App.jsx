@@ -16,7 +16,7 @@ import useCardBackgrounds from './useCardBackgrounds';
 import SaveHealth, { useSaveHealth } from './SaveHealth';
 import MeasurementFields from './MeasurementFields';
 import { archiveMaps, archiveMap, detachedBackupMap, listSaveConflicts, preserveSaveConflict, clearSaveConflict, readBackup } from './lib/mapBackups';
-import { normalizeMeasurement, measurementRatio, measurementRatioError, measurementQuantityStep, measurementDescription, quantityInCells, formatQuantity } from './lib/mapUnits';
+import { normalizeMeasurement, measurementRatio, measurementRatioError, measurementQuantityStep, measurementDescription, measurementUnitLabel, measurementProgressLabel, quantityInCells, formatQuantity } from './lib/mapUnits';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from './lib/historyVersions';
@@ -4945,7 +4945,7 @@ export default function App() {
     progressPercentRef.current?.set(percent);
     if (progressHeaderRef.current) {
       const measurement = activeMapRef.current?.measurement;
-      progressHeaderRef.current.textContent = measurement ? `${formatQuantity(count * measurement.perCell)} / ${formatQuantity(displayedTotal * measurement.perCell)} ${measurement.unit}` : count + ' / ' + displayedTotal + ' ' + t('cells');
+      progressHeaderRef.current.textContent = measurement ? measurementProgressLabel(count, displayedTotal, measurement) : count + ' / ' + displayedTotal + ' ' + t('cells');
     }
     if (progressCountRef.current) progressCountRef.current.textContent = String(count);
     if (progressBarRef.current) progressBarRef.current.style.width = percent + '%';
@@ -8736,7 +8736,7 @@ export default function App() {
         </a>
 
         <div className="header-actions">
-          {user && (screen === 'editor' || screen === 'maps') && <SaveHealth value={saveHealth} working={isDrawing || movingArtwork || Boolean(gameFillAnimationRef.current) || dirtyMapsRef.current.size > 0} onOpen={() => setScreen('account')} />}
+          {isLibraryOwner && (screen === 'editor' || screen === 'maps') && <SaveHealth value={saveHealth} working={isDrawing || movingArtwork || Boolean(gameFillAnimationRef.current) || dirtyMapsRef.current.size > 0} onOpen={() => setScreen('account')} />}
           {isLibraryOwner && <div className="developer-site-version" role="status">
             <span>Сайт: <b>{__MM_SITE_VERSION__}</b><small>Последняя: {latestSiteVersion || 'проверяем…'}</small></span>
             <button type="button" onClick={updateDeveloperSite} disabled={!latestSiteVersion || latestSiteVersion === __MM_SITE_VERSION__ || siteUpdateStatus === 'updating'}>
@@ -9805,7 +9805,7 @@ export default function App() {
                 <input ref={backupInputRef} type="file" accept="application/json,.json" hidden onChange={importBackup} />
               </div>
               {backupStatus && <p className="feature-status" role="status">{backupStatus}</p>}
-              <div className="account-save-health"><SaveHealth value={saveHealth} working={isDrawing || movingArtwork || Boolean(gameFillAnimationRef.current) || dirtyMapsRef.current.size > 0} onOpen={() => document.getElementById('backup-archive')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })} /></div>
+              {isLibraryOwner && <div className="account-save-health"><SaveHealth value={saveHealth} working={isDrawing || movingArtwork || Boolean(gameFillAnimationRef.current) || dirtyMapsRef.current.size > 0} onOpen={() => document.getElementById('backup-archive')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })} /></div>}
               <div className={`app-launch-help${appHelpOpen && !appStandalone ? " is-open" : ""}`} aria-hidden={!appHelpOpen || appStandalone} inert={!appHelpOpen || appStandalone}>
                 <div><section>
                   <button type="button" className="modal-close" aria-label="Закрыть подсказку" onClick={() => setAppHelpOpen(false)}>×</button>
@@ -10406,7 +10406,7 @@ export default function App() {
                         <div className="map-card-footer">
                           <div className="map-card-footer-summary">
                           <span>
-                            {map.measurement ? `${formatQuantity(done * map.measurement.perCell)} / ${formatQuantity(playableTotal * map.measurement.perCell)} ${map.measurement.unit}` : `${done} / ${playableTotal} ${t('cells')}`}
+                            {map.measurement ? measurementProgressLabel(done, playableTotal, map.measurement) : `${done} / ${playableTotal} ${t('cells')}`}
                           </span>
                           <label className="map-card-background-toggle" title="Показывать фоновый рисунок в карточке" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
                             <input type="checkbox" checked={cardBackgrounds.visible(map)} onChange={(event) => toggleCardBackground(map, event.target.checked)} />
@@ -10892,7 +10892,7 @@ export default function App() {
                         </button>
                         {isGameFillOpen && (
                           <div className="game-fill-inline">
-                            <label>{activeMap?.measurement ? `Сколько выполнено (${activeMap.measurement.unit})` : 'Сколько'} <input type="number" min={measurementQuantityStep(activeMap?.measurement)} step={measurementQuantityStep(activeMap?.measurement)} value={gameFillCount} onChange={(event) => {
+                            <label>{activeMap?.measurement ? `Количество ${measurementUnitLabel(activeMap.measurement)}` : 'Сколько'} <input type="number" min={measurementQuantityStep(activeMap?.measurement)} step={measurementQuantityStep(activeMap?.measurement)} value={gameFillCount} onChange={(event) => {
                               const value = event.target.value;
                               setGameFillCount(value);
                               if (Number.isFinite(Number(value)) && Number(value) > 0) localStorage.setItem(GAME_FILL_COUNT_KEY, value);
@@ -11023,7 +11023,7 @@ export default function App() {
                 </h1>
               </div>
 
-              <span className="painted-count" ref={progressHeaderRef}>{isGameMode && activeMap?.measurement ? `${formatQuantity(displayedCompleted.length * activeMap.measurement.perCell)} / ${formatQuantity(displayedTotal * activeMap.measurement.perCell)} ${activeMap.measurement.unit}` : displayedCompleted.length + " / " + displayedTotal + " " + t("cells")}</span>
+              <span className="painted-count" ref={progressHeaderRef}>{isGameMode && activeMap?.measurement ? measurementProgressLabel(displayedCompleted.length, displayedTotal, activeMap.measurement) : displayedCompleted.length + " / " + displayedTotal + " " + t("cells")}</span>
             </div>
 
             <div className="canvas-card">

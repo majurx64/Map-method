@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { archiveMap, listBackups, readBackup, preserveSaveConflict, listSaveConflicts, clearSaveConflict, retainedBackups, packBackup, unpackBackup, detachedBackupMap } from '../src/lib/mapBackups.js';
 import { queueMapSave, acknowledgeMapSave, pendingMapSaves, replacePendingMapSave } from '../src/lib/offlineMaps.js';
-import { normalizeMeasurement, measurementInputError, measurementRatio, measurementRatioError, measurementQuantityStep, measurementDescription, quantityInCells } from '../src/lib/mapUnits.js';
+import { normalizeMeasurement, measurementInputError, measurementRatio, measurementRatioError, measurementQuantityStep, measurementDescription, measurementUnitLabel, measurementProgressLabel, quantityLabel, quantityInCells } from '../src/lib/mapUnits.js';
 
 // A small request/transaction mock verifies storage behavior without a browser.
 // Completion follows request callbacks, matching the IndexedDB event contract.
@@ -151,6 +151,20 @@ test('units count complete cells exactly and reject silent rounding, invalid val
   assert.equal(quantityInCells(1, { unit: 'шагов', steps: 3, cells: 20 }).valid, false);
   assert.equal(quantityInCells(3, { unit: 'шагов', steps: 3, cells: 20 }).cells, 20);
   assert.equal(quantityInCells(1000000000, { unit: 'шагов', steps: 0.001, cells: 1000000 }).valid, false);
+  for (const unit of ['Подтягивание', 'Подтягивания', 'подтягиваний']) {
+    for (const [count, name] of [[1, 'подтягивание'], [2, 'подтягивания'], [5, 'подтягиваний'], [11, 'подтягиваний'], [14, 'подтягиваний'], [21, 'подтягивание'], [22, 'подтягивания'], [25, 'подтягиваний'], [1.5, 'подтягивания']]) {
+      assert.equal(quantityLabel(count, unit), `${new Intl.NumberFormat('ru-RU').format(count)} ${name}`);
+    }
+    assert.equal(measurementDescription({ unit, steps: 1, cells: 4 }), '1 подтягивание → 4 клетки');
+    assert.equal(measurementUnitLabel({ unit, steps: 1, cells: 4 }), 'подтягиваний');
+    assert.equal(measurementProgressLabel(4, 20, { unit, steps: 1, cells: 4 }), '1 / 5 подтягиваний');
+  }
+  for (const [unit, forms] of [['Страница', ['страница', 'страницы', 'страниц']], ['Повторение', ['повторение', 'повторения', 'повторений']], ['Тренировка', ['тренировка', 'тренировки', 'тренировок']], ['пробежка', ['пробежка', 'пробежки', 'пробежек']], ['День', ['день', 'дня', 'дней']], ['Задача', ['задача', 'задачи', 'задач']], ['Репетиция', ['репетиция', 'репетиции', 'репетиций']]]) {
+    [1, 2, 5].forEach((count, index) => assert.equal(quantityLabel(count, unit), `${count} ${forms[index]}`));
+  }
+  assert.equal(quantityLabel(5, 'кг'), '5 кг');
+  assert.equal(quantityLabel(2, 'XP'), '2 XP');
+  assert.deepEqual(measurementRatio(null), { steps: 1, cells: 1 });
 });
 
 test('choosing a conflict version atomically replaces the reviewed base and refuses newer unseen edits', async () => {
