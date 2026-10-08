@@ -110,6 +110,14 @@ test('late save acknowledgement cannot clear a newer local revision or its origi
   assert.equal(await acknowledgeMapSave(old), false);
   assert.deepEqual((await pendingMapSaves('outbox'))[0].base, base);
   assert.equal((await pendingMapSaves('outbox'))[0].revision, newer.revision);
+  const accepted = { id: map.id, name: map.name, data: { progressCompleted: [0, 1] }, sync_revision: 8 };
+  assert.equal(await acknowledgeMapSave(old, accepted), false);
+  const pending = (await pendingMapSaves('outbox'))[0];
+  assert.deepEqual(pending.base, accepted);
+  assert.deepEqual(pending.map.progressCompleted, [0, 1, 2]);
+  assert.equal(pending.revision, newer.revision);
+  await acknowledgeMapSave(old, { ...accepted, sync_revision: 7 });
+  assert.equal((await pendingMapSaves('outbox'))[0].base.sync_revision, 8);
   assert.equal(await acknowledgeMapSave(newer), true);
   assert.deepEqual(await pendingMapSaves('outbox'), []);
 });

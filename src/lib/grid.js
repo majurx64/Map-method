@@ -31,6 +31,8 @@ export function gridResizeShift(before, after, rowSide = "bottom", colSide = "ri
 export function normalizeImageOffset(value) {
   const offset = { x: Number.isFinite(Number(value?.x)) ? Number(value.x) : 0, y: Number.isFinite(Number(value?.y)) ? Number(value.y) : 0 };
   if (value?.cellsEdited) offset.cellsEdited = true;
+  const origin = value?.gridOrigin;
+  if (origin && Number.isInteger(origin.x) && Number.isInteger(origin.y)) offset.gridOrigin = { x: origin.x, y: origin.y };
   const frame = value?.frame;
   if (frame && [frame.left, frame.top, frame.width, frame.height].every(Number.isFinite) && frame.width > 0 && frame.height > 0) {
     offset.frame = { left: frame.left, top: frame.top, width: frame.width, height: frame.height };
@@ -104,7 +106,7 @@ export function imagePlacement(width, height, cols, rows, total, offset = { x: 0
   const marginX = (cols - drawWidth) / 2, marginY = (fullRows - drawHeight) / 2;
   const x = Math.max(-marginX, Math.min(marginX, offset.x * cols));
   const y = Math.max(-marginY, Math.min(marginY, offset.y * rows));
-  return { width: drawWidth, height: drawHeight, left: marginX + x, top: marginY + y, offset: { x: x / cols, y: y / rows }, marginX, marginY };
+  return { width: drawWidth, height: drawHeight, left: marginX + x, top: marginY + y, offset: { ...normalizeImageOffset(offset), x: x / cols, y: y / rows }, marginX, marginY };
 }
 
 export function gridViewportAnchor(rect, viewport, before, after = before, dx = 0, dy = 0) {

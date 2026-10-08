@@ -57,11 +57,18 @@ export function pendingMapSaves(owner) {
     store.getAll().onsuccess = (event) => done(event.target.result.filter((entry) => entry.owner === owner));
   });
 }
-export function acknowledgeMapSave(entry) {
+export function acknowledgeMapSave(entry, submittedBase = null) {
   return transaction("outbox", "readwrite", (store, done) => {
     store.get(entry.key).onsuccess = (event) => {
-      const matches = event.target.result?.revision === entry.revision;
+      const current = event.target.result;
+      const matches = current?.revision === entry.revision;
       if (matches) store.delete(entry.key);
+      // A newer local edit contains the submitted snapshot plus its own edits.
+      // Advance its baseline only after acceptance, so retries replay only those
+      // newer edits and keep any concurrent progress already merged by the server.
+      else if (current && submittedBase && Number(current.base?.sync_revision || 0) <= Number(submittedBase.sync_revision || 0)) {
+        store.put({ ...current, base: submittedBase });
+      }
       done(matches);
     };
   });

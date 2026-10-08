@@ -2158,7 +2158,13 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     conflictsRef.current.clear();
-    if (user?.id) listSaveConflicts(user.id).then((conflicts) => { if (alive) updateConflicts(conflicts); }).catch(() => { if (alive) setArchiveError('Не удалось открыть архив: проверьте свободное место на устройстве.'); });
+    if (user?.id) Promise.all([listSaveConflicts(user.id), pendingMapSaves(user.id)]).then(async ([conflicts, pending]) => {
+      const manual = conflicts.filter((conflict) => pending.some((entry) => entry.map.id === conflict.mapId && entry.map.collaboration));
+      // Personal maps now merge automatically. Keep their archived snapshots
+      // and queued edits, but retire the old request to choose a version.
+      await Promise.all(conflicts.filter((conflict) => !manual.includes(conflict)).map(clearSaveConflict));
+      if (alive) { updateConflicts(manual); if (manual.length !== conflicts.length) setArchiveRevision((value) => value + 1); }
+    }).catch(() => { if (alive) setArchiveError('Не удалось открыть архив: проверьте свободное место на устройстве.'); });
     return () => { alive = false; };
   }, [user?.id, updateConflicts]);
   const liveStateRef = useRef(null);
@@ -4175,15 +4181,17 @@ export default function App() {
         return null;
       });
       const run = async () => {
-        const pending = await queued;
+        let pending = await queued;
         void refreshSaveHealth();
-        if (queuedEntry) {
+        if (pending) {
           const entries = await pendingMapSaves(user.id);
-          if (!entries.some((entry) => entry.key === queuedEntry.key && entry.revision === queuedEntry.revision)) return null;
+          const stored = entries.find((entry) => entry.key === pending.key && entry.revision === pending.revision);
+          if (queuedEntry && !stored) return null;
+          if (stored) pending = stored;
         }
         if (deletingIdsRef.current.has(map.id)) return null;
         if (latestOwnerRef.current !== user.id) return new Error("account-changed");
-        if (pending && conflictsRef.current.get(map.id)?.revision === pending.revision) {
+        if (map.collaboration && pending && conflictsRef.current.get(map.id)?.revision === pending.revision) {
           return Object.assign(new Error('unresolved-map-conflict'), { code: 'MM_SYNC_CONFLICT' });
         }
         try { await archiveMap(user.id, map); }
@@ -4212,21 +4220,38 @@ export default function App() {
             return null;
           }
           const row = mapToSupabaseRow(map, user.id);
-          const { error } = await upsertRemoteMap(row, pending ? pending.base : mapBaselinesRef.current.get(map.id));
+          const { data: saved, error } = await upsertRemoteMap(row, pending ? pending.base : mapBaselinesRef.current.get(map.id));
           if (latestOwnerRef.current !== user.id) return new Error('account-changed');
 
           if (error) {
-            setSyncStatus(error.code === 'MM_SYNC_CONFLICT' ? syncFailureMessage(error) : "Сохранено на устройстве. Сервер пока недоступен.");
-            if (error.code === 'MM_SYNC_CONFLICT') {
-              try { await rememberSaveConflict(pending, error.remoteMap ? mapFromSupabaseRow(error.remoteMap) : null); }
-              catch { setArchiveError('Не удалось записать конфликт в архив. Правки остаются в очереди; скачайте резервную копию.'); }
-            }
+            setSyncStatus("Сохранено на устройстве. Синхронизация повторится автоматически.");
             console.error(
               "Ошибка автосохранения:",
               error
             );
 
             return error;
+          }
+
+          if (!saved) {
+            const live = liveStateRef.current;
+            const latest = live.activeMapId === map.id ? live.editor : [...live.maps, ...live.personalLibrary].find((item) => item.id === map.id);
+            if (latest) await archiveMap(user.id, latest);
+            if (latestOwnerRef.current !== user.id) return new Error('account-changed');
+            await discardPendingMap(user.id, map.id);
+            if (latestOwnerRef.current !== user.id) return new Error('account-changed');
+            dirtyMapsRef.current.delete(map.id);
+            mapBaselinesRef.current.delete(map.id);
+            setMaps((current) => current.filter((item) => item.id !== map.id));
+            setPrivateLibrary((current) => ({ ...current, [user.id]: (current[user.id] || []).filter((item) => item.id !== map.id) }));
+            if (live.activeMapId === map.id) { setActiveMapId(null); setScreen('maps'); }
+            if (conflictsRef.current.has(map.id)) {
+              await clearSaveConflict(conflictsRef.current.get(map.id)); conflictsRef.current.delete(map.id);
+              void refreshSaveHealth({ conflicts: conflictsRef.current.size }); setArchiveRevision((value) => value + 1);
+            }
+            confirmed = true; setSyncStatus('');
+            void liveRefreshRef.current?.();
+            return null;
           }
 
           if (map.shareId && !revokedShareIdsRef.current.has(map.shareId)) {
@@ -4247,7 +4272,7 @@ export default function App() {
             }
             if (settings && shouldUpdateSharedMap(settings, publishedSettings) && !revokedShareIdsRef.current.has(map.shareId)) {
               const { error: shareError } = await requestRpc('update_shared_map_if_changed', {
-                share_token: map.shareId, visible_data: publicSharedSnapshot(map, settings, publishedMap), visibility: settings, expected_owner: user.id,
+                share_token: map.shareId, visible_data: publicSharedSnapshot(mapFromSupabaseRow(saved), settings, publishedMap), visibility: settings, expected_owner: user.id,
               });
               if (shareError) {
                 setSyncStatus("Карта сохранена. Публичная ссылка обновится после восстановления связи.");
@@ -4255,7 +4280,7 @@ export default function App() {
               }
             }
           }
-          if (pending) await acknowledgeMapSave(pending);
+          if (pending) await acknowledgeMapSave(pending, { ...row, sync_revision: saved.sync_revision });
           mapBaselinesRef.current.set(map.id, row);
           const current = liveStateRef.current;
           const currentMap = current.activeMapId === map.id ? current.editor : [...current.maps, ...current.personalLibrary].find((item) => item.id === map.id);
@@ -4325,7 +4350,15 @@ export default function App() {
           if (error?.code === 'MM_SYNC_CONFLICT') continue;
           if (error) { if (!cancelled) retry(); return; }
         }
-        if (!conflictsRef.current.size && !(await pendingMapSaves(user.id)).length) {
+        const remaining = await pendingMapSaves(user.id);
+        for (const conflict of conflictsRef.current.values()) {
+          if (!remaining.some((entry) => entry.map.id === conflict.mapId)) {
+            await clearSaveConflict(conflict); conflictsRef.current.delete(conflict.mapId);
+            setArchiveRevision((value) => value + 1);
+          }
+        }
+        void refreshSaveHealth({ conflicts: conflictsRef.current.size });
+        if (!conflictsRef.current.size && !remaining.length) {
           setMapActionError((message) => message.startsWith('Порядок сохранён') ? '' : message);
         }
         retryDelay = 3000;
@@ -4345,7 +4378,7 @@ export default function App() {
       window.removeEventListener("focus", flush);
       document.removeEventListener("visibilitychange", flush);
     };
-  }, [user?.id, isMapInitialized, remoteSave]);
+  }, [user?.id, isMapInitialized, remoteSave, refreshSaveHealth]);
 
   useLayoutEffect(() => {
     if (
@@ -6650,6 +6683,10 @@ export default function App() {
     } else {
       gridRestoreRef.current = null;
     }
+    nextImageOffset = { ...nextImageOffset, gridOrigin: {
+      x: (imageOffset.gridOrigin?.x || 0) + dx, y: (imageOffset.gridOrigin?.y || 0) + dy,
+    } };
+    setImageOffset(nextImageOffset);
     setGridMode(mode);
     setTotalCells(String(count));
     setManualRows(String(after.rows));

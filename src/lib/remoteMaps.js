@@ -106,20 +106,25 @@ export function saveRemoteMap(owner, row, baseline) {
   return enqueue(state, () => withAccountLock(owner, async () => {
     await initialize(state, owner, Boolean(globalThis.navigator?.locks));
     let old = state.personal.find((item) => item.id === row.id);
+    if (!old) {
+      await refreshRemoteState(state, owner);
+      old = state.personal.find((item) => item.id === row.id);
+    }
     const base = baseline === undefined ? old : baseline;
     let result, candidate;
     for (let attempt = 0; attempt < 3; attempt++) {
-      if (!old && base && baseline !== undefined) throw Object.assign(new Error('personal-map-deleted'), { code: 'MM_SYNC_CONFLICT', remoteMap: null });
-      try { candidate = old ? rebasePersonalMap(base || state.lastSaved?.get(row.id), row, old, state.lastSaved?.get(row.id)) : row; }
-      catch (error) { if (error.code === 'MM_SYNC_CONFLICT') error.remoteMap = old || null; throw error; }
+      // A confirmed remote deletion wins over autosave, without resurrecting
+      // the map or leaving this device waiting for a manual version choice.
+      if (!old && base && baseline !== undefined) return null;
+      candidate = old ? rebasePersonalMap(base || state.lastSaved?.get(row.id), row, old, state.lastSaved?.get(row.id)) : row;
       result = old
         ? await requestRpc('save_personal_map_patch', { map_id: String(row.id), map_name: candidate.name, patch: dataPatch(old.data, candidate.data), expected_revision: old.sync_revision, expected_owner: owner })
-        : await requestRpc('save_personal_map', { map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: owner });
+        : await requestRpc('create_personal_map', { map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: owner });
       if (result.error?.code !== '40001') break;
       await refreshRemoteState(state, owner);
       old = state.personal.find((item) => item.id === row.id);
     }
-    if (result.error?.code === '40001') throw Object.assign(new Error('personal-map-keeps-changing'), { code: 'MM_SYNC_CONFLICT', remoteMap: old || null });
+    if (result.error?.code === '40001') throw Object.assign(new Error('personal-map-keeps-changing'), { code: 'MM_SYNC_RETRY' });
     if (result.error) throw result.error;
     const saved = { ...old, ...candidate, ...result.data };
     state.personal = [...state.personal.filter((item) => item.id !== row.id), saved];

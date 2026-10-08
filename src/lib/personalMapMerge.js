@@ -1,11 +1,24 @@
 import { equalJSON } from './syncWire.js';
+import { getGridDimensions, remapCells, remapColors } from './grid.js';
 
 const geometry = ['mapType', 'gridMode', 'totalCells', 'manualRows', 'manualCols', 'imageRatio', 'image', 'imageOffset'];
 const drawing = ['completed', 'progressCompleted', 'colors'];
 const special = new Set([...drawing, 'activityLog', 'versions', 'lastPaintedAt']);
 
-function conflict() {
-  return Object.assign(new Error('personal-map-conflict'), { code: 'MM_SYNC_CONFLICT' });
+function dimensions(data) {
+  const total = data.totalCells ?? Math.max(1, data.colors?.length || 0,
+    ...[...(data.completed || []), ...(data.progressCompleted || [])].map((index) => index + 1));
+  return getGridDimensions(total, data.imageRatio, data.gridMode, data.manualRows, data.manualCols);
+}
+
+function projectDrawing(source, target) {
+  const before = dimensions(source), after = dimensions(target);
+  const dx = (target.imageOffset?.gridOrigin?.x || 0) - (source.imageOffset?.gridOrigin?.x || 0);
+  const dy = (target.imageOffset?.gridOrigin?.y || 0) - (source.imageOffset?.gridOrigin?.y || 0);
+  if (equalJSON(before, after) && !dx && !dy) return source;
+  return { ...source, completed: remapCells(source.completed || [], before, after, dx, dy),
+    progressCompleted: remapCells(source.progressCompleted || [], before, after, dx, dy),
+    colors: remapColors(source.colors || [], before, after, dx, dy) };
 }
 
 function mergeCells(before = [], local = [], remote = []) {
@@ -20,11 +33,11 @@ function mergeCells(before = [], local = [], remote = []) {
 // server snapshot is never replaced wholesale after a revision conflict.
 export function rebasePersonalMap(base, local, remote, acknowledged = null) {
   if (equalJSON(local.data, remote.data) && local.name === remote.name) return remote;
-  if (!base) {
-    throw conflict();
-  }
-  let before = base.data, baseName = base.name;
   const next = local.data, latest = remote.data;
+  // Older offline entries can lack a baseline. Preserve the server layout and
+  // add their drawing/progress without treating missing cells as deletions.
+  let before = base?.data || { ...next, completed: [], progressCompleted: [], colors: [], activityLog: [], versions: [] };
+  let baseName = base?.name || local.name;
   // A rapid second resize can still carry the outbox's original baseline.
   // Advance it only to this tab's own exact, already accepted geometry. A
   // different remote edit still follows the ordinary conflict checks below.
@@ -34,28 +47,47 @@ export function rebasePersonalMap(base, local, remote, acknowledged = null) {
     before = acknowledged.data; baseName = acknowledged.name;
   }
   const localGeometry = geometry.some((key) => !equalJSON(before[key], next[key]));
-  const remoteGeometry = geometry.some((key) => !equalJSON(before[key], latest[key]));
-  const localDrawing = drawing.some((key) => !equalJSON(before[key], next[key]));
-  const remoteDrawing = drawing.some((key) => !equalJSON(before[key], latest[key]));
-  if ((remoteGeometry && (localDrawing || localGeometry)) || (localGeometry && remoteDrawing)) throw conflict();
+  const layout = localGeometry ? next : latest;
+  const originalDrawing = projectDrawing(before, layout);
+  const localDrawing = projectDrawing(next, layout);
+  const remoteDrawing = projectDrawing(latest, layout);
 
   const data = { ...latest };
   for (const key of new Set([...Object.keys(before), ...Object.keys(next)])) {
-    if (special.has(key) || equalJSON(before[key], next[key])) continue;
+    if (special.has(key) || geometry.includes(key) || equalJSON(before[key], next[key])) continue;
+    if (Object.hasOwn(next, key)) data[key] = next[key];
+    else delete data[key];
+  }
+  // A layout is one unit: the last explicitly submitted resize wins, while
+  // strokes from every device are translated into that same grid below.
+  if (localGeometry) for (const key of geometry) {
     if (Object.hasOwn(next, key)) data[key] = next[key];
     else delete data[key];
   }
 
-  const completed = mergeCells(before.completed, next.completed, latest.completed);
-  const progress = mergeCells(before.progressCompleted, next.progressCompleted, latest.progressCompleted);
-  if (Object.hasOwn(next, 'completed')) data.completed = localGeometry ? next.completed : completed.cells;
-  if (Object.hasOwn(next, 'progressCompleted')) data.progressCompleted = localGeometry ? next.progressCompleted : progress.cells;
-  const colors = [...(latest.colors || [])];
-  const oldColors = before.colors || [], newColors = next.colors || [];
+  const completed = mergeCells(originalDrawing.completed, localDrawing.completed, remoteDrawing.completed);
+  const progress = mergeCells(originalDrawing.progressCompleted, localDrawing.progressCompleted, remoteDrawing.progressCompleted);
+  if (Object.hasOwn(next, 'completed')) data.completed = completed.cells;
+  if (Object.hasOwn(next, 'progressCompleted')) data.progressCompleted = progress.cells;
+  const colors = [...(remoteDrawing.colors || [])];
+  const oldColors = originalDrawing.colors || [], newColors = localDrawing.colors || [];
   for (let index = 0; index < Math.max(oldColors.length, newColors.length); index++) {
     if (!equalJSON(oldColors[index] ?? null, newColors[index] ?? null)) colors[index] = newColors[index] ?? null;
   }
-  if (Object.hasOwn(next, 'colors')) data.colors = localGeometry ? next.colors : colors;
+  if (Object.hasOwn(next, 'colors')) data.colors = colors;
+  // An untouched image is sampled anew after resizing; its pixels are a guide,
+  // not competing brush strokes. Progress still merges independently.
+  if (localGeometry && next.mapType === 'image' && !next.imageOffset?.cellsEdited) {
+    data.colors = [...(next.colors || [])];
+    data.completed = next.completed;
+    if (latest.imageOffset?.cellsEdited && next.image === latest.image) {
+      data.completed = mergeCells(originalDrawing.completed, remoteDrawing.completed, next.completed).cells;
+      for (let index = 0; index < (remoteDrawing.colors || []).length; index++) {
+        if (!equalJSON(oldColors[index] ?? null, remoteDrawing.colors[index] ?? null)) data.colors[index] = remoteDrawing.colors[index] ?? null;
+      }
+      data.imageOffset = { ...data.imageOffset, cellsEdited: true };
+    }
+  }
 
   // Retries may include cells already accepted by an earlier save. Count only
   // the still-unapplied additions/removals, so daily totals are not duplicated.
@@ -66,7 +98,7 @@ export function rebasePersonalMap(base, local, remote, acknowledged = null) {
   const activity = new Map((latest.activityLog || []).map(({ date, cells }) => [date, cells]));
   for (const date of new Set([...baseActivity.keys(), ...localActivity.keys()])) {
     const delta = (localActivity.get(date) || 0) - (baseActivity.get(date) || 0);
-    const appliedDelta = localGeometry ? delta : delta > 0 ? Math.min(delta, additions) : -Math.min(-delta, removals);
+    const appliedDelta = delta > 0 ? Math.min(delta, additions) : -Math.min(-delta, removals);
     if (delta > 0) additions -= appliedDelta;
     else removals += appliedDelta;
     if (appliedDelta) activity.set(date, Math.max(0, (activity.get(date) || 0) + appliedDelta));
