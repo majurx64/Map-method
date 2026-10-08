@@ -140,3 +140,36 @@ test('synchronization distinguishes quota and session errors from failed connect
   assert.doesNotMatch(syncFailureMessage(new TypeError('Failed to fetch'), { hasLocalCopy: false }), /сохранённая копия/);
   assert.doesNotMatch(syncFailureMessage({ status: 401 }, { hasLocalCopy: false }), /сохранены/);
 });
+
+test('a remembered account screen renders before authentication has supplied a user', async () => {
+  const { createServer } = await import('vite');
+  const { createElement } = await import('react');
+  const { renderToString } = await import('react-dom/server');
+  const savedGlobals = new Map(['window', 'document', 'navigator', 'localStorage', 'sessionStorage'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const values = new Map([['mm-current-screen', 'account']]);
+  const localStorage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)), removeItem: (key) => values.delete(key) };
+  const navigator = { userAgent: 'startup-test', onLine: true };
+  const window = { localStorage, sessionStorage: localStorage, navigator, location: new URL(origin + '/'), innerWidth: 1280, innerHeight: 900, devicePixelRatio: 1,
+    addEventListener() {}, removeEventListener() {},
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) };
+  for (const [key, value] of Object.entries({ window, navigator, localStorage, sessionStorage: localStorage, document: { documentElement: { clientWidth: 1280 }, referrer: '' } })) {
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  let server;
+  try {
+    server = await createServer({ logLevel: 'silent', server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', plugins: [{
+      name: 'startup-without-auth-network', enforce: 'pre',
+      load(id) { if (id.replaceAll('\\', '/').endsWith('/src/lib/supabase.js')) return "export const supabase = { auth: { storageKey: 'test-auth' } };"; },
+    }] });
+    const { default: App } = await server.ssrLoadModule('/src/App.jsx');
+    const html = renderToString(createElement(App));
+    assert.match(html, /legacy-account-summary/);
+    assert.doesNotMatch(html, /Копии на это устройство/);
+  } finally {
+    await server?.close();
+    for (const [key, descriptor] of savedGlobals) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  }
+});

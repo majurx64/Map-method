@@ -9812,8 +9812,10 @@ export default function App() {
               </div>
             </section>
 
-            <BackupArchive owner={user.id} revision={archiveRevision} archiveError={archiveError} onRestore={restoreArchivedMap} onResolve={resolveArchivedConflict} onConflicts={updateConflicts} conflictsOnly />
-            <DesktopBackupPanel key={user.id} owner={user.id} health={desktopBackups.health} onRestore={restoreDesktopCopies} device={deviceBackups} capture={captureDesktopSnapshot} />
+            {user?.id && <>
+              <BackupArchive owner={user.id} revision={archiveRevision} archiveError={archiveError} onRestore={restoreArchivedMap} onResolve={resolveArchivedConflict} onConflicts={updateConflicts} conflictsOnly />
+              <DesktopBackupPanel key={user.id} owner={user.id} health={desktopBackups.health} onRestore={restoreDesktopCopies} device={deviceBackups} capture={captureDesktopSnapshot} />
+            </>}
 
             <section className="account-achievements">
               <div className="account-section-title">
