@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { archiveMap, listBackups, readBackup, preserveSaveConflict, listSaveConflicts, clearSaveConflict, retainedBackups, packBackup, unpackBackup, detachedBackupMap } from '../src/lib/mapBackups.js';
 import { queueMapSave, acknowledgeMapSave, pendingMapSaves, replacePendingMapSave } from '../src/lib/offlineMaps.js';
-import { normalizeMeasurement, measurementInputError, quantityInCells } from '../src/lib/mapUnits.js';
+import { normalizeMeasurement, measurementInputError, measurementRatio, measurementRatioError, measurementQuantityStep, measurementDescription, quantityInCells } from '../src/lib/mapUnits.js';
 
 // A small request/transaction mock verifies storage behavior without a browser.
 // Completion follows request callbacks, matching the IndexedDB event contract.
@@ -126,6 +126,31 @@ test('units count complete cells exactly and reject silent rounding, invalid val
   assert.equal(quantityInCells(50, null).cells, 50);
   for (const amount of [0, -1, '', NaN, Infinity]) assert.equal(quantityInCells(amount, null).valid, false);
   for (const perCell of [0, -1, Infinity, 0.0001, 1000001]) assert.equal(normalizeMeasurement({ unit: 'минут', perCell }), null);
+  const steps = normalizeMeasurement({ unit: '', steps: 1, cells: 30 });
+  assert.equal(quantityInCells(20, steps).cells, 600);
+  assert.equal(quantityInCells(20, steps).valid, true);
+  assert.equal(measurementQuantityStep(steps), 1);
+  assert.equal(measurementDescription(steps), '1 шаг → 30 клеток');
+  assert.deepEqual(measurementRatio(steps), { steps: 1, cells: 30 });
+  const pages = normalizeMeasurement({ unit: '1 страниц', steps: 1, cells: 5 });
+  assert.equal(pages.unit, 'страниц');
+  assert.equal(measurementDescription(pages), '1 страница → 5 клеток');
+  assert.equal(quantityInCells(30, pages).cells, 150);
+  const legacy = { unit: 'страниц', perCell: 5 };
+  assert.deepEqual(measurementRatio(legacy), { steps: 5, cells: 1 });
+  assert.equal(quantityInCells(30, normalizeMeasurement({ unit: 'страниц', ...measurementRatio(legacy) })).cells, 6);
+  assert.deepEqual(measurementRatio({ unit: 'часов', perCell: 0.1 }), { steps: 1, cells: 10 });
+  assert.equal(normalizeMeasurement({ unit: '', steps: 1, cells: 1 }), null);
+  assert.equal(measurementRatioError('', 1, 30), '');
+  assert.match(measurementRatioError('10', 1, 30), /название/);
+  for (const value of ['', 0, -1, Infinity, 1000001]) {
+    assert.notEqual(measurementRatioError('', value, 30), '');
+    assert.notEqual(measurementRatioError('', 1, value), '');
+  }
+  assert.equal(measurementQuantityStep({ unit: 'шагов', steps: 3, cells: 20 }), 3);
+  assert.equal(quantityInCells(1, { unit: 'шагов', steps: 3, cells: 20 }).valid, false);
+  assert.equal(quantityInCells(3, { unit: 'шагов', steps: 3, cells: 20 }).cells, 20);
+  assert.equal(quantityInCells(1000000000, { unit: 'шагов', steps: 0.001, cells: 1000000 }).valid, false);
 });
 
 test('choosing a conflict version atomically replaces the reviewed base and refuses newer unseen edits', async () => {

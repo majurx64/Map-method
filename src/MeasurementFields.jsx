@@ -1,12 +1,14 @@
-import { formatQuantity, measurementInputError } from './lib/mapUnits';
+import { normalizeMeasurement, measurementDescription, measurementRatioError } from './lib/mapUnits';
 
-export default function MeasurementFields({ unit, perCell, onUnit, onPerCell }) {
-  const error = measurementInputError(unit, perCell);
-  const name = unit.trim();
+export default function MeasurementFields({ unit, steps, cells, onUnit, onSteps, onCells }) {
+  const error = measurementRatioError(unit, steps, cells);
+  const measurement = normalizeMeasurement({ unit, steps, cells });
   return <fieldset className="measurement-fields">
-    <legend>Как считать прогресс</legend>
-    <p className="measurement-intro">Можно отмечать клетки или перевести их в страницы, минуты, повторения — то, что вы считаете.</p>
-    <div className="modal-inline-fields"><div className="modal-field"><label>Что считаем? Название<input maxLength="32" value={unit} onChange={(event) => onUnit(event.target.value)} placeholder="Например: страниц" aria-invalid={Boolean(error && !/\p{L}/u.test(unit))} /></label></div><div className="modal-field"><label>Сколько в одной клетке?<input type="number" min="0.001" max="1000000" step="any" value={perCell} onChange={(event) => onPerCell(event.target.value)} aria-invalid={Boolean(error && /\p{L}/u.test(unit))} /></label></div></div>
-    {error ? <small className="measurement-error" role="alert">{error}</small> : name ? <div className="measurement-example"><strong>1 клетка = {formatQuantity(Number(perCell))} {name}</strong><small>В режиме «Игра» введите выполненное количество: {formatQuantity(Number(perCell) * 3)} {name} → 3 клетки. Дробную клетку не закрашиваем: число должно делиться на {formatQuantity(Number(perCell))}.</small></div> : <small>Пример: «страниц» и «5» → одна клетка равна 5 страницам. Прочитали 30 страниц — введите 30, и закрасятся 6 клеток. Оставьте название пустым, если хотите вводить число клеток.</small>}
+    <legend>Сколько клеток за шаг</legend>
+    <p className="measurement-intro">Укажите, сколько клеток закрасить за выполненные шаги. Например: 1 шаг → 30 клеток. Для цели из 20 таких шагов нужна карта на 600 клеток.</p>
+    <div className="modal-inline-fields"><div className="modal-field"><label>Выполнено шагов<input type="number" min="0.001" max="1000000" step="any" value={steps} onChange={(event) => onSteps(event.target.value)} aria-invalid={Boolean(error && (!Number(steps) || Number(steps) < 0.001 || Number(steps) > 1000000))} /></label></div><div className="modal-field"><label>Закрасить клеток<input type="number" min="0.001" max="1000000" step="any" value={cells} onChange={(event) => onCells(event.target.value)} aria-invalid={Boolean(error && (!Number(cells) || Number(cells) < 0.001 || Number(cells) > 1000000))} /></label></div></div>
+    <div className="modal-field"><label>Название шага — необязательно<input type="text" maxLength="32" value={unit} onChange={(event) => onUnit(event.target.value)} placeholder="Например: страниц. Только название, без числа" aria-invalid={Boolean(unit.trim() && !/\p{L}/u.test(unit))} /></label></div>
+    {error ? <small className="measurement-error" role="alert">{error}</small> : measurement ? <div className="measurement-example"><strong>{measurementDescription(measurement)}</strong><small>В режиме «Игра» вводите выполненное количество шагов — клетки рассчитываются автоматически. Закрашиваются только целые клетки.</small></div> : <small>Сейчас 1 шаг = 1 клетка: в режиме «Игра» вводите число клеток. Чтобы один шаг закрашивал больше, увеличьте число справа.</small>}
+    <small className="measurement-guide">Пример со страницами: слева 1, справа 5, название «страниц» → за одну страницу закрасятся 5 клеток. Прочитали 30 страниц — введите 30, и закрасятся 150 клеток.</small>
   </fieldset>;
 }

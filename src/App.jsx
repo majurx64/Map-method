@@ -16,7 +16,7 @@ import useCardBackgrounds from './useCardBackgrounds';
 import SaveHealth, { useSaveHealth } from './SaveHealth';
 import MeasurementFields from './MeasurementFields';
 import { archiveMaps, archiveMap, detachedBackupMap, listSaveConflicts, preserveSaveConflict, clearSaveConflict, readBackup } from './lib/mapBackups';
-import { normalizeMeasurement, measurementInputError, quantityInCells, formatQuantity } from './lib/mapUnits';
+import { normalizeMeasurement, measurementRatio, measurementRatioError, measurementQuantityStep, measurementDescription, quantityInCells, formatQuantity } from './lib/mapUnits';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from './lib/historyVersions';
@@ -1925,7 +1925,8 @@ export default function App() {
   const [newMapDeadline, setNewMapDeadline] = useState("");
   const [newMapPlanMode, setNewMapPlanMode] = useState("balanced");
   const [newMapUnit, setNewMapUnit] = useState('');
-  const [newMapPerCell, setNewMapPerCell] = useState('1');
+  const [newMapSteps, setNewMapSteps] = useState('1');
+  const [newMapStepCells, setNewMapStepCells] = useState('1');
   const [newCategoryDraft, setNewCategoryDraft] = useState("");
   const [isLibraryCategoryAdding, setIsLibraryCategoryAdding] = useState(false);
   const [customCategories, setCustomCategories] = useState(() => {
@@ -1968,7 +1969,8 @@ export default function App() {
   ] = useState("");
   const [renameDescription, setRenameDescription] = useState("");
   const [renameUnit, setRenameUnit] = useState('');
-  const [renamePerCell, setRenamePerCell] = useState('1');
+  const [renameSteps, setRenameSteps] = useState('1');
+  const [renameStepCells, setRenameStepCells] = useState('1');
   const [renameCategory, setRenameCategory] = useState("Личное");
   const [renameDeadline, setRenameDeadline] = useState("");
   const [renamePlanMode, setRenamePlanMode] = useState("balanced");
@@ -6913,7 +6915,8 @@ export default function App() {
     setNewMapDeadline("");
     setNewMapPlanMode("balanced");
     setNewMapUnit('');
-    setNewMapPerCell('1');
+    setNewMapSteps('1');
+    setNewMapStepCells('1');
     setNewCategoryDraft("");
     setNewMapType("free");
     setNewMapGridMode("auto");
@@ -6953,7 +6956,7 @@ export default function App() {
   }
 
   async function createMap() {
-    if (newMapInvalid || measurementInputError(newMapUnit, newMapPerCell)) return;
+    if (newMapInvalid || measurementRatioError(newMapUnit, newMapSteps, newMapStepCells)) return;
     const map = normalizeMap({
       id: createMapId(),
       order: reserveMapOrder(),
@@ -6961,7 +6964,7 @@ export default function App() {
         newMapName.trim() ||
         "Новая карта",
       description: newMapDescription.trim(),
-      measurement: normalizeMeasurement({ unit: newMapUnit, perCell: newMapPerCell }),
+      measurement: normalizeMeasurement({ unit: newMapUnit, steps: newMapSteps, cells: newMapStepCells }),
       category: newMapCategory === "__custom__" ? "Личное" : newMapCategory,
       deadline: newMapDeadline,
       planMode: newMapPlanMode,
@@ -7156,7 +7159,9 @@ export default function App() {
     );
     setRenameDescription(map.description || "");
     setRenameUnit(map.measurement?.unit || '');
-    setRenamePerCell(String(map.measurement?.perCell || 1));
+    const ratio = measurementRatio(map.measurement);
+    setRenameSteps(String(ratio.steps));
+    setRenameStepCells(String(ratio.cells));
     setRenameCategory(map.category || "Личное");
     setRenameDeadline(map.deadline || "");
     setRenamePlanMode(PLAN_MODES[map.planMode] ? map.planMode : "balanced");
@@ -7168,7 +7173,7 @@ export default function App() {
   }
 
   async function saveRename() {
-    if (measurementInputError(renameUnit, renamePerCell)) return;
+    if (measurementRatioError(renameUnit, renameSteps, renameStepCells)) return;
     const name =
       renameValue.trim();
 
@@ -7192,7 +7197,7 @@ export default function App() {
         ...old,
         name,
         description: renameDescription.trim(),
-        measurement: old.collaboration ? old.measurement : normalizeMeasurement({ unit: renameUnit, perCell: renamePerCell }),
+        measurement: old.collaboration ? old.measurement : normalizeMeasurement({ unit: renameUnit, steps: renameSteps, cells: renameStepCells }),
         category: renameCategory === "__custom__" ? old.category || "Личное" : renameCategory,
         deadline: renameDeadline,
         planMode: renamePlanMode,
@@ -10887,12 +10892,12 @@ export default function App() {
                         </button>
                         {isGameFillOpen && (
                           <div className="game-fill-inline">
-                            <label>{activeMap?.measurement ? activeMap.measurement.unit : 'Сколько'} <input type="number" min={activeMap?.measurement?.perCell || 1} step={activeMap?.measurement?.perCell || 1} value={gameFillCount} onChange={(event) => {
+                            <label>{activeMap?.measurement ? `Сколько выполнено (${activeMap.measurement.unit})` : 'Сколько'} <input type="number" min={measurementQuantityStep(activeMap?.measurement)} step={measurementQuantityStep(activeMap?.measurement)} value={gameFillCount} onChange={(event) => {
                               const value = event.target.value;
                               setGameFillCount(value);
                               if (Number.isFinite(Number(value)) && Number(value) > 0) localStorage.setItem(GAME_FILL_COUNT_KEY, value);
                             }} /></label>
-                            {activeMap?.measurement && <small className="game-fill-units">1 клетка = {formatQuantity(activeMap.measurement.perCell)} {activeMap.measurement.unit}. {quantityInCells(gameFillCount, activeMap.measurement).valid ? `Будет заполнено клеток: ${Math.min(quantityInCells(gameFillCount, activeMap.measurement).cells, Math.max(0, displayedTotal - displayedCompleted.length))}.` : `Введите количество, кратное ${formatQuantity(activeMap.measurement.perCell)}.`}</small>}
+                            {activeMap?.measurement && <small className="game-fill-units">{measurementDescription(activeMap.measurement)}. {quantityInCells(gameFillCount, activeMap.measurement).valid ? `Будет заполнено клеток: ${Math.min(quantityInCells(gameFillCount, activeMap.measurement).cells, Math.max(0, displayedTotal - displayedCompleted.length))}.` : `Введите положительное количество, которое даст целое число клеток. Например: ${formatQuantity(measurementQuantityStep(activeMap.measurement))}.`}</small>}
                             <div>
                               <button type="button" className={!gameFillRandom ? "active" : ""} onClick={() => setGameFillRandom(false)}>По порядку</button>
                               <button type="button" className={gameFillRandom ? "active" : ""} onClick={() => setGameFillRandom(true)}>Хаотично</button>
@@ -11410,7 +11415,7 @@ export default function App() {
               />
             </div>
 
-            <MeasurementFields unit={newMapUnit} perCell={newMapPerCell} onUnit={setNewMapUnit} onPerCell={setNewMapPerCell} />
+            <MeasurementFields unit={newMapUnit} steps={newMapSteps} cells={newMapStepCells} onUnit={setNewMapUnit} onSteps={setNewMapSteps} onCells={setNewMapStepCells} />
 
             <div className="modal-inline-fields">
               <div className="modal-field">
@@ -11593,7 +11598,7 @@ export default function App() {
             <button
               type="submit"
               className="modal-create-btn"
-              disabled={newMapInvalid || Boolean(measurementInputError(newMapUnit, newMapPerCell))}
+              disabled={newMapInvalid || Boolean(measurementRatioError(newMapUnit, newMapSteps, newMapStepCells))}
             >
               {t(
                 "createMap"
@@ -11982,7 +11987,7 @@ export default function App() {
               />
             </div>
 
-            {!maps.find((map) => map.id === renameMapId)?.collaboration && <MeasurementFields unit={renameUnit} perCell={renamePerCell} onUnit={setRenameUnit} onPerCell={setRenamePerCell} />}
+            {!maps.find((map) => map.id === renameMapId)?.collaboration && <MeasurementFields unit={renameUnit} steps={renameSteps} cells={renameStepCells} onUnit={setRenameUnit} onSteps={setRenameSteps} onCells={setRenameStepCells} />}
 
             <div className="modal-inline-fields">
               <div className="modal-field">
@@ -12006,7 +12011,7 @@ export default function App() {
 
             <button
               className="modal-create-btn"
-              disabled={Boolean(renameUnit.trim() && !normalizeMeasurement({ unit: renameUnit, perCell: renamePerCell }))}
+              disabled={Boolean(measurementRatioError(renameUnit, renameSteps, renameStepCells))}
               onClick={
                 saveRename
               }

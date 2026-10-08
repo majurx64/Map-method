@@ -3584,8 +3584,6 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .backup-archive p { margin:0; color:#737970; font-size:13px; line-height:1.65; }
 .backup-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(150px,.5fr); gap:14px; }
 .desktop-backup-path { overflow-wrap:anywhere; }
-.desktop-backup-settings { display:flex; align-items:flex-start; gap:8px; color:#596a59; font-size:12px; line-height:1.6; }
-.desktop-backup-settings input { flex:none; margin-top:3px; accent-color:#32624f; }
 .backup-filters label { display:grid; gap:7px; color:#596a59; font-size:12px; font-weight:700; }
 .backup-filters select { width:100%; box-sizing:border-box; min-height:42px; padding:8px 11px; border:1px solid #d5d0c6; border-radius:10px; background:#fffefb; color:#293b2d; font:inherit; font-size:14px; }
 .backup-archive .backup-retention-note { font-size:11px; }
@@ -3604,12 +3602,15 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .backup-comparison b { color:#386048; font-size:12px; }.backup-comparison span { font-size:14px; }.backup-comparison small { color:#858b7d; font-size:11px; }
 .measurement-fields { margin:0 0 20px; padding:16px; border:1px solid #d8dfd2; border-radius:12px; background:#f5f8f1; }
 .measurement-fields legend { padding:0 6px; color:#32624f; font-size:13px; font-weight:750; }
-.measurement-fields .modal-field { margin-bottom:8px; }.measurement-fields .modal-field input { margin-top:7px; box-sizing:border-box; width:100%; }
+.measurement-fields .modal-field { margin-bottom:8px; }.measurement-fields .modal-field input { margin-top:7px; box-sizing:border-box; width:100%; font:inherit; font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; }
+.measurement-fields input[type=number] { appearance:auto; -moz-appearance:auto; }
+.measurement-fields input[type=number]::-webkit-inner-spin-button { appearance:auto; opacity:1; }
 .measurement-fields small,.game-fill-units { display:block; color:#66775f; font-size:11px; line-height:1.6; }
 .measurement-fields .measurement-intro { margin:0 0 12px; color:#63745b; font-size:12px; line-height:1.55; }
 .measurement-example { display:grid; gap:6px; padding:10px 12px; border-radius:9px; background:#eaf1e4; }
 .measurement-example strong { color:#32624f; font-size:13px; }
 .measurement-fields .measurement-error { color:#a63c35; }
+.measurement-fields .measurement-guide { margin-top:10px; }
 .editor-back-to-maps { display:inline-flex; align-items:center; gap:8px; min-height:38px; padding:7px 13px; border:1px solid #d8dfd2; border-radius:11px; background:#f5f7ef; color:#32624f; font-weight:650; transition:background 200ms ease,border-color 200ms ease,box-shadow 200ms ease,transform 200ms ease; }
 .editor-back-to-maps:hover { background:#e9f0e3; border-color:#bacdb5; box-shadow:0 3px 10px #2748310c; }
 .editor-back-to-maps:active { transform:scale(.97); }
@@ -3621,20 +3622,33 @@ html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .animated-setting-toggle > span:last-child { display:grid; gap:4px; }
 .animated-setting-toggle strong { font-size:14px; }.animated-setting-toggle small { color:#6e7c65; font-size:11px; }
 .animated-setting-toggle:has(input:disabled) { opacity:.65; cursor:wait; }
-.device-backup-frequency { display:grid; gap:7px; color:#52664a; font-size:12px; font-weight:700; }
-.device-backup-frequency select { width:100%; min-height:40px; padding:8px 10px; border:1px solid #cbd7c5; border-radius:9px; background:#fffefb; color:#293b2d; font:inherit; }
+.device-backup-frequency { position:relative; display:grid; gap:7px; align-content:start; color:#52664a; font-size:12px; font-weight:700; }
+.backup-frequency-trigger { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-height:42px; padding:10px 12px; border:1px solid #cbd7c5; border-radius:11px; background:#fffefb; color:#293b2d; cursor:pointer; font:inherit; transition:background 180ms ease,border-color 180ms ease,box-shadow 180ms ease,transform 180ms ease; }
+.backup-frequency-trigger:hover,.backup-frequency-trigger.is-open { border-color:#96b396; background:#f9fcf6; box-shadow:0 3px 12px #2748310c; }
+.backup-frequency-trigger:active { transform:scale(.98); }
+.backup-frequency-trigger:disabled { cursor:wait; opacity:.6; }
+.backup-control-chevron { flex:none; width:18px; height:18px; transition:transform 240ms ease; }
+.backup-frequency-trigger.is-open .backup-control-chevron,.device-backup-help.is-open .backup-control-chevron { transform:rotate(180deg); }
+.backup-frequency-list { position:absolute; top:calc(100% + 7px); left:0; right:0; z-index:30; display:grid; gap:3px; padding:6px; border:1px solid #d1ddca; border-radius:13px; background:#fffefb; box-shadow:0 12px 30px #243e2720; opacity:0; transform:translateY(-7px) scale(.97); transform-origin:top; visibility:hidden; pointer-events:none; transition:opacity 180ms ease,transform 220ms ease,visibility 0s 220ms; }
+.backup-frequency-list.is-open { opacity:1; transform:translateY(0) scale(1); visibility:visible; pointer-events:auto; transition-delay:0s; }
+.backup-frequency-list > button { display:flex; justify-content:space-between; align-items:center; gap:8px; min-height:38px; padding:9px 10px; border:0; border-radius:8px; background:transparent; color:#41583d; text-align:left; cursor:pointer; font:inherit; transition:background 160ms ease,color 160ms ease; }
+.backup-frequency-list > button:hover,.backup-frequency-list > button:focus-visible { background:#f0f5eb; }
+.backup-frequency-list > button.is-selected { color:#32624f; background:#e8f1e1; }
+.backup-frequency-check { width:16px; text-align:center; }
+.backup-frequency-trigger:focus-visible,.backup-frequency-list > button:focus-visible,.device-backup-help-toggle:focus-visible { outline:2px solid #32624f; outline-offset:3px; }
 .device-backup-destination,.device-backup-last { grid-column:1/-1; }
 .device-backup-options .device-backup-last { margin:0; font-size:12px; color:#32624f; }
 .device-backup-destination p { margin:0 0 10px; }
-.device-backups > .desktop-backup-settings { margin:14px 0; }
 .device-backup-help { padding:14px 16px; margin-top:12px; border:1px solid #e0dfd5; border-radius:12px; background:#fafaf4; }
-.device-backup-help summary { cursor:pointer; color:#32624f; font-size:13px; font-weight:700; line-height:1.5; }
-.device-backup-help > div { padding-top:8px; }
-.device-backup-help[open] > div { animation:device-help-open 220ms ease both; }
+.device-backup-help-toggle { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:0; border:0; border-radius:4px; background:transparent; cursor:pointer; color:#32624f; text-align:left; font:inherit; font-size:13px; font-weight:700; line-height:1.5; }
+.device-backup-help-content { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows 280ms ease,opacity 220ms ease; }
+.device-backup-help.is-open .device-backup-help-content { grid-template-rows:1fr; opacity:1; }
+.device-backup-help-content > div { min-height:0; overflow:hidden; }
+.device-backup-help-body { display:grid; gap:10px; padding-top:12px; transform:translateY(-5px); transition:transform 280ms ease; }
+.device-backup-help.is-open .device-backup-help-body { transform:translateY(0); }
 .device-backup-help .backup-conflict-actions { margin-top:12px; }
-@keyframes device-help-open { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
 @media(max-width:600px) { .device-backup-options { grid-template-columns:1fr; padding:14px; }.device-backup-help { padding:12px; }.device-backups > .backup-conflict-actions > button { flex:1; }.device-backup-toggle { min-height:42px; } }
-@media(prefers-reduced-motion:reduce) { .map-card-background-toggle,.map-card-background-switch,.map-card-background-switch i,.setting-switch,.setting-switch i,.editor-back-to-maps,.back-to-maps-arrow { transition:none; }.device-backup-help[open] > div { animation:none; } }
+@media(prefers-reduced-motion:reduce) { .map-card-background-toggle,.map-card-background-switch,.map-card-background-switch i,.setting-switch,.setting-switch i,.editor-back-to-maps,.back-to-maps-arrow,.backup-frequency-trigger,.backup-frequency-list,.backup-frequency-list > button,.backup-control-chevron,.device-backup-help-content,.device-backup-help-body { transition:none; } }
 .game-fill-apply:disabled { opacity:.5; cursor:not-allowed; }
 @keyframes save-health-pulse { 50% { opacity:.35; transform:scale(.75); } }
 @keyframes backup-conflict-in { from { opacity:0; transform:translateY(6px); } }
