@@ -1,4 +1,16 @@
 // Lossless transport only. Maps, exports, and server records keep their original schema.
+export async function requestMapBundle(request, args, plain = false) {
+  if (!plain) {
+    const result = await request('sync_map_bundle_v2', args);
+    if (result.error?.code !== '57014') return { ...result, plain: false };
+  }
+  // Retry only this read when the database cannot finish dictionary encoding.
+  // The original delta RPC keeps the same account and revision checks.
+  const { known_objects, ...deltaArgs } = args;
+  void known_objects;
+  return { ...await request('sync_map_bundle', deltaArgs), plain: true };
+}
+
 export function decodeWire(response, cached = {}) {
   if (response?.format !== 'mm-wire-1') throw new Error('invalid-wire-format');
   const objects = { ...cached, ...response.objects };

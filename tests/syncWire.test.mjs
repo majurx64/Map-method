@@ -1,8 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeWire, pruneWireObjects, dataPatch, applyEventDelta, equalJSON } from '../src/lib/syncWire.js';
+import { decodeWire, pruneWireObjects, dataPatch, applyEventDelta, equalJSON, requestMapBundle } from '../src/lib/syncWire.js';
 
 const wire = (value, objects = {}) => ({ format: 'mm-wire-1', value, objects });
+
+test('a database encoding timeout falls back to the same read delta with the owner and revisions intact', async () => {
+  const args = Object.freeze({ expected_owner: 'owner', history_team: 'team', known_private: { map: { revision: 4 } }, known_shared: { team: { revision: 8 } }, known_objects: ['image'] });
+  const calls = [], data = { personal: { ids: ['map'], changes: [] }, shared: { ids: ['team'], changes: [] } };
+  const result = await requestMapBundle(async (name, parameters) => {
+    calls.push({ name, parameters });
+    return name === 'sync_map_bundle_v2' ? { error: { code: '57014' } } : { data, error: null };
+  }, args);
+  assert.equal(result.plain, true);
+  assert.equal(result.data, data);
+  assert.deepEqual(calls.map((call) => call.name), ['sync_map_bundle_v2', 'sync_map_bundle']);
+  assert.deepEqual(calls[1].parameters, { expected_owner: 'owner', history_team: 'team', known_private: args.known_private, known_shared: args.known_shared });
+  assert.deepEqual(args.known_objects, ['image']);
+});
+
+test('successful wire reads and authentication or other failures never trigger an alternate request', async () => {
+  for (const response of [{ data: wire(null), error: null }, { error: { code: '42501' } }, { error: { code: 'PGRST301' } }, { error: { code: '500' } }]) {
+    let calls = 0;
+    const result = await requestMapBundle(async () => { calls++; return response; }, {});
+    assert.equal(calls, 1);
+    assert.equal(result.plain, false);
+    assert.equal(result.error, response.error);
+  }
+  await assert.rejects(requestMapBundle(async () => { throw new TypeError('Failed to fetch'); }, {}), /Failed to fetch/);
+});
+
+test('subsequent reads in plain mode keep using deltas without retrying the slow encoder', async () => {
+  const calls = [], args = { expected_owner: 'owner', known_private: { map: { revision: 5 } }, known_objects: [] };
+  const result = await requestMapBundle(async (name, parameters) => { calls.push({ name, parameters }); return { data: {}, error: null }; }, args, true);
+  assert.deepEqual(calls, [{ name: 'sync_map_bundle', parameters: { expected_owner: 'owner', known_private: args.known_private } }]);
+  assert.equal(result.plain, true);
+});
 
 test('transport restores images, sparse colors, integer order, Unicode, and literal marker arrays exactly', () => {
   const image = 'data:image/png;base64,' + 'x'.repeat(10000);

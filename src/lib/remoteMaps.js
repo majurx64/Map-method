@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import { readAccountCache, cacheAccountMaps } from './offlineMaps';
 import { applySyncDelta, knownVersions } from './syncCache';
-import { decodeWire, dataPatch, applyEventDelta } from './syncWire';
+import { decodeWire, dataPatch, applyEventDelta, requestMapBundle } from './syncWire';
 import { rebasePersonalMap } from './personalMapMerge';
 
 const accounts = new Map();
@@ -49,11 +49,11 @@ function withAccountLock(owner, run) {
 async function refreshRemoteState(state, owner, historyTeam = null) {
     const knownShared = knownVersions(state.shared, true);
     if (historyTeam && knownShared[historyTeam]) knownShared[historyTeam].eventHashes = state.histories[historyTeam]?.hashes || {};
-    const { data: response, error } = await requestRpc('sync_map_bundle_v2', {
+    const { data: response, error, plain } = await requestMapBundle(requestRpc, {
       known_private: knownVersions(state.personal), known_shared: knownShared, history_team: historyTeam, expected_owner: owner, known_objects: Object.keys(state.objects),
-    });
+    }, state.plainTransport);
     if (error) throw error;
-    const { data, objects } = decodeWire(response, state.objects);
+    const { data, objects } = plain ? { data: response, objects: state.objects } : decodeWire(response, state.objects);
     const histories = { ...state.histories };
     data.shared.changes = data.shared.changes.map((row) => {
       if (!row.events || Array.isArray(row.events)) return row;
@@ -64,6 +64,7 @@ async function refreshRemoteState(state, owner, historyTeam = null) {
     // Apply both sections atomically; a partial response must never remove local work.
     const personal = applySyncDelta(state.personal, data.personal);
     const shared = applySyncDelta(state.shared, data.shared, true);
+    state.plainTransport = plain;
     const changed = data.personal.changes.length || data.shared.changes.length || personal.length !== state.personal.length || shared.length !== state.shared.length || Object.keys(response.objects || {}).length;
     state.personal = personal; state.shared = shared; state.objects = objects;
     state.histories = Object.fromEntries(Object.entries(histories).filter(([id]) => data.shared.ids.includes(id)));

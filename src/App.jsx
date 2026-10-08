@@ -1624,6 +1624,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [mapsLoading, setMapsLoading] = useState(true);
+  const [mapsLoadError, setMapsLoadError] = useState('');
   const [isMapInitialized, setIsMapInitialized] = useState(false);
 
   const [language, setLanguage] = useState(
@@ -3616,6 +3617,7 @@ export default function App() {
       mapBaselinesRef.current.clear();
       cachedBootstrapRef.current = false;
       setMapsLoading(true);
+      setMapsLoadError('');
       setIsMapInitialized(false);
       hydratingRef.current = true;
 
@@ -3698,7 +3700,9 @@ export default function App() {
         loadedLibrary = localItems.filter((map) => map.privateLibraryItem);
         loadedActiveId = loadedMaps.find((map) => map.id === localStorage.getItem(ACTIVE_MAP_KEY))?.id || loadedMaps[0]?.id || null;
         setPrivateLibrary((current) => ({ ...current, [user.id]: loadedLibrary }));
-        setSyncStatus("Нет связи с сервером. Открыта сохранённая копия; изменения отправятся после восстановления связи.");
+        const message = syncFailureMessage(error, { hasLocalCopy: Boolean(localItems.length) });
+        setSyncStatus(message);
+        setMapsLoadError(message);
       } else if (data?.length) {
         const remoteItems = data.map(mapFromSupabaseRow);
         loadedMaps = remoteItems.filter((map) => !map.privateLibraryItem);
@@ -3957,6 +3961,7 @@ export default function App() {
   const captureDesktopSnapshot = useCallback(async (force = false) => {
     const owner = user?.id;
     if (!owner || loadedOwnerRef.current !== owner || !isMapInitialized) return null;
+    if (mapsLoadError && !liveStateRef.current.maps.length && !liveStateRef.current.personalLibrary.length) return null;
     if (!force && (isDrawingRef.current || gameFillAnimationRef.current || hydratingRef.current || artworkDragRef.current)) return null;
     const pending = await pendingMapSaves(owner);
     if (latestOwnerRef.current !== owner) return null;
@@ -3977,7 +3982,7 @@ export default function App() {
     const preferences = Object.fromEntries([LANGUAGE_KEY, CUSTOM_COLORS_KEY, CUSTOM_CATEGORIES_KEY, CATEGORY_ORDER_KEY, GAME_FILL_COUNT_KEY]
       .map((key) => [key, localStorage.getItem(key)]).filter(([, value]) => value !== null));
     return { owner, maps: saved, pending, preferences, profile: { displayName: user.user_metadata?.username || user.user_metadata?.display_name || user.email || owner } };
-  }, [user?.id, isMapInitialized, buildCurrentMap, cardBackgrounds.visible]);
+  }, [user?.id, isMapInitialized, mapsLoadError, buildCurrentMap, cardBackgrounds.visible]);
   const desktopBackups = useDesktopBackups({ owner: user?.id, ready: isMapInitialized && loadedOwnerRef.current === user?.id,
     capture: captureDesktopSnapshot, changes: [maps, personalLibrary, language, customColors, customCategories, categoryOrder, gameFillCount] });
   const deviceBackups = useDeviceBackups({ owner: user?.id, ready: isMapInitialized && loadedOwnerRef.current === user?.id,
@@ -4015,6 +4020,7 @@ export default function App() {
           return;
         }
         cachedBootstrapRef.current = false;
+        setMapsLoadError('');
         if (!pending.length && !dirtyMapsRef.current.size) setSyncStatus('');
         void refreshSaveHealth({ verified: true, offline: false });
         const current = liveStateRef.current;
@@ -10188,6 +10194,13 @@ export default function App() {
                   <span><b /><b /></span>
                 </div>
               ))}
+            </div>
+          ) : !maps.length && mapsLoadError ? (
+            <div className="empty-maps" role="status">
+              <h2>Не удалось загрузить карты</h2>
+              <p>{mapsLoadError}</p>
+              <p>Ошибка загрузки не означает, что карты удалены.</p>
+              <button className="save-map-btn" onClick={() => liveRefreshRef.current?.()}>Повторить загрузку</button>
             </div>
           ) : !maps.length ? (
             <div className="empty-maps">

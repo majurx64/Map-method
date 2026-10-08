@@ -136,4 +136,7 @@ test('synchronization distinguishes quota and session errors from failed connect
   assert.match(syncFailureMessage({ status: 402 }), /лимита/);
   assert.match(syncFailureMessage({ code: 'PGRST301' }), /войти/);
   assert.match(syncFailureMessage(new TypeError('Failed to fetch')), /синхронизировать/);
+  assert.match(syncFailureMessage(new TypeError('Failed to fetch'), { hasLocalCopy: false }), /загрузить карты/);
+  assert.doesNotMatch(syncFailureMessage(new TypeError('Failed to fetch'), { hasLocalCopy: false }), /сохранённая копия/);
+  assert.doesNotMatch(syncFailureMessage({ status: 401 }, { hasLocalCopy: false }), /сохранены/);
 });
