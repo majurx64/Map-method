@@ -8674,7 +8674,6 @@ export default function App() {
         setMaps((current) => mergeCollaborativeMaps(current, [next]));
         openMap(next); setScreen('editor');
       }} />
-      {(syncStatus || desktopBackups.health.error) && <div className="sync-status" role="status">{desktopBackups.health.error || syncStatus}{(saveHealth.phase === 'conflict' || desktopBackups.health.error) && <button type="button" onClick={() => setScreen('account')}>Открыть версии и копии</button>}</div>}
       {showVictory && (
         <div className={`victory-overlay${victoryDismissing ? " is-dismissing" : ""}`} role="status" onPointerDown={dismissVictory}>
           <div className="victory-confetti" aria-hidden="true">
