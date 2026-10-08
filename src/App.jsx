@@ -4035,7 +4035,6 @@ export default function App() {
         const nextMaps = merged.filter((map) => !map.privateLibraryItem).map((map) =>
           map.id === current.activeMapId && current.editor
             ? { ...map, isGameMode: current.editor.isGameMode,
-                ...(!map.collaboration ? { gridMode: current.editor.gridMode } : {}),
                 drawColor: current.editor.drawColor, customColors: current.editor.customColors } : map);
         const nextLibrary = merged.filter((map) => map.privateLibraryItem);
         const mapsChanged = !equalJSON(current.maps, nextMaps);
