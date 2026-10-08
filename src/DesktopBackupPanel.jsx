@@ -62,7 +62,7 @@ export default function DesktopBackupPanel({ owner, health, onRestore, device, c
         setNotice(`Восстановлено отдельными копиями: ${restored.length}. Дождитесь подтверждения синхронизации.`);
       }
     } catch (error) {
-      setNotice(error.message === 'export-too-large' ? 'Набор больше 50 МБ или 1000 карт. Скачайте карты частями.'
+      setNotice(error.message === 'export-too-large' ? 'Резервная копия не создана: один файл ограничен 50 МБ и 1000 картами. Изображения и история тоже входят в размер. Ваши карты и предыдущие копии сохранены.'
         : operation === 'import' ? 'Не удалось восстановить весь файл. Проверьте формат. Уже добавленные копии сохранены; при повторе они могут продублироваться.'
           : ['download', 'restore'].includes(operation) ? error.message || 'Копия недоступна.' : 'Не удалось открыть или сохранить файл. Проверьте папку и свободное место.');
     } finally { setBusy(false); }

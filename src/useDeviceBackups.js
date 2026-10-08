@@ -5,7 +5,7 @@ import { readDeviceSettings, writeDeviceSettings } from './lib/deviceBackupStora
 const initial = { enabled: false, intervalDays: 1, folder: '', lastAt: 0 };
 const withLock = (owner, operation) => navigator.locks?.request
   ? navigator.locks.request(`mm-device-copies:${owner}`, operation) : operation();
-const failure = (error) => error.message === 'export-too-large' ? 'Набор превышает 50 МБ или 1000 карт. Скачайте карты частями.'
+const failure = (error) => error.message === 'export-too-large' ? 'Резервная копия не создана: один файл ограничен 50 МБ и 1000 картами. Изображения и история тоже входят в размер. Ваши карты и предыдущие копии сохранены.'
   : 'Копия не создана. Проверьте доступ к выбранной папке и свободное место. Предыдущие файлы сохранены.';
 
 export default function useDeviceBackups({ owner, ready, capture, changes }) {

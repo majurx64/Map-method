@@ -43,7 +43,6 @@ const CUSTOM_COLORS_KEY = "mm-custom-colors";
 const CUSTOM_CATEGORIES_KEY = "mm-custom-categories";
 const CATEGORY_ORDER_KEY = "mm-category-order";
 const SCROLL_POSITIONS_KEY = "mm-scroll-positions";
-const ACHIEVEMENT_SESSION_KEY = "mm-celebrated-achievements";
 const PRIVATE_LIBRARY_KEY = "mm-private-library";
 const METRO_2035_RECOVERY_KEY = "mm-recovered-metro-2035";
 const LEGACY_MAP_MIGRATION_KEY = "mm-legacy-map-migration";
@@ -1984,14 +1983,6 @@ export default function App() {
   const [saveNotice, setSaveNotice] = useState(null);
   const saveNoticeTimerRef = useRef(null);
   const [mapColumns, setMapColumns] = useState(2);
-  const [celebratingAchievements, setCelebratingAchievements] = useState(() => {
-    try {
-      return new Set(JSON.parse(sessionStorage.getItem(ACHIEVEMENT_SESSION_KEY) || "[]"));
-    } catch {
-      return new Set();
-    }
-  });
-  const [newAchievementAnimations, setNewAchievementAnimations] = useState([]);
 
   const [
     renameMapId,
@@ -2446,7 +2437,7 @@ export default function App() {
   function renderAchievement(achievement) {
     const unlocked = achievement.current >= achievement.goal;
     const progress = Math.min(100, Math.round(achievement.current / achievement.goal * 100));
-    const celebrating = unlocked && newAchievementAnimations.includes(achievement.title);
+    const celebrating = unlocked;
     return <article className={`achievement-card ${unlocked ? 'unlocked' : ''} ${celebrating ? 'achievement-celebration' : ''}`} key={achievement.title}>
       {celebrating && <span className="achievement-sparkles" aria-hidden="true">✦ ✺ ✧ ✦ ✺</span>}
       <span className="achievement-icon">{achievement.icon}</span><div className={celebrating ? 'achievement-copy achievement-copy-float' : 'achievement-copy'}><strong>{achievement.title}</strong><p>{achievement.text}</p><div className="achievement-progress"><i style={{ width: `${progress}%` }} /></div><small>{Math.min(achievement.current, achievement.goal)} / {achievement.goal}</small></div>
@@ -3101,33 +3092,6 @@ export default function App() {
     setScreen("library");
     localStorage.removeItem(ACTIVE_MAP_KEY);
   }
-
-  useEffect(() => {
-    if (screen !== "account" || mapsLoading || !isMapInitialized) return;
-
-    const unlocked = accountAchievements
-      .filter((item) => item.current >= item.goal)
-      .map((item) => item.title);
-    const newCelebrations = unlocked.filter((title) => !celebratingAchievements.has(title));
-
-    if (!newCelebrations.length) return;
-
-    setNewAchievementAnimations((previous) => [
-      ...new Set([...previous, ...newCelebrations]),
-    ]);
-
-    setCelebratingAchievements((previous) => {
-      const next = new Set([...previous, ...newCelebrations]);
-      sessionStorage.setItem(ACHIEVEMENT_SESSION_KEY, JSON.stringify([...next]));
-      return next;
-    });
-  }, [screen, accountPaintedCells, accountFinishedMaps, maps, streaks.best, activeDays, todayKey, mapsLoading, isMapInitialized]);
-
-  useEffect(() => {
-    if (!newAchievementAnimations.length) return;
-    const timer = setTimeout(() => setNewAchievementAnimations([]), 2800);
-    return () => clearTimeout(timer);
-  }, [newAchievementAnimations]);
 
   useEffect(() => {
     localStorage.setItem(LANGUAGE_KEY, language);
@@ -4252,7 +4216,7 @@ export default function App() {
           if (latestOwnerRef.current !== user.id) return new Error('account-changed');
 
           if (error) {
-            setSyncStatus(error.code === 'MM_SYNC_CONFLICT' ? "Карта изменилась на другом устройстве. Правки сохранены локально; устаревшая копия не отправлена." : "Сохранено на устройстве. Сервер пока недоступен.");
+            setSyncStatus(error.code === 'MM_SYNC_CONFLICT' ? syncFailureMessage(error) : "Сохранено на устройстве. Сервер пока недоступен.");
             if (error.code === 'MM_SYNC_CONFLICT') {
               try { await rememberSaveConflict(pending, error.remoteMap ? mapFromSupabaseRow(error.remoteMap) : null); }
               catch { setArchiveError('Не удалось записать конфликт в архив. Правки остаются в очереди; скачайте резервную копию.'); }
