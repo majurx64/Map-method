@@ -4,6 +4,7 @@ import "./App.css";
 import { supabase } from "./lib/supabase";
 import { flushAnalytics, trackAnalytics, setAnalyticsContext } from "./lib/analytics";
 import { loadAnalyticsReport, ANALYTICS_STARTED_AT } from './lib/analyticsReport';
+import { previewRgb } from './lib/previewColors';
 import Auth from "./Auth";
 import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPanel';
 import EditorColorPicker from './EditorColorPicker';
@@ -1990,13 +1991,7 @@ export default function App() {
       return new Set();
     }
   });
-  const [newAchievementAnimations, setNewAchievementAnimations] = useState(() => {
-    try {
-      return JSON.parse(sessionStorage.getItem(ACHIEVEMENT_SESSION_KEY) || "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [newAchievementAnimations, setNewAchievementAnimations] = useState([]);
 
   const [
     renameMapId,
@@ -2451,7 +2446,7 @@ export default function App() {
   function renderAchievement(achievement) {
     const unlocked = achievement.current >= achievement.goal;
     const progress = Math.min(100, Math.round(achievement.current / achievement.goal * 100));
-    const celebrating = newAchievementAnimations.includes(achievement.title);
+    const celebrating = unlocked && newAchievementAnimations.includes(achievement.title);
     return <article className={`achievement-card ${unlocked ? 'unlocked' : ''} ${celebrating ? 'achievement-celebration' : ''}`} key={achievement.title}>
       {celebrating && <span className="achievement-sparkles" aria-hidden="true">✦ ✺ ✧ ✦ ✺</span>}
       <span className="achievement-icon">{achievement.icon}</span><div className={celebrating ? 'achievement-copy achievement-copy-float' : 'achievement-copy'}><strong>{achievement.title}</strong><p>{achievement.text}</p><div className="achievement-progress"><i style={{ width: `${progress}%` }} /></div><small>{Math.min(achievement.current, achievement.goal)} / {achievement.goal}</small></div>
@@ -3108,7 +3103,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (screen !== "account") return;
+    if (screen !== "account" || mapsLoading || !isMapInitialized) return;
 
     const unlocked = accountAchievements
       .filter((item) => item.current >= item.goal)
@@ -3126,7 +3121,13 @@ export default function App() {
       sessionStorage.setItem(ACHIEVEMENT_SESSION_KEY, JSON.stringify([...next]));
       return next;
     });
-  }, [screen, accountPaintedCells, maps.length]);
+  }, [screen, accountPaintedCells, accountFinishedMaps, maps, streaks.best, activeDays, todayKey, mapsLoading, isMapInitialized]);
+
+  useEffect(() => {
+    if (!newAchievementAnimations.length) return;
+    const timer = setTimeout(() => setNewAchievementAnimations([]), 2800);
+    return () => clearTimeout(timer);
+  }, [newAchievementAnimations]);
 
   useEffect(() => {
     localStorage.setItem(LANGUAGE_KEY, language);
@@ -3702,7 +3703,6 @@ export default function App() {
         setCustomCategories([...new Set(localMaps.map((map) => map.category).filter((category) => category && !MAP_CATEGORIES.includes(category)))]);
         setActiveMapId(active?.id || null);
         if (active) openMap(active);
-        setSyncStatus('Открыта сохранённая копия. Проверяем обновления.');
         setMapsLoading(false);
         setIsMapInitialized(true);
         clearTimeout(hydrationReleaseTimerRef.current);
@@ -4358,7 +4358,11 @@ export default function App() {
         for (const entry of entries) {
           if (cancelled || latestOwnerRef.current !== user.id) return;
           const error = await remoteSave(entry.map, entry);
+          if (error?.code === 'MM_SYNC_CONFLICT') continue;
           if (error) { if (!cancelled) retry(); return; }
+        }
+        if (!conflictsRef.current.size && !(await pendingMapSaves(user.id)).length) {
+          setMapActionError((message) => message.startsWith('Порядок сохранён') ? '' : message);
         }
         retryDelay = 3000;
       } catch { if (!cancelled) retry(); }
@@ -5945,17 +5949,16 @@ export default function App() {
           : drawingActive;
 
       if (previewPaint && preview) {
-        const previewActive = isGameMode ? active && (mapType === 'image' || drawingActive) : mapType === 'image' ? Boolean(image && showImage) : drawingActive;
+        const previewActive = isGameMode ? active && (mapType === 'image' || drawingActive) : mapType === 'image' ? Boolean(image) : drawingActive;
         const previewColor = paintColors[i] || (mapType === 'free' ? '#111111' : '#e5e5e5');
         const utility = mapType === 'free' && normalizeHexColor(paintColors[i]) === UTILITY_COLOR;
-        const guide = (mapType === 'image' && showImage && image) || (isGameMode && mapType === 'free' && drawingActive);
+        const guide = (mapType === 'image' && (isGameMode ? showImage : true) && image) || (isGameMode && mapType === 'free' && drawingActive);
         const color = utility || (!previewActive && !guide) ? '#eeeeea' : previewColor;
         const opacity = utility || previewActive || !guide ? 1 : !isGameMode && mapType === 'image' ? .35 : .2;
         const target = `${color}:${opacity}`;
         const previous = previewPaint.cells[i];
         if (previous?.target !== target) {
-          const hex = (normalizeHexColor(color) || '#eeeeea').slice(1);
-          const to = [0, 2, 4].map((offset, channel) => parseInt(hex.slice(offset, offset + 2), 16) * opacity + [238, 238, 234][channel] * (1 - opacity));
+          const to = previewRgb(color, opacity);
           previewPaint.cells[i] = { target, from: previous?.current || to, to, current: previous?.current || to, startedAt: now };
           previewPaint.animations.add(i);
         }
@@ -6024,7 +6027,7 @@ export default function App() {
       if (
         mapType === "image" &&
         !active &&
-        showImage &&
+        (isGameMode ? showImage : true) &&
         image
       ) {
         ctx.globalAlpha = 0.35;
@@ -7466,7 +7469,9 @@ export default function App() {
     if (user) {
       // Shared card order is a local view preference, not a drawing edit.
       Promise.all(next.filter((map) => !map.collaboration).map((map) => remoteSave(map))).then((errors) => {
-        if (errors.some(Boolean)) setMapActionError("Порядок сохранён на этом устройстве. Не удалось синхронизировать его с сервером.");
+        if (errors.some((error) => error?.code === 'MM_SYNC_CONFLICT')) setMapActionError('Порядок сохранён на устройстве. Для одной из карт нужно выбрать актуальную версию в разделе «Версии и копии».');
+        else if (errors.some(Boolean)) setMapActionError('Порядок сохранён на устройстве. Отправим на сервер после восстановления связи.');
+        else setMapActionError('');
       });
     }
   }
@@ -10986,7 +10991,7 @@ export default function App() {
 
                     {image && (
                       <>
-                        <label className="image-toggle">
+                        {isGameMode && <label className="image-toggle">
                           <input
                             type="checkbox"
                             checked={
@@ -11005,7 +11010,7 @@ export default function App() {
                           {t(
                             "showImage"
                           )}
-                        </label>
+                        </label>}
 
                         <button
                           className="tool-btn"

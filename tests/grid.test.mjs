@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MAX_CELLS, getGridDimensions, remapCells, remapColors, getMapStats, dailyTarget, imagePlacement, gridViewportAnchor, zoomScrollDelta, gridResizeShift, resizeImageOffset, normalizeImageOffset, selectionFromCells, selectionContains, moveSelection } from '../src/lib/grid.js';
+import { previewRgb } from '../src/lib/previewColors.js';
+
+test('image RGB pixels retain their colours in the miniature, including faded game guides', () => {
+  assert.deepEqual(previewRgb('rgb(15, 127, 240)'), [15, 127, 240]);
+  assert.deepEqual(previewRgb('#0f7ff0'), [15, 127, 240]);
+  assert.deepEqual(previewRgb('rgb(15, 127, 240)', .2), [193.4, 215.8, 235.20000000000002]);
+  assert.deepEqual(previewRgb(null), [238, 238, 234]);
+});
 
 test('Auto grids contain exactly the requested number of playable cells up to the limit', () => {
   for (let total = 1; total <= MAX_CELLS; total++) {

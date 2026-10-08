@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { pendingMapSaves } from './lib/offlineMaps';
 
-const labels = { checking: 'Проверяем сохранение', writing: 'Сохраняем на устройстве…', local: 'Сохранено на устройстве', sending: 'Отправляется', server: 'Сохранено на сервере', conflict: 'Нужно выбрать версию', error: 'Ошибка сохранения' };
+const labels = { checking: 'Проверяем сохранение', writing: 'Сохраняем на устройстве…', local: 'Сохранено на устройстве', sending: 'Отправляется', server: 'Сохранено на сервере', conflict: 'Есть разные версии карты', error: 'Ошибка сохранения' };
 
 export function useSaveHealth(owner, dirtyMaps) {
   const [health, setHealth] = useState({ phase: 'checking', lastSyncedAt: '' });
@@ -53,7 +53,7 @@ export function useSaveHealth(owner, dirtyMaps) {
 export default function SaveHealth({ value, onOpen, working = false }) {
   const phase = value.phase === 'server' && working ? 'writing' : value.phase;
   const last = value.lastSyncedAt && Number.isFinite(Date.parse(value.lastSyncedAt)) ? new Date(value.lastSyncedAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
-  return <button type="button" className={`save-health is-${phase}`} onClick={onOpen} title={last ? `Последнее сохранение на сервере: ${last}` : 'Откройте данные и резервные копии'} aria-live="polite">
+  return <button type="button" className={`save-health is-${phase}`} onClick={onOpen} title={phase === 'conflict' ? 'На устройстве и сервере разные правки. Откройте «Версии и копии», сравните карты и выберите нужную. Обе копии сохранены.' : last ? `Последнее сохранение на сервере: ${last}` : 'Откройте данные и резервные копии'} aria-live="polite">
     <i aria-hidden="true" /><span>{labels[phase]}{last && <small>На сервере: {last}</small>}</span>
   </button>;
 }

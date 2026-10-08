@@ -95,7 +95,9 @@ export function measurementUnitLabel(value) {
 
 export function measurementProgressLabel(completed, total, value) {
   const measurement = normalizeMeasurement(value) || { unit: 'клеток', perCell: 1 };
-  return `${formatQuantity(completed * measurement.perCell)} / ${quantityLabel(total * measurement.perCell, measurement.unit)}`;
+  const target = total * measurement.perCell;
+  const targetLabel = Number.isInteger(target) ? quantityLabel(target, measurement.unit) : `${formatQuantity(target)} ${unitForms(measurement.unit)[2]}`;
+  return `${formatQuantity(completed * measurement.perCell)} / ${targetLabel}`;
 }
 
 export function measurementDescription(value) {
