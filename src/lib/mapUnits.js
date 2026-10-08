@@ -62,9 +62,10 @@ const knownUnitForms = new Map(unitNames.flatMap((forms) => forms.map((name) => 
 
 function unitForms(unit) {
   const word = unit.trim().toLocaleLowerCase('ru-RU');
+  const display = /[а-яё]/u.test(word) ? word : unit.trim();
   if (knownUnitForms.has(word)) return knownUnitForms.get(word);
   // Keep abbreviations and unfamiliar phrases intact rather than invent forms.
-  if (!/^[а-яё]{3,}$/u.test(word)) return [unit, unit, unit];
+  if (!/^[а-яё]{3,}$/u.test(word)) return [display, display, display];
   const action = word.match(/^(.*[нт])и[еяй]$/u);
   if (action) return [`${action[1]}ие`, `${action[1]}ия`, `${action[1]}ий`];
   const tion = word.match(/^(.*)ци[яий]$/u);
@@ -78,7 +79,7 @@ function unitForms(unit) {
   if (word.endsWith('о')) return [word, `${stem}а`, stem];
   if (word.endsWith('й')) return [word, `${stem}я`, `${stem}ев`];
   if (/[бвгджзклмнпрстфхцчшщ]$/u.test(word)) return [word, `${word}а`, `${word}${/[жчшщ]$/u.test(word) ? 'ей' : /ц$/u.test(word) ? 'ев' : 'ов'}`];
-  return [unit, unit, unit];
+  return [display, display, display];
 }
 
 export function quantityLabel(value, unit) {

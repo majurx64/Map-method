@@ -110,7 +110,7 @@ export function saveRemoteMap(owner, row, baseline) {
     let result, candidate;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (!old && base && baseline !== undefined) throw Object.assign(new Error('personal-map-deleted'), { code: 'MM_SYNC_CONFLICT', remoteMap: null });
-      try { candidate = old ? rebasePersonalMap(base || state.lastSaved?.get(row.id), row, old) : row; }
+      try { candidate = old ? rebasePersonalMap(base || state.lastSaved?.get(row.id), row, old, state.lastSaved?.get(row.id)) : row; }
       catch (error) { if (error.code === 'MM_SYNC_CONFLICT') error.remoteMap = old || null; throw error; }
       result = old
         ? await requestRpc('save_personal_map_patch', { map_id: String(row.id), map_name: candidate.name, patch: dataPatch(old.data, candidate.data), expected_revision: old.sync_revision, expected_owner: owner })

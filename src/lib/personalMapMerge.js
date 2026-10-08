@@ -18,12 +18,21 @@ function mergeCells(before = [], local = [], remote = []) {
 
 // Replay only what this device changed since its displayed baseline. A newer
 // server snapshot is never replaced wholesale after a revision conflict.
-export function rebasePersonalMap(base, local, remote) {
+export function rebasePersonalMap(base, local, remote, acknowledged = null) {
+  if (equalJSON(local.data, remote.data) && local.name === remote.name) return remote;
   if (!base) {
-    if (equalJSON(local.data, remote.data) && local.name === remote.name) return remote;
     throw conflict();
   }
-  const before = base.data, next = local.data, latest = remote.data;
+  let before = base.data, baseName = base.name;
+  const next = local.data, latest = remote.data;
+  // A rapid second resize can still carry the outbox's original baseline.
+  // Advance it only to this tab's own exact, already accepted geometry. A
+  // different remote edit still follows the ordinary conflict checks below.
+  if (acknowledged && acknowledged.name === remote.name && equalJSON(acknowledged.data, latest)
+    && geometry.some((key) => !equalJSON(before[key], acknowledged.data[key]))
+    && geometry.some((key) => !equalJSON(before[key], next[key]))) {
+    before = acknowledged.data; baseName = acknowledged.name;
+  }
   const localGeometry = geometry.some((key) => !equalJSON(before[key], next[key]));
   const remoteGeometry = geometry.some((key) => !equalJSON(before[key], latest[key]));
   const localDrawing = drawing.some((key) => !equalJSON(before[key], next[key]));
@@ -71,5 +80,5 @@ export function rebasePersonalMap(base, local, remote) {
   for (const [id, version] of localVersions) if (!equalJSON(baseVersions.get(id), version)) versions.set(id, version);
   if (Object.hasOwn(next, 'versions')) data.versions = [...versions.values()].sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
   if (Object.hasOwn(next, 'lastPaintedAt')) data.lastPaintedAt = Date.parse(next.lastPaintedAt) > Date.parse(latest.lastPaintedAt || '1970-01-01') ? next.lastPaintedAt : latest.lastPaintedAt;
-  return { ...remote, name: local.name !== base.name ? local.name : remote.name, data };
+  return { ...remote, name: local.name !== baseName ? local.name : remote.name, data };
 }

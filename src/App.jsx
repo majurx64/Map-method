@@ -2,7 +2,8 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { createPortal } from "react-dom";
 import "./App.css";
 import { supabase } from "./lib/supabase";
-import { flushAnalytics, trackAnalytics } from "./lib/analytics";
+import { flushAnalytics, trackAnalytics, setAnalyticsContext } from "./lib/analytics";
+import { loadAnalyticsReport, ANALYTICS_STARTED_AT } from './lib/analyticsReport';
 import Auth from "./Auth";
 import AnimatedEditorPanel, { AnimatedEditorPresence } from './AnimatedEditorPanel';
 import EditorColorPicker from './EditorColorPicker';
@@ -15,6 +16,7 @@ import useDeviceBackups from './useDeviceBackups';
 import useCardBackgrounds from './useCardBackgrounds';
 import SaveHealth, { useSaveHealth } from './SaveHealth';
 import MeasurementFields from './MeasurementFields';
+import { BackupDisclosure } from './BackupControls';
 import { archiveMaps, archiveMap, detachedBackupMap, listSaveConflicts, preserveSaveConflict, clearSaveConflict, readBackup } from './lib/mapBackups';
 import { normalizeMeasurement, measurementRatio, measurementRatioError, measurementQuantityStep, measurementDescription, measurementUnitLabel, measurementProgressLabel, quantityInCells, formatQuantity } from './lib/mapUnits';
 import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from './Collaboration';
@@ -2417,6 +2419,10 @@ export default function App() {
     return { key, cells, label: `${date.getDate()}.${String(date.getMonth() + 1).padStart(2, "0")}` };
   });
   const accountHistoryMax = Math.max(1, ...accountHistory.map((item) => item.cells));
+  const [allAchievementsOpen, setAllAchievementsOpen] = useState(false);
+  const [removingLibraryIds, setRemovingLibraryIds] = useState([]);
+  const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
+  const activeDays = useMemo(() => new Set(maps.flatMap((map) => (map.activityLog || []).filter((entry) => entry.cells > 0).map((entry) => entry.date))).size, [maps]);
   const accountAchievements = [
     { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: maps.length, goal: 1 },
     { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: maps.length, goal: 3 },
@@ -2434,7 +2440,23 @@ export default function App() {
     { icon: "♟", title: "Первый финиш", text: "Полностью завершить 1 карту", current: accountFinishedMaps, goal: 1 },
     { icon: "♜", title: "Финиш", text: "Завершить 3 карты", current: accountFinishedMaps, goal: 3 },
     { icon: "♛", title: "Серия побед", text: "Завершить 5 карт", current: accountFinishedMaps, goal: 5 },
-  ];
+    ...[15, 25, 50].map((goal, index) => ({ icon: '▦', title: ['Атлас целей', 'Большая коллекция', 'Мастер карт'][index], text: `Создать ${goal} карт`, current: maps.length, goal })),
+    ...[20000, 50000, 100000].map((goal, index) => ({ icon: '✺', title: ['Новый горизонт', 'Долгая дистанция', 'Сто тысяч шагов'][index], text: `Закрасить ${goal.toLocaleString('ru-RU')} клеток`, current: accountPaintedCells, goal })),
+    ...[10, 25].map((goal, index) => ({ icon: '♜', title: ['Десять вершин', 'Коллекция побед'][index], text: `Завершить ${goal} карт`, current: accountFinishedMaps, goal })),
+    ...[1, 7, 30, 100].map((goal, index) => ({ icon: '☼', title: ['День начала', 'Семь активных дней', 'Месяц действий', 'Сто дней пути'][index], text: `Дней с отмеченным прогрессом: ${goal}`, current: activeDays, goal })),
+    ...[7, 14, 30].map((goal, index) => ({ icon: '☽', title: ['Без остановки', 'Две недели подряд', 'Месяц последовательности'][index], text: `Достичь серии в ${goal} дней`, current: streaks.best, goal })),
+    { icon: '◈', title: 'Разные стороны жизни', text: 'Создать карты в 3 категориях', current: new Set(maps.map((map) => map.category || 'Личное')).size, goal: 3 },
+    { icon: '◉', title: 'Палитра целей', text: 'Создать карты в 5 категориях', current: new Set(maps.map((map) => map.category || 'Личное')).size, goal: 5 },
+  ].sort((a, b) => Number(b.current >= b.goal) - Number(a.current >= a.goal));
+  function renderAchievement(achievement) {
+    const unlocked = achievement.current >= achievement.goal;
+    const progress = Math.min(100, Math.round(achievement.current / achievement.goal * 100));
+    const celebrating = newAchievementAnimations.includes(achievement.title);
+    return <article className={`achievement-card ${unlocked ? 'unlocked' : ''} ${celebrating ? 'achievement-celebration' : ''}`} key={achievement.title}>
+      {celebrating && <span className="achievement-sparkles" aria-hidden="true">✦ ✺ ✧ ✦ ✺</span>}
+      <span className="achievement-icon">{achievement.icon}</span><div className={celebrating ? 'achievement-copy achievement-copy-float' : 'achievement-copy'}><strong>{achievement.title}</strong><p>{achievement.text}</p><div className="achievement-progress"><i style={{ width: `${progress}%` }} /></div><small>{Math.min(achievement.current, achievement.goal)} / {achievement.goal}</small></div>
+    </article>;
+  }
   const libraryUserKey = user?.id || "guest";
   const cardBackgrounds = useCardBackgrounds(libraryUserKey);
   const insertionOrderRef = useRef({ owner: libraryUserKey, order: 0 });
@@ -2593,7 +2615,6 @@ export default function App() {
     });
     libraryCardPositionsRef.current = nextPositions;
   }, [screen, visiblePublicLibraryOrder]);
-  const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const historyReadOnly = historyMapId === "public-share";
   const historyMap = historyReadOnly ? (sharedView?.settings?.showHistory ? sharedView.map : null) : maps.find((map) => map.id === historyMapId) || null;
   function setHistoryPreviewIndex(index, map = historyMap) {
@@ -2888,7 +2909,8 @@ export default function App() {
   }
 
   async function removePublicLibraryItem(item) {
-    if (!user || !isLibraryOwner) return;
+    if (!user || !isLibraryOwner || removingLibraryIds.includes(item.id)) return;
+    setRemovingLibraryIds((ids) => [...ids, item.id]);
     const { error } = item.publicLibraryOwnerId
       ? item.replacesBuiltinId
         ? await supabase
@@ -2909,9 +2931,16 @@ export default function App() {
         });
     if (error) {
       setLibraryStatus("Не удалось удалить рисунок из публичной коллекции.");
+      setRemovingLibraryIds((ids) => ids.filter((id) => id !== item.id));
       return;
     }
+    const card = document.querySelector(`[data-library-item-id="${CSS.escape(item.id)}"]`);
+    if (card && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      await card.animate([{ opacity: 1, transform: getComputedStyle(card).transform }, { opacity: 0, transform: 'translateY(8px) scale(.97)' }], { duration: 240, easing: 'cubic-bezier(.4,0,.6,1)', fill: 'forwards' }).finished.catch(() => null);
+    }
+    libraryCardPositionsRef.current = new Map([...document.querySelectorAll('[data-library-item-id]')].map((node) => [node.dataset.libraryItemId, node.getBoundingClientRect()]));
     setPublicLibrary((current) => current.filter((entry) => entry.id !== item.id));
+    setRemovingLibraryIds((ids) => ids.filter((id) => id !== item.id));
     setLibraryStatus("Рисунок удалён из публичной коллекции.");
   }
 
@@ -3193,9 +3222,13 @@ export default function App() {
     cardAnimationsRef.current.forEach((animation) => animation.cancel());
     const previousPositions = cardPositionsRef.current;
     cardPositionsRef.current = null;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setCardSettling(null);
+      return;
+    }
     const animations = [...document.querySelectorAll("[data-map-id]")].flatMap((element) => {
       const previous = previousPositions.get(element.dataset.mapId);
-      if (!previous) return [];
+      if (!previous || (element.dataset.mapId === cardDragRef.current?.id && cardDragRef.current.active)) return [];
       const destination = element.getBoundingClientRect();
       const deltaX = previous.left - destination.left;
       const deltaY = previous.top - destination.top;
@@ -3220,7 +3253,7 @@ export default function App() {
       animations.forEach((animation) => animation.cancel());
       if (cardAnimationsRef.current === animations) cardAnimationsRef.current = [];
     };
-  }, [maps, cardSettling]);
+  }, [cardSettling]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -4509,6 +4542,7 @@ export default function App() {
   }, [user?.id, isLibraryOwner, screen]);
 
   useEffect(() => {
+    setAnalyticsContext({ developer: isLibraryOwner, userId: user?.id, ready: !authLoading });
     if (authLoading || isLibraryOwner) return;
     if (!analyticsSessionTrackedRef.current) {
       analyticsSessionTrackedRef.current = true;
@@ -4533,16 +4567,16 @@ export default function App() {
   useEffect(() => {
     if (!isLibraryOwner || screen !== "analytics") return;
     let cancelled = false;
+    const request = new AbortController();
     setAnalyticsLoading(true);
     setAnalyticsError("");
-    supabase.rpc("analytics_dashboard", { period_days: analyticsPeriod }).then(({ data, error }) => {
+    loadAnalyticsReport(supabase, user.id, analyticsPeriod, request.signal).then((data) => {
       if (cancelled) return;
-      if (error) setAnalyticsError("Не удалось загрузить статистику.");
-      else setAnalyticsData(data);
+      setAnalyticsData(data);
       setAnalyticsLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [screen, isLibraryOwner, analyticsPeriod]);
+    }).catch(() => { if (!cancelled) { setAnalyticsError('Не удалось загрузить статистику.'); setAnalyticsLoading(false); } });
+    return () => { cancelled = true; request.abort(); };
+  }, [screen, isLibraryOwner, analyticsPeriod, user?.id]);
 
   async function handleSignOut() {
     closeAccountMenu();
@@ -5911,7 +5945,7 @@ export default function App() {
           : drawingActive;
 
       if (previewPaint && preview) {
-        const previewActive = isGameMode ? active && (mapType === 'image' || drawingActive) : mapType === 'free' && drawingActive;
+        const previewActive = isGameMode ? active && (mapType === 'image' || drawingActive) : mapType === 'image' ? Boolean(image && showImage) : drawingActive;
         const previewColor = paintColors[i] || (mapType === 'free' ? '#111111' : '#e5e5e5');
         const utility = mapType === 'free' && normalizeHexColor(paintColors[i]) === UTILITY_COLOR;
         const guide = (mapType === 'image' && showImage && image) || (isGameMode && mapType === 'free' && drawingActive);
@@ -6179,7 +6213,7 @@ export default function App() {
     zoomTransitionRef.current?.cancel();
     zoomTransitionRef.current = null;
     zoomVisualSizeRef.current = next;
-    if (firstView) {
+    if (firstView || anchor?.center) {
       viewport.scrollLeft = (viewport.scrollWidth - viewport.clientWidth) / 2;
       viewport.scrollTop = (viewport.scrollHeight - viewport.clientHeight) / 2;
     } else if (anchor) {
@@ -6202,7 +6236,7 @@ export default function App() {
         zoomTransitionRef.current = null; requestCanvasDraw();
       };
     } else requestCanvasDraw();
-  }, [mapZoom, canvasWidth, canvasHeight, screen, viewportSize, activeMapId]);
+  }, [mapZoom, canvasWidth, canvasHeight, rows, cols, actualTotal, screen, viewportSize, activeMapId]);
 
   useEffect(() => {
     if (screen !== "editor") return;
@@ -6581,7 +6615,8 @@ export default function App() {
     const before = { rows, cols, actualTotal };
     const after = getGridDimensions(count, imageRatio, mode, nextRows, nextCols);
     const { dx, dy } = sides ? gridResizeShift(before, after, sides.rows, sides.cols) : { dx: 0, dy: 0 };
-    captureGridViewport(after, dx, dy);
+    if (mapType === 'image' && !imageOffset.cellsEdited) zoomAnchorRef.current = { center: true };
+    else captureGridViewport(after, dx, dy);
     const beforeSnapshot = {
       gridMode,
       totalCells,
@@ -7417,7 +7452,7 @@ export default function App() {
     const from = visible.findIndex((map) => map.id === id);
     if (from < 0) return;
     const safeTargetIndex = Math.max(0, Math.min(visible.length - 1, targetIndex));
-    if (from === safeTargetIndex) return;
+    if (from === safeTargetIndex) { prepareCardLayoutTransition('reorder', id); return; }
     prepareCardLayoutTransition("reorder", id);
     const rearranged = [...visible];
     rearranged.splice(safeTargetIndex, 0, rearranged.splice(from, 1)[0]);
@@ -7550,9 +7585,6 @@ export default function App() {
 
   function beginCardDrag(event, id) {
     if (event.button !== 0 || event.target.closest("button, input, textarea, select, a, label") || deletingIdsRef.current.has(id)) return;
-    cardAnimationsRef.current.forEach((animation) => animation.cancel());
-    cardAnimationsRef.current = [];
-    setCardSettling(null);
     const element = event.currentTarget;
     const visible = [...maps].sort(compareMapOrder).filter((map) => mapCategoryFilter === "Все" || map.category === mapCategoryFilter);
     const drag = { id, pointerId: event.pointerId, x: event.clientX, y: event.clientY, scrollX: window.scrollX, scrollY: window.scrollY, dx: 0, dy: 0, targetIndex: visible.findIndex((map) => map.id === id), dropRect: null, active: false };
@@ -7563,6 +7595,7 @@ export default function App() {
       if (!drag.active) return;
       const previous = { dx: drag.dx, dy: drag.dy, targetIndex: drag.targetIndex };
       Object.assign(drag, cardDragPosition(drag, pointer, { x: window.scrollX, y: window.scrollY }));
+      drag.dx += drag.visualX || 0; drag.dy += drag.visualY || 0;
       const list = element.closest(".maps-list");
       const listRect = list.getBoundingClientRect();
       const cards = [...list.querySelectorAll("[data-map-id]")];
@@ -7574,7 +7607,10 @@ export default function App() {
         drag.painted = true;
         // Paint synchronously on scroll so React cannot leave the card one scroll behind.
         element.style.transform = `translate3d(${drag.dx}px, ${drag.dy}px, 0) rotate(1deg)`;
-        setCardDrag({ ...drag });
+        if (previous.targetIndex !== drag.targetIndex || !drag.published) {
+          drag.published = true;
+          setCardDrag({ id: drag.id, targetIndex: drag.targetIndex, dropRect: drag.dropRect });
+        }
       }
     };
     let previousFrame = 0;
@@ -7590,6 +7626,11 @@ export default function App() {
     const activate = () => {
       if (cardDragRef.current !== drag || drag.active) return;
       drag.active = true;
+      const visual = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+      drag.visualX = visual.e; drag.visualY = visual.f;
+      prepareCardLayoutTransition('drag-start', id);
+      cardAnimationsRef.current.forEach((animation) => animation.cancel());
+      cardAnimationsRef.current = [];
       suppressCardClick.current = true;
       element.setPointerCapture(drag.pointerId);
       update();
@@ -7607,7 +7648,6 @@ export default function App() {
         activate();
       }
       e.preventDefault();
-      update();
     };
     const finish = (e) => {
       if (e.pointerId !== drag.pointerId) return;
@@ -7620,7 +7660,10 @@ export default function App() {
       if (drag.frame) window.cancelAnimationFrame(drag.frame);
       if (drag.active && e.type !== "pointercancel") {
         reorderCardsToIndex(id, drag.targetIndex);
+      } else if (drag.active) {
+        prepareCardLayoutTransition('reorder', id);
       }
+      element.style.transform = '';
       if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
       cardDragRef.current = null;
       setCardDrag(null);
@@ -9198,7 +9241,7 @@ export default function App() {
                       )
                   }
                 >
-                  Попробовать сетку ↓
+                  Попробовать сетку <span className="home-secondary-arrow" aria-hidden="true">↓</span>
                 </button>
               </div>
             </div>
@@ -9317,7 +9360,7 @@ export default function App() {
             </h2>
 
             <p>
-              Выберите форму, цвет и ритм. Map Method сохранит путь, чтобы к нему всегда можно было вернуться.
+              Придайте цели форму, добавьте цвет и отмечайте каждый шаг. Map Method сохранит вашу историю — от первого действия до последней закрашенной клетки.
             </p>
 
             <button
@@ -9830,25 +9873,8 @@ export default function App() {
                 </div>
                 <span>{accountAchievements.filter((item) => item.current >= item.goal).length} / {accountAchievements.length} открыто</span>
               </div>
-              <div className="achievement-grid">
-                {accountAchievements.map((achievement) => {
-                  const unlocked = achievement.current >= achievement.goal;
-                  const achievementProgress = Math.min(100, Math.round((achievement.current / achievement.goal) * 100));
-                  const celebrating = newAchievementAnimations.includes(achievement.title);
-                  return (
-                    <article className={`achievement-card ${unlocked ? "unlocked" : ""} ${celebrating ? "achievement-celebration" : ""}`} key={achievement.title}>
-                      {celebrating && <span className="achievement-sparkles" aria-hidden="true">✦ ✺ ✧ ✦ ✺</span>}
-                      <span className="achievement-icon">{achievement.icon}</span>
-                      <div className={celebrating ? "achievement-copy achievement-copy-float" : "achievement-copy"}>
-                        <strong>{achievement.title}</strong>
-                        <p>{achievement.text}</p>
-                        <div className="achievement-progress"><i style={{ width: `${achievementProgress}%` }} /></div>
-                        <small>{Math.min(achievement.current, achievement.goal)} / {achievement.goal}</small>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
+              <div className="achievement-grid">{accountAchievements.slice(0, 9).map(renderAchievement)}</div>
+              <BackupDisclosure title={`Остальные достижения · ${accountAchievements.length - 9}`} open={allAchievementsOpen} onToggle={setAllAchievementsOpen} className="achievement-disclosure"><div className="achievement-grid">{accountAchievements.slice(9).map(renderAchievement)}</div></BackupDisclosure>
             </section>
           </div>
         </section>
@@ -9873,7 +9899,7 @@ export default function App() {
             const countryNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames(["ru"], { type: "region" }) : null;
             const screenNames = { home: "Главная", maps: "Мои карты", editor: "Редактор", account: "Личный кабинет", library: "Библиотека", auth: "Вход" };
             const cards = [
-              ["Уникальные посетители", summary.unique_visitors || 0, "Разные браузеры за период"],
+              ["Посетители с действиями", summary.unique_visitors || 0, "Аккаунты без дублей; гости — по браузеру"],
               ["Сеансы", summary.sessions || 0, "Отдельные посещения сайта"],
               ["Просмотры страниц", summary.page_views || 0, "Переходы между разделами"],
               ["Активное время", durationText, "Время с открытой активной вкладкой"],
@@ -9891,10 +9917,10 @@ export default function App() {
                 {daily.length ? <div className="analytics-chart">{daily.map((day) => <div className="analytics-day" key={day.day}><i style={{ height: `${Math.max(4, (Number(day.views) || 0) / maxViews * 100)}%` }} title={`${day.views} просмотров`} /><strong>{day.visitors}</strong><span>{new Date(`${day.day}T00:00:00`).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}</span></div>)}</div> : <p className="analytics-empty">Данные начнут появляться после новых посещений.</p>}
               </section>
               <div className="analytics-columns">
-                <section className="analytics-panel"><div className="analytics-panel-heading"><div><span className="account-eyebrow">ГЕОГРАФИЯ</span><h2>Страны</h2></div></div><div className="analytics-table">{(analyticsData.countries || []).map((row) => <div key={row.country}><strong>{row.country === "XX" ? "Не определена" : countryNames?.of(row.country) || row.country}</strong><span>{row.visitors} посетителей · {row.views} просмотров</span></div>)}</div></section>
+                <section className="analytics-panel"><div className="analytics-panel-heading"><div><span className="account-eyebrow">ГЕОГРАФИЯ</span><h2>Страны подключения</h2></div></div><div className="analytics-table">{(analyticsData.countries || []).map((row) => <div key={row.country}><strong>{row.country === "XX" ? "Не определена" : countryNames?.of(row.country) || row.country}</strong><span>{row.visitors} посетителей · {row.views} просмотров</span></div>)}</div></section>
                 <section className="analytics-panel"><div className="analytics-panel-heading"><div><span className="account-eyebrow">ИНТЕРЕС</span><h2>Разделы сайта</h2></div></div><div className="analytics-table">{(analyticsData.screens || []).map((row) => <div key={row.screen}><strong>{screenNames[row.screen] || row.screen}</strong><span>{row.views} просмотров</span></div>)}</div></section>
               </div>
-              <p className="analytics-note">Статистика начала собираться после установки этого раздела. Ваши действия в аккаунте разработчика не учитываются.</p>
+              <p className="analytics-note">Новый период начат {new Date(ANALYTICS_STARTED_AT).toLocaleString('ru-RU')}. Считаем посещения после действий на странице; разработчик и его браузеры исключены, простые автоматические посещения фильтруются. Один аккаунт на разных устройствах считается один раз. Гостей без входа различаем по браузеру: это не точное число отдельных людей. Страна определяется по IP подключения — при VPN это страна сервера. Один посетитель попадает в одну страну за период.</p>
             </>;
           })() : <p className="analytics-empty">Статистика пока пуста.</p>}
         </section>
@@ -10108,7 +10134,7 @@ export default function App() {
               {visiblePublicLibrary.map((item) => {
                 const dimensions = getGridDimensions(item.totalCells, 1, item.gridMode, item.manualRows, item.manualCols);
                 return (
-                  <article className="library-card" key={item.id} data-library-item-id={item.id}>
+                  <article className={`library-card${removingLibraryIds.includes(item.id) ? ' is-removing' : ''}`} key={item.id} data-library-item-id={item.id}>
                     <button type="button" className={`library-favorite${libraryFavorites.includes(item.id) ? " active" : ""}`} aria-label={libraryFavorites.includes(item.id) ? "Убрать из избранного" : "Добавить в избранное"} aria-pressed={libraryFavorites.includes(item.id)} title={libraryFavorites.includes(item.id) ? "В избранном" : "Добавить в избранное"} onClick={(event) => { event.stopPropagation(); toggleLibraryFavorite(item.id); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.2 10.6 19C5.7 14.7 2.5 11.8 2.5 8.2 2.5 5.3 4.8 3 7.7 3c1.6 0 3.2.8 4.3 2 1.1-1.2 2.7-2 4.3-2 2.9 0 5.2 2.3 5.2 5.2 0 3.6-3.2 6.5-8.1 10.8L12 20.2Z" /></svg></button>
                     <div className="library-preview"><MapCardGrid map={item} dimensions={dimensions} cropToDrawing /></div>
                     <div><strong>{item.name}</strong><span>{item.completed.length} {cellWord(item.completed.length)}</span></div>
@@ -10116,7 +10142,7 @@ export default function App() {
                     <div className={`library-card-actions${isLibraryOwner ? " owner" : " single"}`}>
                       <button type="button" onClick={() => createMapFromLibrary(item)}>Создать карту</button>
                       {isLibraryOwner && <button type="button" className="edit-action" onClick={() => editPublicLibraryItem(item)}>Изменить</button>}
-                      {isLibraryOwner && <button type="button" className="danger-action" onClick={() => removePublicLibraryItem(item)}>Удалить</button>}
+                      {isLibraryOwner && <button type="button" className="danger-action" disabled={removingLibraryIds.includes(item.id)} onClick={() => removePublicLibraryItem(item)}>Удалить</button>}
                     </div>
                   </article>
                 );
@@ -10322,7 +10348,6 @@ export default function App() {
                         const next = ordered[index + (event.key === "ArrowUp" ? -1 : 1)];
                         if (next) reorderCards(map.id, next.id);
                       }}
-                      style={cardDrag?.id === map.id ? { transform: `translate3d(${cardDrag.dx}px, ${cardDrag.dy}px, 0) rotate(1deg)` } : undefined}
                       key={
                         map.id
                       }
@@ -10815,7 +10840,7 @@ export default function App() {
               {gridError && <p className="field-error" role="alert">{gridError}</p>}
               {actualTotal % cols !== 0 && (
                 <p className="grid-fill-hint">
-                  Необязательно: добавьте ещё <strong>{cols - (actualTotal % cols)}</strong> {cellWord(cols - (actualTotal % cols))}, чтобы полностью заполнить последнюю строку.
+                  В последней строке {cols - (actualTotal % cols)} {cellWord(cols - (actualTotal % cols))} за пределами цели — они не считаются в прогрессе. Чтобы сделать поле прямоугольным, увеличьте количество клеток до <strong>{actualTotal + cols - (actualTotal % cols)}</strong>.
                 </p>
               )}
             </section>

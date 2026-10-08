@@ -164,6 +164,10 @@ test('units count complete cells exactly and reject silent rounding, invalid val
   }
   assert.equal(quantityLabel(5, 'кг'), '5 кг');
   assert.equal(quantityLabel(2, 'XP'), '2 XP');
+  for (const partial of ['Подтяги', 'Подтягив', 'Подтягива', 'Подтягиван']) {
+    assert.equal(quantityLabel(1, partial), `1 ${partial.toLocaleLowerCase('ru-RU')}`);
+  }
+  assert.equal(measurementProgressLabel(25, 69, { unit: 'Подтягивание', steps: 1, cells: 5 }), '5 / 13,8 подтягивания');
   assert.deepEqual(measurementRatio(null), { steps: 1, cells: 1 });
 });
 

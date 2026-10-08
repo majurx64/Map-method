@@ -17,20 +17,25 @@ export const EDITOR_TUTORIAL_STEPS = [
 ];
 
 export default function EditorTutorial({ step, busy, onStep, onClose, onAccount }) {
-  const [position, setPosition] = useState(null);
   const [closing, setClosing] = useState(false);
   const cardRef = useRef(null);
+  const highlightRef = useRef(null);
+  const contentRef = useRef(null);
+  const motionRef = useRef(null);
   const item = EDITOR_TUTORIAL_STEPS[step];
   useLayoutEffect(() => {
-    let frame = 0, observer, target;
+    let frame = 0, target, lastTime = 0;
     let scrolled = false;
     const until = performance.now() + 650;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const observer = new ResizeObserver(schedule);
+    if (contentRef.current) observer.observe(contentRef.current);
+    let aim = null;
     const measure = () => {
-      const found = [...document.querySelectorAll(item.target)].find((node) => !node.closest('[inert]') && node.getBoundingClientRect().height > 0);
+      const found = target?.isConnected && !target.closest('[inert]') ? target : [...document.querySelectorAll(item.target)].find((node) => !node.closest('[inert]') && node.getBoundingClientRect().height > 0);
       if (found && found !== target) {
+        if (target) observer.unobserve(target);
         target = found;
-        observer?.disconnect();
-        observer = new ResizeObserver(schedule);
         observer.observe(target);
       }
       if (target) {
@@ -40,16 +45,37 @@ export default function EditorTutorial({ step, busy, onStep, onClose, onAccount 
           target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'center', inline: 'nearest' });
         }
         const width = Math.min(360, window.innerWidth - 24);
-        const height = cardRef.current?.offsetHeight || 270;
+        const style = getComputedStyle(cardRef.current);
+        const height = Math.min(window.innerHeight - 24, (contentRef.current?.offsetHeight || 228) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + 2);
         const right = rect.right + 20;
         const left = right + width < window.innerWidth - 12 ? right : rect.left - width - 20 > 12 ? rect.left - width - 20 : Math.max(12, (window.innerWidth - width) / 2);
         const top = rect.bottom + height + 20 < window.innerHeight ? rect.bottom + 16 : Math.max(12, Math.min(rect.top - height - 16, window.innerHeight - height - 12));
-        const next = { x: rect.left, y: rect.top, width: rect.width, height: rect.height, left, top };
-        setPosition((previous) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+        aim = { x: rect.left - 5, y: rect.top - 5, width: rect.width + 10, height: rect.height + 10, left, top, cardHeight: height };
       }
-      if (performance.now() < until) frame = requestAnimationFrame(measure);
     };
-    function schedule() { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); }
+    function animate(now) {
+      frame = 0;
+      measure();
+      if (!aim) { if (now < until) frame = requestAnimationFrame(animate); return; }
+      const current = motionRef.current ||= { ...aim };
+      const factor = reduced ? 1 : 1 - Math.exp(-Math.min(32, lastTime ? now - lastTime : 16) / 75);
+      lastTime = now;
+      let moving = false;
+      for (const key of Object.keys(aim)) {
+        const delta = aim[key] - current[key];
+        current[key] = Math.abs(delta) < .15 ? aim[key] : current[key] + delta * factor;
+        if (Math.abs(aim[key] - current[key]) >= .15) moving = true;
+      }
+      const card = cardRef.current, highlight = highlightRef.current;
+      card.style.transform = `translate3d(${current.left}px,${current.top}px,0)`;
+      card.style.height = `${current.cardHeight}px`;
+      card.dataset.ready = 'true';
+      highlight.style.transform = `translate3d(${current.x}px,${current.y}px,0)`;
+      highlight.style.width = `${current.width}px`; highlight.style.height = `${current.height}px`;
+      highlight.dataset.ready = 'true';
+      if (moving || now < until) frame = requestAnimationFrame(animate);
+    }
+    function schedule() { if (!frame) frame = requestAnimationFrame(animate); }
     schedule();
     window.addEventListener('resize', schedule);
     window.addEventListener('scroll', schedule, true);
@@ -61,13 +87,13 @@ export default function EditorTutorial({ step, busy, onStep, onClose, onAccount 
     return () => clearTimeout(timer);
   }, [closing, onClose]);
   return createPortal(<div className={`editor-tour${closing ? ' is-closing' : ''}`}>
-    {position && <div className="editor-tour-highlight" style={{ left: position.x - 5, top: position.y - 5, width: position.width + 10, height: position.height + 10 }} />}
-    <section ref={cardRef} className="editor-tour-card" role="dialog" aria-labelledby="editor-tour-title" style={position ? { left: position.left, top: position.top } : { left: '50%', top: '50%', transform: 'translate(-50%,-50%)' }}>
+    <div ref={highlightRef} className="editor-tour-highlight" />
+    <section ref={cardRef} className="editor-tour-card" role="dialog" aria-labelledby="editor-tour-title"><div ref={contentRef}>
       <div className="editor-tour-heading"><span>ПОПРОБУЙТЕ НА ДЕМО-КАРТЕ · {step + 1} / {EDITOR_TUTORIAL_STEPS.length}</span><button type="button" aria-label="Закрыть обучение" onClick={() => setClosing(true)}><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" /></svg></button></div>
       <div className="editor-tour-dots" aria-hidden="true">{EDITOR_TUTORIAL_STEPS.map((_, index) => <i key={index} className={index <= step ? 'active' : ''} />)}</div>
       <div key={step} className="editor-tour-content" aria-live="polite"><h2 id="editor-tour-title">{item.title}</h2><p>{item.text}</p><small>Можно пробовать инструменты прямо сейчас.</small></div>
       <div className="editor-tour-actions"><button type="button" disabled={!step || closing || busy} onClick={() => onStep(step - 1)}>Назад</button><button type="button" className="editor-tour-next" disabled={closing || busy} onClick={() => step < EDITOR_TUTORIAL_STEPS.length - 1 ? onStep(step + 1) : setClosing(true)}>{step < EDITOR_TUTORIAL_STEPS.length - 1 ? 'Дальше' : 'Готово'}</button></div>
       {step === EDITOR_TUTORIAL_STEPS.length - 1 && <button type="button" className="editor-tour-account" onClick={onAccount}>Открыть личный кабинет →</button>}
-    </section>
+    </div></section>
   </div>, document.body);
 }

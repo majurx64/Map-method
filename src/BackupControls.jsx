@@ -49,9 +49,9 @@ function Chevron() {
   return <svg className="backup-control-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5 7.5 5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
 
-export function BackupDisclosure({ title, open, onToggle, children }) {
+export function BackupDisclosure({ title, open, onToggle, children, className = '' }) {
   const id = useId();
-  return <div className={`device-backup-help${open ? ' is-open' : ''}`}>
+  return <div className={`device-backup-help ${className}${open ? ' is-open' : ''}`}>
     <button type="button" className="device-backup-help-toggle" aria-expanded={open} aria-controls={id} onClick={() => onToggle(!open)}><span>{title}</span><Chevron /></button>
     <div id={id} className="device-backup-help-content" aria-hidden={!open} inert={!open}><div><div className="device-backup-help-body">{children}</div></div></div>
   </div>;

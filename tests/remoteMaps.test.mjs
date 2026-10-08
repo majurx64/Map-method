@@ -1,11 +1,11 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';
-import {applySyncDelta,knownVersions} from '../src/lib/syncCache.js';import {decodeWire,dataPatch,applyEventDelta} from '../src/lib/syncWire.js';
+import {applySyncDelta,knownVersions} from '../src/lib/syncCache.js';import {decodeWire,dataPatch,applyEventDelta,requestMapBundle} from '../src/lib/syncWire.js';
 import { rebasePersonalMap } from '../src/lib/personalMapMerge.js';
 const cache=new Map(),calls=[];let handle;
-const dependencies={supabase:{rpc:(name,args)=>{calls.push({name,args});const request=Promise.resolve().then(()=>handle(name,args));request.abortSignal=signal=>{calls.at(-1).signal=signal;return request};return request}},readAccountCache:async key=>cache.get(key)||[],cacheAccountMaps:async(key,value)=>cache.set(key,structuredClone(value)),applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta,rebasePersonalMap};
+const dependencies={supabase:{rpc:(name,args)=>{calls.push({name,args});const request=Promise.resolve().then(()=>handle(name,args));request.abortSignal=signal=>{calls.at(-1).signal=signal;return request};return request}},readAccountCache:async key=>cache.get(key)||[],cacheAccountMaps:async(key,value)=>cache.set(key,structuredClone(value)),applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta,requestMapBundle,rebasePersonalMap};
 globalThis.__mmRemoteTest=dependencies;
 const source=(await fs.readFile(new URL('../src/lib/remoteMaps.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
-const remote=await import('data:text/javascript;base64,'+Buffer.from('const {supabase,readAccountCache,cacheAccountMaps,applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta,rebasePersonalMap}=globalThis.__mmRemoteTest;\n'+source).toString('base64'));
+const remote=await import('data:text/javascript;base64,'+Buffer.from('const {supabase,readAccountCache,cacheAccountMaps,applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta,requestMapBundle,rebasePersonalMap}=globalThis.__mmRemoteTest;\n'+source).toString('base64'));
 delete globalThis.__mmRemoteTest;
 function seed(owner){const row={id:'map',user_id:owner,name:'Map',data:{colors:[null,'#fff'],versions:[]},sync_revision:7,fields:{colors:'color-hash',versions:[]}};cache.set('remote-v1:'+owner,{personal:[row],shared:[],objects:{},histories:{}});return row;}
 test('explicit restoration verifies that the server map is absent before recreating it',async()=>{
@@ -60,6 +60,22 @@ test('a structural conflict returns the server version for preserving both copie
  cache.set('remote-v1:geometry-owner',{personal:[latest],shared:[],objects:{},histories:{}});
  const result=await remote.upsertRemoteMap(local,base);
  assert.equal(result.error.code,'MM_SYNC_CONFLICT');assert.deepEqual(result.error.remoteMap,latest);assert.equal(calls.length,0);
+});
+
+test('rapid image resizes advance only to this tab own accepted save and retain external conflicts',async()=>{
+ calls.length=0;const row=seed('rapid-image-owner');
+ row.data={mapType:'image',gridMode:'auto',totalCells:'100',image:'same-image',imageRatio:1,imageOffset:{cellsEdited:false},completed:[0],progressCompleted:[],colors:['#fff'],activityLog:[],versions:[]};
+ const base=structuredClone(row);
+ const resized=count=>({...row,data:{...row.data,totalCells:String(count),completed:[0,1],colors:['#fff','#fff']}});
+ handle=async(name,args)=>{assert.equal(name,'save_personal_map_patch');return {data:{id:'map',sync_revision:args.expected_revision+1}}};
+ const first=await remote.upsertRemoteMap(resized(400),base);assert.equal(first.error,null);
+ const second=await remote.upsertRemoteMap(resized(1000),base);assert.equal(second.error,null);
+ assert.equal(second.data.data.totalCells,'1000');assert.equal(calls[1].args.expected_revision,8);
+ assert.equal(calls[1].args.patch.fields.totalCells,'1000');
+ assert.equal(rebasePersonalMap(base,second.data,second.data),second.data);
+ const external={...first.data,data:{...first.data.data,progressCompleted:[1]}};
+ assert.throws(()=>rebasePersonalMap(base,resized(1000),external,first.data),{code:'MM_SYNC_CONFLICT'});
+ assert.throws(()=>rebasePersonalMap(base,resized(1000),{...first.data,data:{...first.data.data,totalCells:'900'}},first.data),{code:'MM_SYNC_CONFLICT'});
 });
 test('a validated no-op receipt retains field manifests for the next small refresh',async()=>{
  calls.length=0;const row=seed('noop-owner');handle=async()=>({data:{id:'map',sync_revision:7,updated_at:'unchanged'}});await remote.upsertRemoteMap(row);
