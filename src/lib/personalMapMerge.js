@@ -3,7 +3,7 @@ import { getGridDimensions, remapCells, remapColors } from './grid.js';
 
 const geometry = ['mapType', 'gridMode', 'totalCells', 'manualRows', 'manualCols', 'imageRatio', 'image', 'imageOffset'];
 const drawing = ['completed', 'progressCompleted', 'colors'];
-const special = new Set([...drawing, 'activityLog', 'versions', 'lastPaintedAt']);
+const special = new Set([...drawing, 'activityLog', 'versions', 'lastPaintedAt', 'statisticsReset']);
 
 function dimensions(data) {
   const total = data.totalCells ?? Math.max(1, data.colors?.length || 0,
@@ -49,7 +49,8 @@ export function rebasePersonalMap(base, local, remote, acknowledged = null) {
   }
   if (latest.statisticsReset?.at && next.statisticsReset?.at === latest.statisticsReset.at
     && before.statisticsReset?.at !== latest.statisticsReset.at) {
-    before = { ...before, progressCompleted: [], activityLog: [], statisticsReset: latest.statisticsReset };
+    before = { ...before, progressCompleted: latest.statisticsReset.progressBaseline || [],
+      activityLog: latest.statisticsReset.baselineActivityLog || [], statisticsReset: latest.statisticsReset };
   }
   const localGeometry = geometry.some((key) => !equalJSON(before[key], next[key]));
   const layout = localGeometry ? next : latest;

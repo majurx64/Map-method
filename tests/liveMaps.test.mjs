@@ -4,7 +4,7 @@ import { compareMapOrder, nextMapOrder, liveCellChanges, mergeLiveMaps } from '.
 import { collaborativeVersions } from '../src/lib/collaborativeHistory.js';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from '../src/lib/historyVersions.js';
 import { rebasePersonalMap } from '../src/lib/personalMapMerge.js';
-import { createdSinceStatisticsReset, hasNewProgressReset, mapAfterProgressReset } from '../src/lib/progressReset.js';
+import { accountActivityLog, createdSinceStatisticsReset, getAccountMapStats, hasNewProgressReset, mapAfterProgressReset, normalizeStatisticsReset } from '../src/lib/progressReset.js';
 
 test('shared history reconstructs drawing colours and progress across different participants', () => {
   const map = { mapType: 'free', totalCells: '4', completed: [0, 1], progressCompleted: [1], colors: ['#ff0000', '#0000ff'], createdAt: '2026-10-01T10:00:00Z' };
@@ -224,6 +224,48 @@ test('existing cards and categories restart achievements without deleting cards 
   assert.equal(createdSinceStatisticsReset(map, 'other'), true);
   assert.equal(createdSinceStatisticsReset({ ...map, createdAt: '2026-10-09T12:01:00Z' }, 'owner'), true);
   assert.equal(createdSinceStatisticsReset({ createdAt: map.createdAt }, 'owner'), true);
+});
+
+test('restored map progress stays intact while only account statistics restart', () => {
+  const row = personalRow(168, 12);
+  const reset = { at: '2026-10-09T13:00:00Z', periodStartedAt: '2026-10-09T12:00:00Z', owner: 'owner',
+    baselineFilled: 168, baselineFinished: false, progressBaseline: [...row.data.progressCompleted],
+    baselineActivityLog: [...row.data.activityLog] };
+  const map = { ...row.data, statisticsReset: reset, createdAt: '2026-10-01T12:00:00Z' };
+  assert.deepEqual(normalizeStatisticsReset(reset), reset, 'normalization preserves the server baseline exactly');
+  assert.equal(getAccountMapStats(map, 'owner').filled, 0);
+  assert.deepEqual(accountActivityLog(map, 'owner'), []);
+  assert.equal(map.progressCompleted.length, 168);
+  assert.deepEqual(map.activityLog, row.data.activityLog);
+  assert.equal(getAccountMapStats(map, 'other').filled, 168);
+  assert.deepEqual(accountActivityLog(map, 'other'), row.data.activityLog);
+  const next = { ...map, progressCompleted: [...map.progressCompleted, 168],
+    activityLog: [{ date: '2026-10-05', cells: 13 }] };
+  assert.equal(getAccountMapStats(next, 'owner').filled, 1);
+  assert.deepEqual(accountActivityLog(next, 'owner'), [{ date: '2026-10-05', cells: 1 }]);
+  assert.equal(createdSinceStatisticsReset({ ...map, createdAt: '2026-10-09T12:30:00Z' }, 'owner'), true);
+  const finished = { ...map, progressCompleted: map.completed, statisticsReset: { ...reset, baselineFinished: true, baselineFilled: 500 } };
+  assert.equal(getAccountMapStats(finished, 'owner').finished, false);
+  assert.equal(getAccountMapStats({ ...finished, statisticsReset: reset }, 'owner').finished, true);
+});
+
+test('a restoration replaces a stale zeroed outbox but subsequent new progress still merges', () => {
+  const before = personalRow(0), latest = personalRow(168, 12);
+  before.data.statisticsReset = { at: '2026-10-09T12:00:00Z', owner: 'owner' };
+  latest.data.statisticsReset = { at: '2026-10-09T13:00:00Z', owner: 'owner', baselineFilled: 168,
+    progressBaseline: [...latest.data.progressCompleted], baselineActivityLog: [...latest.data.activityLog] };
+  const stale = structuredClone(before);
+  stale.data.completed.push(500); stale.data.colors.push('#ff0000');
+  const restored = rebasePersonalMap(before, stale, latest);
+  assert.deepEqual(restored.data.progressCompleted, latest.data.progressCompleted);
+  assert.ok(restored.data.completed.includes(500));
+  const edited = structuredClone(latest);
+  edited.data.progressCompleted.push(168);
+  edited.data.activityLog[0].cells++;
+  const merged = rebasePersonalMap(before, edited, latest);
+  assert.equal(merged.data.progressCompleted.length, 169);
+  assert.deepEqual(merged.data.activityLog, [{ date: '2026-10-05', cells: 13 }]);
+  assert.deepEqual(merged.data.statisticsReset, latest.data.statisticsReset);
 });
 
 test('opening a stale 168-cell copy preserves all 180 server cells and the 12 completed today', () => {

@@ -189,7 +189,8 @@ test('a remembered account screen renders before authentication has supplied a u
       },
     }] });
     const { default: App, normalizeMap, mapToSupabaseRow, mapFromSupabaseRow } = await server.ssrLoadModule('/src/App.jsx');
-    const statisticsReset = { at: '2026-10-09T00:30:46.401Z', owner: 'owner' };
+    const statisticsReset = { at: '2026-10-09T01:00:00Z', owner: 'owner', periodStartedAt: '2026-10-09T00:30:46.401Z',
+      baselineFilled: 1, baselineFinished: false, progressBaseline: [0], baselineActivityLog: [{ date: '2026-10-08', cells: 1 }] };
     const map = { id: 'reset-map', name: 'Сохранённый рисунок', statisticsReset, completed: [0, 1], progressCompleted: [], activityLog: [] };
     assert.deepEqual(normalizeMap(map).statisticsReset, statisticsReset);
     const loaded = mapFromSupabaseRow(mapToSupabaseRow(map, 'owner'));

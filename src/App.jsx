@@ -26,7 +26,7 @@ import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animat
 import { cachedAccountUser, syncFailureMessage } from './lib/startup';
 import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap, requestRpc } from './lib/remoteMaps';
 import { equalJSON } from './lib/syncWire';
-import { createdSinceStatisticsReset, hasNewProgressReset, mapAfterProgressReset } from './lib/progressReset';
+import { accountActivityLog, createdSinceStatisticsReset, getAccountMapStats, hasNewProgressReset, mapAfterProgressReset, normalizeStatisticsReset } from './lib/progressReset';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
@@ -986,6 +986,7 @@ function normalizeActivityLog(value) {
 }
 
 function normalizeMap(map = {}) {
+  const statisticsReset = normalizeStatisticsReset(map.statisticsReset);
   const mapLimit = getGridDimensions(
     Math.max(1, Number(map.totalCells) || 500),
     Number(map.imageRatio) > 0 ? Number(map.imageRatio) : 1,
@@ -1036,8 +1037,7 @@ function normalizeMap(map = {}) {
     mapType: map.mapType === "image" ? "image" : "free",
     isGameMode: Boolean(map.isGameMode),
     collaboration: map.collaboration || null,
-    ...(map.statisticsReset?.at && Number.isFinite(Date.parse(map.statisticsReset.at))
-      ? { statisticsReset: { at: map.statisticsReset.at, owner: map.statisticsReset.owner } } : {}),
+    ...(statisticsReset ? { statisticsReset } : {}),
     gridMode: map.gridMode === "manual" ? "manual" : "auto",
     completed: [...drawing],
     progressCompleted: [
@@ -2380,15 +2380,17 @@ export default function App() {
     : sectionFeedbackMessages.filter((message) => (message.work_status || "new") === feedbackInboxFilter);
 
   const accountCreatedMaps = maps.filter((map) => createdSinceStatisticsReset(map, user?.id));
+  const accountActivityMaps = useMemo(() => maps.map((map) => ({ ...map,
+    activityLog: accountActivityLog(map, user?.id) })), [maps, user?.id]);
   const accountMapStats = maps.map((map) => {
     const statsSource = map.id === activeMapId
       ? { ...map, mapType, totalCells, imageRatio, gridMode, manualRows, manualCols, completed, progressCompleted }
       : map;
-    return { ...map, ...getMapStats(statsSource) };
+    return { ...map, ...getMapStats(statsSource), account: getAccountMapStats(statsSource, user?.id) };
   });
 
   const accountPaintedCells = accountMapStats.reduce(
-    (sum, map) => sum + Math.min(map.filled, map.total),
+    (sum, map) => sum + Math.min(map.account.filled, map.total),
     0
   );
   const accountTotalCells = accountMapStats.reduce(
@@ -2396,11 +2398,12 @@ export default function App() {
     0
   );
   const accountFinishedMaps = accountMapStats.filter(
-    (map) => map.total > 0 && map.filled >= map.total
+    (map) => map.account.finished
   ).length;
-  const accountRemainingCells = Math.max(0, accountTotalCells - accountPaintedCells);
+  const actualPaintedCells = accountMapStats.reduce((sum, map) => sum + Math.min(map.filled, map.total), 0);
+  const accountRemainingCells = Math.max(0, accountTotalCells - actualPaintedCells);
   const accountProgressPercent = accountTotalCells
-    ? Math.min(100, Math.round((accountPaintedCells / accountTotalCells) * 1000) / 10)
+    ? Math.min(100, Math.round((actualPaintedCells / accountTotalCells) * 1000) / 10)
     : 0;
   const accountDailyGoal = accountRemainingCells
     ? Math.ceil(accountRemainingCells / 30)
@@ -2409,7 +2412,7 @@ export default function App() {
     const date = new Date();
     date.setDate(date.getDate() - (6 - offset));
     const key = getActivityDate(date);
-    const cells = maps.reduce((sum, map) => sum + (map.activityLog || [])
+    const cells = accountActivityMaps.reduce((sum, map) => sum + (map.activityLog || [])
       .filter((entry) => entry.date === key)
       .reduce((subtotal, entry) => subtotal + entry.cells, 0), 0);
     return { key, cells, label: `${date.getDate()}.${String(date.getMonth() + 1).padStart(2, "0")}` };
@@ -2417,8 +2420,8 @@ export default function App() {
   const accountHistoryMax = Math.max(1, ...accountHistory.map((item) => item.cells));
   const [allAchievementsOpen, setAllAchievementsOpen] = useState(false);
   const [removingLibraryIds, setRemovingLibraryIds] = useState([]);
-  const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
-  const activeDays = useMemo(() => new Set(maps.flatMap((map) => (map.activityLog || []).filter((entry) => entry.cells > 0).map((entry) => entry.date))).size, [maps]);
+  const streaks = useMemo(() => calculateStreaks(accountActivityMaps, new Date(`${todayKey}T12:00:00`)), [accountActivityMaps, todayKey]);
+  const activeDays = useMemo(() => new Set(accountActivityMaps.flatMap((map) => (map.activityLog || []).filter((entry) => entry.cells > 0).map((entry) => entry.date))).size, [accountActivityMaps]);
   const accountAchievements = [
     { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: accountCreatedMaps.length, goal: 1 },
     { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: accountCreatedMaps.length, goal: 3 },
@@ -9879,7 +9882,7 @@ export default function App() {
                 <div className="account-goal-track" aria-label={`Общий прогресс: ${accountProgressPercent}%`}>
                   <i style={{ width: `${accountProgressPercent}%` }} />
                 </div>
-                <small>{accountPaintedCells} из {accountTotalCells} клеток</small>
+                <small>{actualPaintedCells} из {accountTotalCells} клеток</small>
               </div>
             </section>
 
