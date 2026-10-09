@@ -20,9 +20,10 @@ export function collaborativeMap(data) {
     members: data.members || [], claims: data.claims || {}, events: data.events || [],
     revision: data.revision, historyLoaded: Array.isArray(data.events), baseProgress: data.map_data.progressCompleted || [],
     hidden: Boolean(data.hidden),
+    cardOrder: Number.isFinite(data.card_order) ? data.card_order : (Number.isFinite(map.order) ? map.order : 0),
     baseDrawing: { completed: map.completed || [], colors: map.colors },
   };
-  return { ...map, isGameMode: true, versions: team.historyLoaded ? collaborativeVersions(map, team) : [], collaboration: team };
+  return { ...map, order: team.cardOrder, isGameMode: true, versions: team.historyLoaded ? collaborativeVersions(map, team) : [], collaboration: team };
 }
 
 export function drawingChanges(before, after) {

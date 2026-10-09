@@ -74,13 +74,13 @@ test('new cards precede existing negative positions and reservations made before
   assert.equal(nextMapOrder([]), -1);
 });
 
-test('shared updates preserve participant card order and background choice without blocking new cells or personal cloud settings', () => {
+test('shared updates accept account card order and cells while preserving the device background choice', () => {
   const local = [{ id: 'shared', order: 1, showCardBackground: false, progressCompleted: [0], collaboration: { id: 'team' } },
     { id: 'personal', order: 0, showCardBackground: false }];
   const remote = [{ id: 'shared', order: 0, showCardBackground: true, progressCompleted: [0, 1], collaboration: { id: 'team', revision: 2 } },
     { id: 'personal', order: 2, showCardBackground: true }];
   const result = mergeLiveMaps(remote, local, [], new Map(), new Set());
-  assert.equal(result[0].order, 1); assert.equal(result[0].showCardBackground, false);
+  assert.equal(result[0].order, 0); assert.equal(result[0].showCardBackground, false);
   assert.deepEqual(result[0].progressCompleted, [0, 1]); assert.equal(result[0].collaboration.revision, 2);
   assert.deepEqual(result[1], remote[1]);
   const pending = { ...local[0], progressCompleted: [0, 3] };
@@ -221,8 +221,12 @@ test('deleting one history version preserves a newer version from another device
   assert.deepEqual(rebasePersonalMap(before, edited, latest).data.versions.map(version => version.id), ['newer']);
 });
 
-test('conflicting grid edits retain the local copy instead of replaying cells into different coordinates', () => {
+test('a remote grid resize remaps the unsaved stroke while retaining the original local copy', () => {
   const before = personalRow(), edited = personalRow(169, 1), latest = personalRow();
   latest.data.manualCols = '30';
-  assert.throws(() => rebasePersonalMap(before, edited, latest), error => error.code === 'MM_SYNC_CONFLICT');
+  const merged = rebasePersonalMap(before, edited, latest);
+  assert.equal(merged.data.manualCols, '30');
+  assert.ok(merged.data.progressCompleted.includes(198));
+  assert.equal(edited.data.manualCols, '25');
+  assert.ok(edited.data.progressCompleted.includes(168));
 });

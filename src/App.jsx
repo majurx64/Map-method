@@ -4200,6 +4200,10 @@ export default function App() {
         let confirmed = false;
         try {
           if (map.collaboration) {
+            const previousOrder = pending?.base?.data?.order ?? map.collaboration.cardOrder;
+            if (Number.isFinite(map.order) && map.order !== previousOrder) {
+              await collaborativeRpc('save_collaborative_card_order', { team_id: map.collaboration.id, card_position: map.order, expected_owner: user.id });
+            }
             const key = `${user.id}:${map.collaboration.id}`;
             const saved = collaborativeSavedRef.current.get(key);
             const before = saved && saved.revision === map.collaboration.revision ? saved.progress : map.collaboration.baseProgress;
@@ -4209,6 +4213,7 @@ export default function App() {
             if (latestOwnerRef.current !== user.id) return new Error('account-changed');
             collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted, drawing: { completed: map.completed, colors: map.colors } });
             if (pending) await acknowledgeMapSave(pending);
+            mapBaselinesRef.current.set(map.id, mapToSupabaseRow(map, user.id));
             if (!queuedEntry && dirtyMapsRef.current.get(map.id) === editRevision) dirtyMapsRef.current.delete(map.id);
             confirmed = true;
             if (conflictsRef.current.has(map.id)) {
@@ -4216,6 +4221,7 @@ export default function App() {
               void refreshSaveHealth({ conflicts: conflictsRef.current.size }); setArchiveRevision((value) => value + 1);
             }
             setSyncStatus('');
+            void liveRefreshRef.current?.();
             return null;
           }
           const row = mapToSupabaseRow(map, user.id);
@@ -7467,8 +7473,7 @@ export default function App() {
     setMaps(next);
     saveMapsLocally(next);
     if (user) {
-      // Shared card order is a local view preference, not a drawing edit.
-      Promise.all(next.filter((map) => !map.collaboration).map((map) => remoteSave(map))).then((errors) => {
+      Promise.all(next.map((map) => remoteSave(map))).then((errors) => {
         if (errors.some((error) => error?.code === 'MM_SYNC_CONFLICT')) setMapActionError('Порядок сохранён на устройстве. Для одной из карт нужно выбрать актуальную версию в разделе «Версии и копии».');
         else if (errors.some(Boolean)) setMapActionError('Порядок сохранён на устройстве. Отправим на сервер после восстановления связи.');
         else setMapActionError('');

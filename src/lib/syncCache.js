@@ -3,6 +3,7 @@ export function knownVersions(rows, shared = false) {
   return Object.fromEntries(rows.map((row) => [row.id, {
     revision: shared ? row.revision : row.sync_revision,
     fields: row.fields || {},
+    ...(shared ? { memberRevision: row.member_revision } : {}),
     ...(shared && Array.isArray(row.events) ? { historyRevision: row.revision } : {}),
   }]));
 }

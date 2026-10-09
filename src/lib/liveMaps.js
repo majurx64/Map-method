@@ -16,13 +16,12 @@ export function compareMapOrder(a, b) {
 // Preserve unsaved work and pending deletions when another session updates the account.
 export function mergeLiveMaps(remote, local, pending, dirtyIds, deletedIds) {
   const result = new Map(remote.map((map) => [map.id, map]));
-  // Shared drawing updates do not own a participant's card position or preview.
-  // Keep these local display preferences while accepting the new shared cells.
+  // Card positions come from this account's server preferences. The preview
+  // background remains a device preference while accepting new shared cells.
   for (const map of local) {
     const incoming = result.get(map.id);
     if (!incoming?.collaboration) continue;
     result.set(map.id, { ...incoming,
-      ...(Number.isFinite(map.order) ? { order: map.order } : {}),
       ...(typeof map.showCardBackground === 'boolean' ? { showCardBackground: map.showCardBackground } : {}),
     });
   }

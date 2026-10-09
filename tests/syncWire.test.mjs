@@ -1,16 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeWire, pruneWireObjects, dataPatch, applyEventDelta, equalJSON, requestMapBundle } from '../src/lib/syncWire.js';
+import { applySyncDelta, knownVersions } from '../src/lib/syncCache.js';
 
 const wire = (value, objects = {}) => ({ format: 'mm-wire-1', value, objects });
+const legacyServer = (handler) => (name, args) => name === 'sync_map_manifest' ? Promise.resolve({ error: { code: 'PGRST202' } }) : handler(name, args);
 
 test('a database encoding timeout falls back to the same read delta with the owner and revisions intact', async () => {
   const args = Object.freeze({ expected_owner: 'owner', history_team: 'team', known_private: { map: { revision: 4 } }, known_shared: { team: { revision: 8 } }, known_objects: ['image'] });
   const calls = [], data = { personal: { ids: ['map'], changes: [] }, shared: { ids: ['team'], changes: [] } };
-  const result = await requestMapBundle(async (name, parameters) => {
+  const result = await requestMapBundle(legacyServer(async (name, parameters) => {
     calls.push({ name, parameters });
     return name === 'sync_map_bundle_v2' ? { error: { code: '57014' } } : { data, error: null };
-  }, args);
+  }), args);
   assert.equal(result.plain, true);
   assert.equal(result.data, data);
   assert.deepEqual(calls.map((call) => call.name), ['sync_map_bundle_v2', 'sync_map_bundle']);
@@ -21,7 +23,7 @@ test('a database encoding timeout falls back to the same read delta with the own
 test('successful wire reads and authentication or other failures never trigger an alternate request', async () => {
   for (const response of [{ data: wire(null), error: null }, { error: { code: '42501' } }, { error: { code: 'PGRST301' } }, { error: { code: '500' } }]) {
     let calls = 0;
-    const result = await requestMapBundle(async () => { calls++; return response; }, {});
+    const result = await requestMapBundle(legacyServer(async () => { calls++; return response; }), {});
     assert.equal(calls, 1);
     assert.equal(result.plain, false);
     assert.equal(result.error, response.error);
@@ -31,9 +33,52 @@ test('successful wire reads and authentication or other failures never trigger a
 
 test('subsequent reads in plain mode keep using deltas without retrying the slow encoder', async () => {
   const calls = [], args = { expected_owner: 'owner', known_private: { map: { revision: 5 } }, known_objects: [] };
-  const result = await requestMapBundle(async (name, parameters) => { calls.push({ name, parameters }); return { data: {}, error: null }; }, args, true);
+  const result = await requestMapBundle(legacyServer(async (name, parameters) => { calls.push({ name, parameters }); return { data: {}, error: null }; }), args, true);
   assert.deepEqual(calls, [{ name: 'sync_map_bundle', parameters: { expected_owner: 'owner', known_private: args.known_private } }]);
   assert.equal(result.plain, true);
+});
+
+test('paged account sync rechecks edits and deletions without losing unchanged history or shared card order', async () => {
+  const history = [{ id: 'old', image: 'keep original' }];
+  const previous = [{ id: 'a', sync_revision: 1, fields: { image: 'image', versions: ['history'], progressCompleted: 'p1' }, data: { image: 'keep original', versions: history, progressCompleted: [0] } }, { id: 'deleted', sync_revision: 1, data: {} }];
+  const shared = [{ id: 'team', revision: 8, member_revision: 1, card_order: 4, fields: { progressCompleted: 'p' }, map_data: { progressCompleted: [0, 1] } }];
+  const args = { expected_owner: 'owner', known_private: knownVersions(previous), known_shared: knownVersions(shared), known_objects: [] };
+  const original = structuredClone(args);
+  const calls = []; let indexes = 0, pages = 0;
+  const response = await requestMapBundle(async (name, parameters) => {
+    calls.push({ name, parameters });
+    assert.equal(parameters.expected_owner, 'owner');
+    if (name === 'sync_map_manifest') {
+      indexes++;
+      if (indexes > 1) assert.equal(parameters.known_shared.team.memberRevision, 2);
+      return { data: { personal: { ids: ['a'], changed: indexes <= 2 ? ['a'] : [] }, shared: { ids: ['team'], changed: indexes === 1 ? ['team'] : [] } } };
+    }
+    assert.equal(name, 'sync_map_page');
+    if (parameters.shared_id) return { data: { id: 'team', revision: 8, member_revision: 2, card_order: 0, events: null, patch: { fields: { progressCompleted: 'p' }, data: {} } } };
+    pages++;
+    assert.deepEqual(parameters.known_fields, original.known_private.a.fields);
+    return { data: { id: 'a', sync_revision: pages + 1, patch: { fields: { image: 'image', versions: ['history'], progressCompleted: `p${pages + 1}` }, data: { progressCompleted: pages === 1 ? [0, 1] : [0, 1, 2] } } } };
+  }, args);
+  assert.equal(response.error, null); assert.equal(response.plain, true);
+  const maps = applySyncDelta(previous, response.data.personal);
+  assert.equal(maps.length, 1); assert.equal(maps[0].sync_revision, 3);
+  assert.deepEqual(maps[0].data, { image: 'keep original', versions: history, progressCompleted: [0, 1, 2] });
+  assert.equal(maps[0].data.versions[0], history[0]);
+  const team = applySyncDelta(shared, response.data.shared, true)[0];
+  assert.equal(team.card_order, 0); assert.equal(team.revision, 8);
+  assert.deepEqual(team.map_data.progressCompleted, [0, 1]);
+  assert.deepEqual(args, original);
+  assert.equal(calls.filter((call) => call.name === 'sync_map_page').length, 3);
+});
+
+test('a failed page cannot publish a partial account or hide a server/authentication error', async () => {
+  const error = { code: '57014' };
+  const response = await requestMapBundle(async (name, args) => name === 'sync_map_manifest'
+    ? { data: { personal: { ids: ['a', 'b'], changed: ['a', 'b'] }, shared: { ids: [], changed: [] } } }
+    : args.private_id === 'a' ? { data: { id: 'a', sync_revision: 1 } } : { error }, { expected_owner: 'owner' });
+  assert.equal(response.error, error); assert.equal(response.data, undefined);
+  const denied = await requestMapBundle(async () => ({ error: { code: '42501' } }), { expected_owner: 'owner' });
+  assert.equal(denied.error.code, '42501');
 });
 
 test('transport restores images, sparse colors, integer order, Unicode, and literal marker arrays exactly', () => {

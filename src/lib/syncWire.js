@@ -1,5 +1,13 @@
 // Lossless transport only. Maps, exports, and server records keep their original schema.
 export async function requestMapBundle(request, args, plain = false) {
+  const manifestArgs = { known_private: args.known_private, known_shared: args.known_shared,
+    history_team: args.history_team, expected_owner: args.expected_owner };
+  const index = await request('sync_map_manifest', manifestArgs);
+  if (!['PGRST202', '42883'].includes(index.error?.code)) {
+    if (index.error) return { ...index, plain: true };
+    return requestMapPages(request, args, index.data);
+  }
+  // Compatibility with a server that has not received the paging migration yet.
   if (!plain) {
     const result = await request('sync_map_bundle_v2', args);
     if (result.error?.code !== '57014') return { ...result, plain: false };
@@ -9,6 +17,52 @@ export async function requestMapBundle(request, args, plain = false) {
   const { known_objects, ...deltaArgs } = args;
   void known_objects;
   return { ...await request('sync_map_bundle', deltaArgs), plain: true };
+}
+
+async function requestMapPages(request, args, initial) {
+  const known = { personal: { ...args.known_private }, shared: { ...args.known_shared } };
+  const changes = { personal: new Map(), shared: new Map() };
+  let index = initial;
+  for (let round = 0; round <= 3; round++) {
+    const jobs = [];
+    for (const kind of ['personal', 'shared']) {
+      if (!Array.isArray(index?.[kind]?.ids) || !Array.isArray(index[kind].changed)) throw new Error('invalid-sync-manifest');
+      jobs.push(...index[kind].changed.map((id) => ({ kind, id })));
+    }
+    if (!jobs.length) {
+      return { data: Object.fromEntries(['personal', 'shared'].map((kind) => [kind, {
+        ids: index[kind].ids, changes: index[kind].ids.flatMap((id) => changes[kind].has(id) ? [changes[kind].get(id)] : []),
+      }])), error: null, plain: true };
+    }
+    if (round === 3) break;
+    // Bound concurrency; do not publish any partial account snapshot to the UI.
+    for (let offset = 0; offset < jobs.length; offset += 3) {
+      const pages = await Promise.all(jobs.slice(offset, offset + 3).map(async ({ kind, id }) => {
+        const previous = (kind === 'personal' ? args.known_private : args.known_shared)?.[id];
+        return { kind, id, ...await request('sync_map_page', {
+          private_id: kind === 'personal' ? id : null, shared_id: kind === 'shared' ? id : null,
+          known_fields: previous?.fields || {}, history_team: args.history_team, expected_owner: args.expected_owner,
+        }) };
+      }));
+      for (const page of pages) {
+        if (page.error) return { error: page.error, plain: true };
+        if (!page.data) { delete known[page.kind][page.id]; changes[page.kind].delete(page.id); continue; }
+        changes[page.kind].set(page.id, page.data);
+        known[page.kind][page.id] = { revision: page.kind === 'personal' ? page.data.sync_revision : page.data.revision,
+          ...(page.kind === 'shared' ? { memberRevision: page.data.member_revision,
+            ...(Array.isArray(page.data.events) ? { historyRevision: page.data.revision } : {}) } : {}),
+        };
+      }
+    }
+    // Recheck revisions and deletions after loading pages, including changes
+    // made on another device during the download. All pages use the original
+    // field baseline so replacing a page cannot discard earlier patch values.
+    const checked = await request('sync_map_manifest', { known_private: known.personal, known_shared: known.shared,
+      history_team: args.history_team, expected_owner: args.expected_owner });
+    if (checked.error) return { ...checked, plain: true };
+    index = checked.data;
+  }
+  return { error: Object.assign(new Error('account-keeps-changing'), { code: 'MM_SYNC_RETRY' }), plain: true };
 }
 
 export function decodeWire(response, cached = {}) {

@@ -2,7 +2,8 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {applySyncDelta,knownVersions} from '../src/lib/syncCache.js';import {decodeWire,dataPatch,applyEventDelta,requestMapBundle} from '../src/lib/syncWire.js';
 import { rebasePersonalMap } from '../src/lib/personalMapMerge.js';
 const cache=new Map(),calls=[];let handle;
-const dependencies={supabase:{rpc:(name,args)=>{calls.push({name,args});const request=Promise.resolve().then(()=>handle(name,args));request.abortSignal=signal=>{calls.at(-1).signal=signal;return request};return request}},readAccountCache:async key=>cache.get(key)||[],cacheAccountMaps:async(key,value)=>cache.set(key,structuredClone(value)),applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta,requestMapBundle,rebasePersonalMap};
+// These save/rebase fixtures also cover compatibility with an unupgraded server.
+const dependencies={supabase:{rpc:(name,args)=>{if(name!=='sync_map_manifest')calls.push({name,args});const request=Promise.resolve().then(()=>name==='sync_map_manifest'?{error:{code:'PGRST202'}}:handle(name,args));request.abortSignal=signal=>{if(name!=='sync_map_manifest')calls.at(-1).signal=signal;return request};return request}},readAccountCache:async key=>cache.get(key)||[],cacheAccountMaps:async(key,value)=>cache.set(key,structuredClone(value)),applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta,requestMapBundle,rebasePersonalMap};
 globalThis.__mmRemoteTest=dependencies;
 const source=(await fs.readFile(new URL('../src/lib/remoteMaps.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 const remote=await import('data:text/javascript;base64,'+Buffer.from('const {supabase,readAccountCache,cacheAccountMaps,applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta,requestMapBundle,rebasePersonalMap}=globalThis.__mmRemoteTest;\n'+source).toString('base64'));
