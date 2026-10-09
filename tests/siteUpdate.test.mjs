@@ -31,11 +31,11 @@ test('a failed bundle download leaves the previous working shell untouched', asy
 // Exercise the real worker instead of a copy of its caching policy.
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-function workerFetch({ cached, fetcher, writes = new Map(), installed = [] }) {
+function workerFetch({ cached, bundles = new Map(), fetcher, writes = new Map(), installed = [] }) {
   const handlers = {};
   runInNewContext(readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8').replace('["__BUILD_ASSETS__"]', JSON.stringify(['https://map-method-chi.vercel.app/assets/app.js'])), {
     self: { location: { origin }, skipWaiting: async () => installed.push(true), addEventListener: (type, handler) => { handlers[type] = handler; } },
-    caches: { open: async () => ({ match: async () => cached, put: async (key, response) => writes.set(key, await response.text()) }) },
+    caches: { open: async () => ({ match: async (key) => key === '/' ? cached : bundles.get(typeof key === 'string' ? key : key.url)?.clone(), put: async (key, response) => writes.set(key, await response.text()) }) },
     fetch: fetcher, URL, Response, AbortController, setTimeout, clearTimeout,
   });
   const respond = (request) => {
@@ -47,20 +47,44 @@ function workerFetch({ cached, fetcher, writes = new Map(), installed = [] }) {
   return respond;
 }
 
-test('refresh returns the complete installed shell without waiting for the network, including invite URLs', async () => {
+test('offline navigation preserves the complete installed shell, including invite URLs', async () => {
   let calls = 0;
-  const respond = workerFetch({ cached: new Response(html), fetcher: () => { calls++; return new Promise(() => {}); } });
+  const respond = workerFetch({ cached: new Response(html), fetcher: async () => { calls++; throw Error('offline'); } });
   const response = await respond({ method: 'GET', mode: 'navigate', url: origin + '/?collaborate=invite' });
   assert.equal(await response.text(), html);
-  assert.equal(calls, 0);
+  assert.equal(calls, 1);
 });
 
-test('navigation without an installed shell still requests the page', async () => {
-  let calls = 0;
-  const respond = workerFetch({ fetcher: async () => { calls++; return new Response(html); } });
+const workerHtml = '<div id="root"></div><script src="https://map-method-chi.vercel.app/assets/new.js"></script>';
+test('navigation replaces an older installed page only after downloading the fresh bundles', async () => {
+  const writes = new Map(), calls = [];
+  const respond = workerFetch({ cached: new Response('old page'), writes, fetcher: async (url, options) => {
+    calls.push(url); assert.equal(options.cache, 'no-store');
+    return new Response(url.endsWith('.js') ? 'new bundle' : workerHtml);
+  } });
+  const response = await respond({ method: 'GET', mode: 'navigate', url: origin + '/?collaborate=invite' });
+  assert.equal(await response.text(), workerHtml);
+  assert.match(calls[0], /^https:\/\/map-method-chi\.vercel\.app\/\?site-update=\d+$/);
+  assert.equal(writes.get('https://map-method-chi.vercel.app/assets/new.js'), 'new bundle');
+  assert.equal(writes.get('/'), workerHtml);
+  assert.equal(calls.length, 2);
+});
+
+test('a failed navigation bundle preserves the previous complete shell', async () => {
+  const writes = new Map();
+  const respond = workerFetch({ cached: new Response('old page'), writes, fetcher: async (url) =>
+    new Response(url.endsWith('.js') ? '' : workerHtml, { status: url.endsWith('.js') ? 503 : 200 }) });
   const response = await respond({ method: 'GET', mode: 'navigate', url: origin + '/' });
-  assert.equal(await response.text(), html);
-  assert.equal(calls, 1);
+  assert.equal(await response.text(), 'old page');
+  assert.equal(writes.size, 0);
+});
+
+test('navigation without an installed shell requests the page and its bundles', async () => {
+  let calls = 0;
+  const respond = workerFetch({ fetcher: async (url) => { calls++; return new Response(url.endsWith('.js') ? 'bundle' : workerHtml); } });
+  const response = await respond({ method: 'GET', mode: 'navigate', url: origin + '/' });
+  assert.equal(await response.text(), workerHtml);
+  assert.equal(calls, 2);
 });
 
 test('worker leaves account and map API responses outside the shell cache', () => {
@@ -70,7 +94,7 @@ test('worker leaves account and map API responses outside the shell cache', () =
 
 test('an old worker serves newly staged bundles even though its compiled asset list is older', async () => {
   let calls = 0;
-  const respond = workerFetch({ cached: new Response('staged new bundle'), fetcher: () => { calls++; throw Error('network unavailable'); } });
+  const respond = workerFetch({ bundles: new Map([['https://map-method-chi.vercel.app/assets/new-build.js', new Response('staged new bundle')]]), fetcher: () => { calls++; throw Error('network unavailable'); } });
   const response = await respond({ method: 'GET', mode: 'cors', url: 'https://map-method-chi.vercel.app/assets/new-build.js' });
   assert.ok(response, 'the worker must intercept the newer build from the staged shell');
   assert.equal(await response.text(), 'staged new bundle');
@@ -160,8 +184,18 @@ test('a remembered account screen renders before authentication has supplied a u
     server = await createServer({ logLevel: 'silent', server: { middlewareMode: true, hmr: false, watch: null }, appType: 'custom', plugins: [{
       name: 'startup-without-auth-network', enforce: 'pre',
       load(id) { if (id.replaceAll('\\', '/').endsWith('/src/lib/supabase.js')) return "export const supabase = { auth: { storageKey: 'test-auth' } };"; },
+      transform(code, id) {
+        if (id.replaceAll('\\', '/').endsWith('/src/App.jsx')) return code + '\nexport { normalizeMap, mapToSupabaseRow, mapFromSupabaseRow };';
+      },
     }] });
-    const { default: App } = await server.ssrLoadModule('/src/App.jsx');
+    const { default: App, normalizeMap, mapToSupabaseRow, mapFromSupabaseRow } = await server.ssrLoadModule('/src/App.jsx');
+    const statisticsReset = { at: '2026-10-09T00:30:46.401Z', owner: 'owner' };
+    const map = { id: 'reset-map', name: 'Сохранённый рисунок', statisticsReset, completed: [0, 1], progressCompleted: [], activityLog: [] };
+    assert.deepEqual(normalizeMap(map).statisticsReset, statisticsReset);
+    const loaded = mapFromSupabaseRow(mapToSupabaseRow(map, 'owner'));
+    assert.deepEqual(loaded.statisticsReset, statisticsReset);
+    assert.deepEqual(loaded.completed, [0, 1]);
+    assert.deepEqual(loaded.progressCompleted, []);
     const html = renderToString(createElement(App));
     assert.match(html, /legacy-account-summary/);
     assert.doesNotMatch(html, /Копии на это устройство/);

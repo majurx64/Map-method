@@ -40,8 +40,13 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   })
   window.addEventListener('load', () => {
     navigator.serviceWorker
-      .register('/sw.js', { updateViaCache: 'none' })
-      .then((registration) => registration.update())
+      .register(`/sw.js?version=${__MM_SITE_VERSION__}`, { updateViaCache: 'none' })
+      .then((registration) => {
+        const update = () => { if (!document.hidden) void registration.update().catch(() => null) }
+        update()
+        window.addEventListener('focus', update)
+        window.addEventListener('online', update)
+      })
       .catch(() => null)
   })
 }

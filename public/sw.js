@@ -52,17 +52,33 @@ self.addEventListener("fetch", (event) => {
   if (event.request.mode === "navigate") {
     event.respondWith((async () => {
       const cache = await caches.open(CACHE);
-      // The installed shell and its bundles are one complete version. Show it
-      // immediately; registering the worker downloads the next version in the background.
       const saved = await cache.match("/");
-      if (saved) return saved;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
       try {
-        const response = await fetch(event.request, { signal: controller.signal, cache: "no-store" });
-        return response.ok ? response : (await cache.match("/")) || response;
+        // Navigation uses the reliable origin and bypasses CDN copies. Keep the
+        // account URL (including invitations) in the window unchanged.
+        const freshUrl = new URL('/', ASSET_ORIGIN);
+        freshUrl.searchParams.set('site-update', Date.now());
+        const response = await fetch(freshUrl.href, { signal: controller.signal, cache: "no-store" });
+        if (!response.ok) return saved || response;
+        const html = await response.text();
+        const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)]
+          .map((match) => new URL(match[1], ASSET_ORIGIN).href);
+        if (!html.includes('id="root"') || !assets.length
+          || assets.some((asset) => new URL(asset).origin !== ASSET_ORIGIN)) throw new Error('invalid-site-shell');
+        if (saved && await saved.clone().text() === html) return saved;
+        const bundles = await Promise.all(assets.map(async (asset) => {
+          const bundle = await cache.match(asset) || await fetch(asset, { signal: controller.signal, cache: 'no-store' });
+          if (!bundle.ok) throw new Error('site-bundle-unavailable');
+          return [asset, bundle];
+        }));
+        for (const [asset, bundle] of bundles) await cache.put(asset, bundle);
+        const shell = new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        await cache.put('/', shell.clone());
+        return shell;
       } catch {
-        return (await cache.match("/")) || Response.error();
+        return saved || Response.error();
       } finally { clearTimeout(timer); }
     })());
     return;

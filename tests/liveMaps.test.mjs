@@ -4,7 +4,7 @@ import { compareMapOrder, nextMapOrder, liveCellChanges, mergeLiveMaps } from '.
 import { collaborativeVersions } from '../src/lib/collaborativeHistory.js';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from '../src/lib/historyVersions.js';
 import { rebasePersonalMap } from '../src/lib/personalMapMerge.js';
-import { createdSinceStatisticsReset, mapAfterProgressReset } from '../src/lib/progressReset.js';
+import { createdSinceStatisticsReset, hasNewProgressReset, mapAfterProgressReset } from '../src/lib/progressReset.js';
 
 test('shared history reconstructs drawing colours and progress across different participants', () => {
   const map = { mapType: 'free', totalCells: '4', completed: [0, 1], progressCompleted: [1], colors: ['#ff0000', '#0000ff'], createdAt: '2026-10-01T10:00:00Z' };
@@ -208,6 +208,9 @@ test('an account reset discards old queued progress and activity while preservin
   const pending = [{ map, base: before }];
   const displayed = mergeLiveMaps([remote], [map], pending, new Set(['map']), new Set())[0];
   assert.deepEqual(displayed.progressCompleted, []); assert.ok(displayed.completed.includes(500));
+  assert.equal(hasNewProgressReset(map, displayed), true, 'a dirty editor must hydrate the reset despite its pending save');
+  assert.equal(hasNewProgressReset(displayed, remote), false);
+  assert.equal(hasNewProgressReset(undefined, remote), false);
   const after = { ...canonical, data: { ...canonical.data, progressCompleted: [0], activityLog: [{ date: '2026-10-09', cells: 1 }] } };
   assert.deepEqual(rebasePersonalMap(canonical, after, canonical).data.progressCompleted, [0]);
   assert.deepEqual(rebasePersonalMap(before, after, canonical).data.progressCompleted, [0]);

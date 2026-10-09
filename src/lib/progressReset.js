@@ -1,7 +1,11 @@
 import { rebasePersonalMap } from './personalMapMerge.js';
 
+export function hasNewProgressReset(local, remote) {
+  return Boolean(local && remote?.statisticsReset?.at && local.statisticsReset?.at !== remote.statisticsReset.at);
+}
+
 export function mapAfterProgressReset(local, remote, baseline = null) {
-  if (!remote?.statisticsReset?.at || local.statisticsReset?.at === remote.statisticsReset.at) return local;
+  if (!hasNewProgressReset(local, remote)) return local;
   const merged = rebasePersonalMap(baseline, { name: local.name, data: local }, { name: remote.name, data: remote });
   return { ...merged.data, ...(remote.collaboration ? { collaboration: remote.collaboration } : {}) };
 }

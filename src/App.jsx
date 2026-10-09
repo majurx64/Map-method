@@ -26,7 +26,7 @@ import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animat
 import { cachedAccountUser, syncFailureMessage } from './lib/startup';
 import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap, requestRpc } from './lib/remoteMaps';
 import { equalJSON } from './lib/syncWire';
-import { createdSinceStatisticsReset, mapAfterProgressReset } from './lib/progressReset';
+import { createdSinceStatisticsReset, hasNewProgressReset, mapAfterProgressReset } from './lib/progressReset';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
@@ -1036,6 +1036,8 @@ function normalizeMap(map = {}) {
     mapType: map.mapType === "image" ? "image" : "free",
     isGameMode: Boolean(map.isGameMode),
     collaboration: map.collaboration || null,
+    ...(map.statisticsReset?.at && Number.isFinite(Date.parse(map.statisticsReset.at))
+      ? { statisticsReset: { at: map.statisticsReset.at, owner: map.statisticsReset.owner } } : {}),
     gridMode: map.gridMode === "manual" ? "manual" : "auto",
     completed: [...drawing],
     progressCompleted: [
@@ -4031,9 +4033,12 @@ export default function App() {
         if (!pending.length && !dirtyMapsRef.current.size) setSyncStatus('');
         void refreshSaveHealth({ verified: true, offline: false });
         const current = liveStateRef.current;
-        const local = [...current.maps, ...current.personalLibrary];
+        const local = [...current.maps, ...current.personalLibrary].map((map) =>
+          map.id === current.activeMapId && current.editor && !current.publicLibraryEditContext
+            ? current.editor : map);
         const blocked = new Set([...deletingIdsRef.current, ...pendingDeletesRef.current.map((entry) => entry.map.id)]);
-        const merged = mergeLiveMaps(mergeCollaborativeMaps(data.map(mapFromSupabaseRow), shared), local, pending, dirtyMapsRef.current, blocked);
+        const canonical = mergeCollaborativeMaps(data.map(mapFromSupabaseRow), shared);
+        const merged = mergeLiveMaps(canonical, local, pending, dirtyMapsRef.current, blocked);
         const nextMaps = merged.filter((map) => !map.privateLibraryItem).map((map) =>
           map.id === current.activeMapId && current.editor
             ? { ...map, isGameMode: current.editor.isGameMode,
@@ -4052,14 +4057,43 @@ export default function App() {
             clearTimeout(retryTimer); retryTimer = setTimeout(refresh, 500); return;
           }
         }
+        // Retire old progress in the durable outbox too. Keep drawing changes
+        // queued against the new baseline before releasing the dirty-map guard.
+        for (const server of canonical) {
+          if (blocked.has(server.id)) continue;
+          const index = pending.findIndex((entry) => entry.map.id === server.id);
+          const entry = pending[index];
+          const previous = local.find((map) => map.id === server.id);
+          if (!hasNewProgressReset(previous, server) && !hasNewProgressReset(entry?.map, server)) continue;
+          const updated = merged.find((map) => map.id === server.id);
+          const dirtyRevision = dirtyMapsRef.current.get(server.id);
+          const baseline = mapToSupabaseRow(server, owner);
+          if (entry || dirtyRevision !== undefined) {
+            const replacement = entry ? await replacePendingMapSave(entry, updated, baseline)
+              : await queueMapSave(owner, updated, baseline);
+            if (!replacement || dirtyMapsRef.current.get(server.id) !== dirtyRevision) {
+              clearTimeout(retryTimer); retryTimer = setTimeout(refresh, 500); return;
+            }
+            if (index >= 0) pending[index] = replacement;
+            else pending.push(replacement);
+            dirtyMapsRef.current.delete(server.id);
+          }
+          mapBaselinesRef.current.set(server.id, baseline);
+        }
+        if (cancelled || latestOwnerRef.current !== owner || queue !== remoteSaveQueueRef.current
+          || historySequence !== historyMutationSequenceRef.current || isDrawingRef.current || gameFillAnimationRef.current
+          || artworkDragRef.current || hydratingRef.current || collaborativeGridBusyRef.current || historyMutationRef.current
+          || current.activeMapId !== liveStateRef.current.activeMapId) {
+          clearTimeout(retryTimer); retryTimer = setTimeout(refresh, 500); return;
+        }
         for (const map of [...nextMaps, ...nextLibrary]) {
           if (!dirtyMapsRef.current.has(map.id) && !pending.some((entry) => entry.map.id === map.id)) mapBaselinesRef.current.set(map.id, mapToSupabaseRow(map, owner));
         }
         const nextActive = nextMaps.find((map) => map.id === current.activeMapId);
         const oldActive = current.maps.find((map) => map.id === current.activeMapId);
         const activeChanged = !current.publicLibraryEditContext && nextActive
-          && !dirtyMapsRef.current.has(nextActive.id)
-          && !pending.some((entry) => entry.map.id === nextActive.id)
+          && (hasNewProgressReset(current.editor, nextActive)
+            || (!dirtyMapsRef.current.has(nextActive.id) && !pending.some((entry) => entry.map.id === nextActive.id)))
           && !equalJSON(nextActive, current.editor);
         if (!mapsChanged && !libraryChanged && !activeChanged) return;
         hydratingRef.current = true;
