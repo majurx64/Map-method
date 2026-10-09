@@ -1,4 +1,5 @@
 // Account-scoped durable storage; revisions prevent an older response clearing a newer edit.
+import { mapAfterProgressReset } from './progressReset.js';
 let database;
 let persistenceRequested = false;
 function openDatabase() {
@@ -90,6 +91,6 @@ export function discardPendingMap(owner, id) {
 
 export function mergePendingMaps(remote, pending) {
   const maps = new Map(remote.map((map) => [map.id, map]));
-  pending.forEach((entry) => maps.set(entry.map.id, entry.map));
+  pending.forEach((entry) => maps.set(entry.map.id, mapAfterProgressReset(entry.map, maps.get(entry.map.id), entry.base)));
   return [...maps.values()];
 }

@@ -1,4 +1,5 @@
 // Server responses and save receipts can reorder their arrays. Equal display
+import { mapAfterProgressReset } from './progressReset.js';
 // positions must always use immutable identity rather than response order.
 export function nextMapOrder(maps, reserved = 0) {
   return Math.min(0, Number.isFinite(reserved) ? reserved : 0, ...maps.map((map) => Number.isFinite(map.order) ? map.order : 0)) - 1;
@@ -25,8 +26,8 @@ export function mergeLiveMaps(remote, local, pending, dirtyIds, deletedIds) {
       ...(typeof map.showCardBackground === 'boolean' ? { showCardBackground: map.showCardBackground } : {}),
     });
   }
-  for (const entry of pending) result.set(entry.map.id, entry.map);
-  for (const map of local) if (dirtyIds.has(map.id)) result.set(map.id, map);
+  for (const entry of pending) result.set(entry.map.id, mapAfterProgressReset(entry.map, result.get(entry.map.id), entry.base));
+  for (const map of local) if (dirtyIds.has(map.id)) result.set(map.id, mapAfterProgressReset(map, result.get(map.id)));
   for (const id of deletedIds) result.delete(id);
   return [...result.values()];
 }

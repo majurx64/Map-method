@@ -34,6 +34,7 @@ function mergeCells(before = [], local = [], remote = []) {
 export function rebasePersonalMap(base, local, remote, acknowledged = null) {
   if (equalJSON(local.data, remote.data) && local.name === remote.name) return remote;
   const next = local.data, latest = remote.data;
+  const progressWasReset = Boolean(latest.statisticsReset?.at && next.statisticsReset?.at !== latest.statisticsReset.at);
   // Older offline entries can lack a baseline. Preserve the server layout and
   // add their drawing/progress without treating missing cells as deletions.
   let before = base?.data || { ...next, completed: [], progressCompleted: [], colors: [], activityLog: [], versions: [] };
@@ -45,6 +46,10 @@ export function rebasePersonalMap(base, local, remote, acknowledged = null) {
     && geometry.some((key) => !equalJSON(before[key], acknowledged.data[key]))
     && geometry.some((key) => !equalJSON(before[key], next[key]))) {
     before = acknowledged.data; baseName = acknowledged.name;
+  }
+  if (latest.statisticsReset?.at && next.statisticsReset?.at === latest.statisticsReset.at
+    && before.statisticsReset?.at !== latest.statisticsReset.at) {
+    before = { ...before, progressCompleted: [], activityLog: [], statisticsReset: latest.statisticsReset };
   }
   const localGeometry = geometry.some((key) => !equalJSON(before[key], next[key]));
   const layout = localGeometry ? next : latest;
@@ -112,5 +117,15 @@ export function rebasePersonalMap(base, local, remote, acknowledged = null) {
   for (const [id, version] of localVersions) if (!equalJSON(baseVersions.get(id), version)) versions.set(id, version);
   if (Object.hasOwn(next, 'versions')) data.versions = [...versions.values()].sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
   if (Object.hasOwn(next, 'lastPaintedAt')) data.lastPaintedAt = Date.parse(next.lastPaintedAt) > Date.parse(latest.lastPaintedAt || '1970-01-01') ? next.lastPaintedAt : latest.lastPaintedAt;
+  // A deliberate account reset starts a new progress period. Old offline
+  // progress/history must not undo it; drawing edits above still survive.
+  if (progressWasReset) {
+    data.statisticsReset = latest.statisticsReset;
+    data.progressCompleted = remoteDrawing.progressCompleted || [];
+    data.activityLog = latest.activityLog || [];
+    data.lastPaintedAt = latest.lastPaintedAt ?? null;
+    data.dailyPlanDoneOn = latest.dailyPlanDoneOn ?? null;
+    data.versions = latest.versions || [];
+  }
   return { ...remote, name: local.name !== baseName ? local.name : remote.name, data };
 }

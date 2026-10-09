@@ -118,7 +118,7 @@ export function saveRemoteMap(owner, row, baseline) {
       if (!old && base && baseline !== undefined) return null;
       candidate = old ? rebasePersonalMap(base || state.lastSaved?.get(row.id), row, old, state.lastSaved?.get(row.id)) : row;
       result = old
-        ? await requestRpc('save_personal_map_patch', { map_id: String(row.id), map_name: candidate.name, patch: dataPatch(old.data, candidate.data), expected_revision: old.sync_revision, expected_owner: owner })
+        ? await requestRpc('save_personal_map_patch_v2', { map_id: String(row.id), map_name: candidate.name, patch: dataPatch(old.data, candidate.data), expected_revision: old.sync_revision, expected_owner: owner, expected_progress_reset: candidate.data.statisticsReset?.at || null })
         : await requestRpc('create_personal_map', { map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: owner });
       if (result.error?.code !== '40001') break;
       await refreshRemoteState(state, owner);

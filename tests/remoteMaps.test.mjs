@@ -10,8 +10,8 @@ const remote=await import('data:text/javascript;base64,'+Buffer.from('const {sup
 delete globalThis.__mmRemoteTest;
 function seed(owner){const row={id:'map',user_id:owner,name:'Map',data:{colors:[null,'#fff'],versions:[]},sync_revision:7,fields:{colors:'color-hash',versions:[]}};cache.set('remote-v1:'+owner,{personal:[row],shared:[],objects:{},histories:{}});return row;}
 test('explicit restoration verifies that the server map is absent before recreating it',async()=>{
- calls.length=0;const row=seed('restore-owner');handle=async name=>name==='save_personal_map_patch'?{error:{code:'40001'}}:name==='sync_map_bundle_v2'?wireResponse({personal:{ids:[],changes:[]},shared:{ids:[],changes:[]}}):{data:{id:'map',sync_revision:1,fields:row.fields}};
- const result=await remote.upsertRemoteMap(row);assert.equal(result.error,null);assert.deepEqual(calls.map(c=>c.name),['save_personal_map_patch','sync_map_bundle_v2','create_personal_map']);assert.deepEqual(calls[2].args.map_data,row.data);
+ calls.length=0;const row=seed('restore-owner');handle=async name=>name==='save_personal_map_patch_v2'?{error:{code:'40001'}}:name==='sync_map_bundle_v2'?wireResponse({personal:{ids:[],changes:[]},shared:{ids:[],changes:[]}}):{data:{id:'map',sync_revision:1,fields:row.fields}};
+ const result=await remote.upsertRemoteMap(row);assert.equal(result.error,null);assert.deepEqual(calls.map(c=>c.name),['save_personal_map_patch_v2','sync_map_bundle_v2','create_personal_map']);assert.deepEqual(calls[2].args.map_data,row.data);
 });
 
 function wireResponse(data) {
@@ -36,7 +36,7 @@ test('a revision conflict refreshes and replays only local edits instead of uplo
  let patches=0;
  handle=async(name,args)=>{
   if(name==='sync_map_bundle_v2')return wireResponse({personal:{ids:['map'],changes:[{id:'map',user_id:row.user_id,name:latest.name,sync_revision:8,patch:{fields:Object.fromEntries(Object.keys(latest.data).map(key=>[key,'hash-'+key])),data:latest.data}}]},shared:{ids:[],changes:[]}});
-  assert.equal(name,'save_personal_map_patch');
+  assert.equal(name,'save_personal_map_patch_v2');
   if(++patches===1)return {error:{code:'40001'}};
   assert.equal(args.expected_revision,8);assert.equal(args.map_name,latest.name);
   assert.deepEqual(new Set(args.patch.fields.progressCompleted),new Set([0,1,2]));
@@ -45,21 +45,21 @@ test('a revision conflict refreshes and replays only local edits instead of uplo
   return {data:{id:'map',sync_revision:9}};
  };
  const result=await remote.upsertRemoteMap(local,base);assert.equal(result.error,null);
- assert.deepEqual(calls.map(call=>call.name),['save_personal_map_patch','sync_map_bundle_v2','save_personal_map_patch']);
+ assert.deepEqual(calls.map(call=>call.name),['save_personal_map_patch_v2','sync_map_bundle_v2','save_personal_map_patch_v2']);
  assert.equal(result.data.data.progressCompleted.length,3);
 });
 
 test('autosave does not resurrect a map deleted on another device',async()=>{
  calls.length=0;const base=seed('deleted-owner');
- handle=async name=>name==='save_personal_map_patch'?{error:{code:'40001'}}:wireResponse({personal:{ids:[],changes:[]},shared:{ids:[],changes:[]}});
+ handle=async name=>name==='save_personal_map_patch_v2'?{error:{code:'40001'}}:wireResponse({personal:{ids:[],changes:[]},shared:{ids:[],changes:[]}});
  const result=await remote.upsertRemoteMap(base,base);assert.equal(result.error,null);assert.equal(result.data,null);
- assert.deepEqual(calls.map(call=>call.name),['save_personal_map_patch','sync_map_bundle_v2']);
+ assert.deepEqual(calls.map(call=>call.name),['save_personal_map_patch_v2','sync_map_bundle_v2']);
 });
 test('a remote resize automatically merges local strokes into the current grid',async()=>{
  calls.length=0;const row=seed('geometry-owner');row.data={mapType:'free',gridMode:'manual',manualRows:'10',manualCols:'10',totalCells:'100',completed:[0],progressCompleted:[],colors:['#fff']};
  const base=structuredClone(row),local={...row,data:{...row.data,completed:[0,1,12],colors:Array.from({length:13},(_,i)=>i===12?'#123':'#fff')}},latest={...row,data:{...row.data,manualCols:'11',totalCells:'110',completed:[0,22],colors:Array.from({length:23},(_,i)=>i===22?'#456':'#fff')}};
  cache.set('remote-v1:geometry-owner',{personal:[latest],shared:[],objects:{},histories:{}});
- handle=async(name)=>{assert.equal(name,'save_personal_map_patch');return {data:{id:'map',sync_revision:8}}};
+ handle=async(name)=>{assert.equal(name,'save_personal_map_patch_v2');return {data:{id:'map',sync_revision:8}}};
  const result=await remote.upsertRemoteMap(local,base);
  assert.equal(result.error,null);assert.equal(result.data.data.manualCols,'11');
  assert.deepEqual(new Set(result.data.data.completed),new Set([0,1,13,22]));
@@ -71,7 +71,7 @@ test('rapid image resizes and external progress converge automatically',async()=
  row.data={mapType:'image',gridMode:'auto',totalCells:'100',image:'same-image',imageRatio:1,imageOffset:{cellsEdited:false},completed:[0],progressCompleted:[],colors:['#fff'],activityLog:[],versions:[]};
  const base=structuredClone(row);
  const resized=count=>({...row,data:{...row.data,totalCells:String(count),completed:[0,1],colors:['#fff','#fff']}});
- handle=async(name,args)=>{assert.equal(name,'save_personal_map_patch');return {data:{id:'map',sync_revision:args.expected_revision+1}}};
+ handle=async(name,args)=>{assert.equal(name,'save_personal_map_patch_v2');return {data:{id:'map',sync_revision:args.expected_revision+1}}};
  const first=await remote.upsertRemoteMap(resized(400),base);assert.equal(first.error,null);
  const second=await remote.upsertRemoteMap(resized(1000),base);assert.equal(second.error,null);
  assert.equal(second.data.data.totalCells,'1000');assert.equal(calls[1].args.expected_revision,8);
@@ -96,14 +96,14 @@ test('an empty canonical cache fetches the existing map before any write',async(
  handle=async(name)=>name==='sync_map_bundle_v2'?wireResponse({personal:{ids:['map'],changes:[{...row,sync_revision:7,patch:{fields:{progressCompleted:'remote-progress'},data:{...row.data,progressCompleted:[2]}}}]},shared:{ids:[],changes:[]}}):{data:{id:'map',sync_revision:8}};
  const result=await remote.upsertRemoteMap(row,null);
  assert.equal(result.error,null);assert.deepEqual(new Set(result.data.data.progressCompleted),new Set([1,2]));
- assert.deepEqual(calls.map(call=>call.name),['sync_map_bundle_v2','save_personal_map_patch']);
+ assert.deepEqual(calls.map(call=>call.name),['sync_map_bundle_v2','save_personal_map_patch_v2']);
 });
 
 test('a busy map requests automatic retry instead of blocking on a version choice',async()=>{
  calls.length=0;const row=seed('busy-owner');
  handle=async name=>name==='sync_map_bundle_v2'?wireResponse({personal:{ids:['map'],changes:[]},shared:{ids:[],changes:[]}}):{error:{code:'40001'}};
  const result=await remote.upsertRemoteMap(row,row);assert.equal(result.error.code,'MM_SYNC_RETRY');
- assert.equal(calls.filter(call=>call.name==='save_personal_map_patch').length,3);
+ assert.equal(calls.filter(call=>call.name==='save_personal_map_patch_v2').length,3);
 });
 test('a validated no-op receipt retains field manifests for the next small refresh',async()=>{
  calls.length=0;const row=seed('noop-owner');handle=async()=>({data:{id:'map',sync_revision:7,updated_at:'unchanged'}});await remote.upsertRemoteMap(row);

@@ -26,6 +26,7 @@ import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animat
 import { cachedAccountUser, syncFailureMessage } from './lib/startup';
 import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap, requestRpc } from './lib/remoteMaps';
 import { equalJSON } from './lib/syncWire';
+import { createdSinceStatisticsReset, mapAfterProgressReset } from './lib/progressReset';
 import { stableDrawingColors } from './lib/drawingColors';
 import { cardDragPosition, cardDropIndex } from "./lib/cardDrag";
 import { isStandaloneApp, hasInstalledApp, openApp } from "./lib/appLaunch";
@@ -2376,6 +2377,7 @@ export default function App() {
     ? sectionFeedbackMessages
     : sectionFeedbackMessages.filter((message) => (message.work_status || "new") === feedbackInboxFilter);
 
+  const accountCreatedMaps = maps.filter((map) => createdSinceStatisticsReset(map, user?.id));
   const accountMapStats = maps.map((map) => {
     const statsSource = map.id === activeMapId
       ? { ...map, mapType, totalCells, imageRatio, gridMode, manualRows, manualCols, completed, progressCompleted }
@@ -2416,10 +2418,10 @@ export default function App() {
   const streaks = useMemo(() => calculateStreaks(maps, new Date(`${todayKey}T12:00:00`)), [maps, todayKey]);
   const activeDays = useMemo(() => new Set(maps.flatMap((map) => (map.activityLog || []).filter((entry) => entry.cells > 0).map((entry) => entry.date))).size, [maps]);
   const accountAchievements = [
-    { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: maps.length, goal: 1 },
-    { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: maps.length, goal: 3 },
-    { icon: "▦", title: "Картограф", text: "Создать 5 карт", current: maps.length, goal: 5 },
-    { icon: "◇", title: "Архивариус", text: "Создать 10 карт", current: maps.length, goal: 10 },
+    { icon: "✦", title: "Первый контур", text: "Создать 1 карту", current: accountCreatedMaps.length, goal: 1 },
+    { icon: "◈", title: "Коллекция", text: "Создать 3 карты", current: accountCreatedMaps.length, goal: 3 },
+    { icon: "▦", title: "Картограф", text: "Создать 5 карт", current: accountCreatedMaps.length, goal: 5 },
+    { icon: "◇", title: "Архивариус", text: "Создать 10 карт", current: accountCreatedMaps.length, goal: 10 },
     { icon: "●", title: "Первый шаг", text: "Закрасить 50 клеток", current: accountPaintedCells, goal: 50 },
     { icon: "◆", title: "Ритм", text: "Закрасить 200 клеток", current: accountPaintedCells, goal: 200 },
     { icon: "✺", title: "Большая картина", text: "Закрасить 500 клеток", current: accountPaintedCells, goal: 500 },
@@ -2432,13 +2434,13 @@ export default function App() {
     { icon: "♟", title: "Первый финиш", text: "Полностью завершить 1 карту", current: accountFinishedMaps, goal: 1 },
     { icon: "♜", title: "Финиш", text: "Завершить 3 карты", current: accountFinishedMaps, goal: 3 },
     { icon: "♛", title: "Серия побед", text: "Завершить 5 карт", current: accountFinishedMaps, goal: 5 },
-    ...[15, 25, 50].map((goal, index) => ({ icon: '▦', title: ['Атлас целей', 'Большая коллекция', 'Мастер карт'][index], text: `Создать ${goal} карт`, current: maps.length, goal })),
+    ...[15, 25, 50].map((goal, index) => ({ icon: '▦', title: ['Атлас целей', 'Большая коллекция', 'Мастер карт'][index], text: `Создать ${goal} карт`, current: accountCreatedMaps.length, goal })),
     ...[20000, 50000, 100000].map((goal, index) => ({ icon: '✺', title: ['Новый горизонт', 'Долгая дистанция', 'Сто тысяч шагов'][index], text: `Закрасить ${goal.toLocaleString('ru-RU')} клеток`, current: accountPaintedCells, goal })),
     ...[10, 25].map((goal, index) => ({ icon: '♜', title: ['Десять вершин', 'Коллекция побед'][index], text: `Завершить ${goal} карт`, current: accountFinishedMaps, goal })),
     ...[1, 7, 30, 100].map((goal, index) => ({ icon: '☼', title: ['День начала', 'Семь активных дней', 'Месяц действий', 'Сто дней пути'][index], text: `Дней с отмеченным прогрессом: ${goal}`, current: activeDays, goal })),
     ...[7, 14, 30].map((goal, index) => ({ icon: '☽', title: ['Без остановки', 'Две недели подряд', 'Месяц последовательности'][index], text: `Достичь серии в ${goal} дней`, current: streaks.best, goal })),
-    { icon: '◈', title: 'Разные стороны жизни', text: 'Создать карты в 3 категориях', current: new Set(maps.map((map) => map.category || 'Личное')).size, goal: 3 },
-    { icon: '◉', title: 'Палитра целей', text: 'Создать карты в 5 категориях', current: new Set(maps.map((map) => map.category || 'Личное')).size, goal: 5 },
+    { icon: '◈', title: 'Разные стороны жизни', text: 'Создать карты в 3 категориях', current: new Set(accountCreatedMaps.map((map) => map.category || 'Личное')).size, goal: 3 },
+    { icon: '◉', title: 'Палитра целей', text: 'Создать карты в 5 категориях', current: new Set(accountCreatedMaps.map((map) => map.category || 'Личное')).size, goal: 5 },
   ].sort((a, b) => Number(b.current >= b.goal) - Number(a.current >= a.goal));
   function renderAchievement(achievement) {
     const unlocked = achievement.current >= achievement.goal;
@@ -4200,6 +4202,10 @@ export default function App() {
         let confirmed = false;
         try {
           if (map.collaboration) {
+            const remote = await loadRemoteMaps(user.id);
+            const canonical = remote.shared.find((item) => item.id === map.collaboration.id);
+            if (canonical) map = mapAfterProgressReset(map, normalizeMap(collaborativeMap(canonical)), pending?.base);
+            if (latestOwnerRef.current !== user.id) return new Error('account-changed');
             const previousOrder = pending?.base?.data?.order ?? map.collaboration.cardOrder;
             if (Number.isFinite(map.order) && map.order !== previousOrder) {
               await collaborativeRpc('save_collaborative_card_order', { team_id: map.collaboration.id, card_position: map.order, expected_owner: user.id });
@@ -4209,7 +4215,7 @@ export default function App() {
             const before = saved && saved.revision === map.collaboration.revision ? saved.progress : map.collaboration.baseProgress;
             const beforeDrawing = (saved && saved.revision === map.collaboration.revision ? saved.drawing : map.collaboration.baseDrawing) || { completed: map.completed, colors: map.colors };
             const cellChanges = [...drawingChanges(beforeDrawing, map), ...progressChanges(before, map.progressCompleted)];
-            if (cellChanges.length) await collaborativeRpc('save_collaborative_cells', { team_id: map.collaboration.id, expected_revision: map.collaboration.revision, expected_grid: getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols), cell_changes: cellChanges });
+            if (cellChanges.length) await collaborativeRpc('save_collaborative_cells_v2', { team_id: map.collaboration.id, expected_revision: map.collaboration.revision, expected_grid: getGridDimensions(map.totalCells, map.imageRatio, map.gridMode, map.manualRows, map.manualCols), cell_changes: cellChanges, expected_progress_reset: map.statisticsReset?.at || null });
             if (latestOwnerRef.current !== user.id) return new Error('account-changed');
             collaborativeSavedRef.current.set(key, { revision: map.collaboration.revision, progress: map.progressCompleted, drawing: { completed: map.completed, colors: map.colors } });
             if (pending) await acknowledgeMapSave(pending);
@@ -9769,7 +9775,7 @@ export default function App() {
             <section className="account-stat-grid">
               <button className="account-stat-card account-stat-action" onClick={() => setScreen("maps")}>
                 <span>КАРТ СОЗДАНО</span>
-                <strong>{maps.length}</strong>
+                <strong>{accountCreatedMaps.length}</strong>
                 <small>Открыть мои карты →</small>
               </button>
               <div className="account-stat-card">

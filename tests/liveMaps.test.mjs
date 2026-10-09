@@ -4,6 +4,7 @@ import { compareMapOrder, nextMapOrder, liveCellChanges, mergeLiveMaps } from '.
 import { collaborativeVersions } from '../src/lib/collaborativeHistory.js';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from '../src/lib/historyVersions.js';
 import { rebasePersonalMap } from '../src/lib/personalMapMerge.js';
+import { createdSinceStatisticsReset, mapAfterProgressReset } from '../src/lib/progressReset.js';
 
 test('shared history reconstructs drawing colours and progress across different participants', () => {
   const map = { mapType: 'free', totalCells: '4', completed: [0, 1], progressCompleted: [1], colors: ['#ff0000', '#0000ff'], createdAt: '2026-10-01T10:00:00Z' };
@@ -191,6 +192,36 @@ function personalRow(filled = 168, today = 0) {
     versions: [{ id: 'start', createdAt: '2026-10-03T10:00:00Z', completed: [] }],
   } };
 }
+
+test('an account reset discards old queued progress and activity while preserving an unsaved drawing', () => {
+  const before = personalRow(), local = personalRow(169, 1), canonical = personalRow(0);
+  canonical.data.statisticsReset = { at: '2026-10-09T12:00:00Z', owner: 'owner' };
+  local.data.completed.push(500); local.data.colors.push('#ff0000');
+  const result = rebasePersonalMap(before, local, canonical);
+  assert.deepEqual(result.data.progressCompleted, []); assert.deepEqual(result.data.activityLog, []);
+  assert.ok(result.data.completed.includes(500)); assert.equal(result.data.colors[500], '#ff0000');
+  assert.deepEqual(result.data.statisticsReset, canonical.data.statisticsReset);
+  const map = { id: 'map', name: local.name, ...local.data };
+  const remote = { id: 'map', name: canonical.name, ...canonical.data, collaboration: { id: 'team', revision: 12 } };
+  const reset = mapAfterProgressReset(map, remote, before);
+  assert.equal(reset.collaboration.revision, 12); assert.deepEqual(reset.progressCompleted, []);
+  const pending = [{ map, base: before }];
+  const displayed = mergeLiveMaps([remote], [map], pending, new Set(['map']), new Set())[0];
+  assert.deepEqual(displayed.progressCompleted, []); assert.ok(displayed.completed.includes(500));
+  const after = { ...canonical, data: { ...canonical.data, progressCompleted: [0], activityLog: [{ date: '2026-10-09', cells: 1 }] } };
+  assert.deepEqual(rebasePersonalMap(canonical, after, canonical).data.progressCompleted, [0]);
+  assert.deepEqual(rebasePersonalMap(before, after, canonical).data.progressCompleted, [0]);
+  assert.deepEqual(rebasePersonalMap(before, after, canonical).data.activityLog, [{ date: '2026-10-09', cells: 1 }]);
+});
+
+test('existing cards and categories restart achievements without deleting cards or resetting another account', () => {
+  const reset = { at: '2026-10-09T12:00:00Z', owner: 'owner' };
+  const map = { createdAt: '2026-10-01T12:00:00Z', statisticsReset: reset };
+  assert.equal(createdSinceStatisticsReset(map, 'owner'), false);
+  assert.equal(createdSinceStatisticsReset(map, 'other'), true);
+  assert.equal(createdSinceStatisticsReset({ ...map, createdAt: '2026-10-09T12:01:00Z' }, 'owner'), true);
+  assert.equal(createdSinceStatisticsReset({ createdAt: map.createdAt }, 'owner'), true);
+});
 
 test('opening a stale 168-cell copy preserves all 180 server cells and the 12 completed today', () => {
   const before = personalRow(), latest = personalRow(180, 12);
