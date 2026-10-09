@@ -24,7 +24,7 @@ import { CollaborativeShare, CollaborativeInvite, CollaborativeHistory } from '.
 import { collaborativeMap, collaborativeRpc, mergeCollaborativeMaps, progressChanges, drawingChanges, INVITE_KEY } from './lib/collaboration';
 import { chooseHistoryEntry, removeHistoryVersion, restoreHistoryVersion, animateHistoryRemoval } from './lib/historyVersions';
 import { cachedAccountUser, syncFailureMessage } from './lib/startup';
-import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap, requestRpc } from './lib/remoteMaps';
+import { loadRemoteMaps, upsertRemoteMap, loadCachedLibrary, loadPublicMap, requestRpc, isRpcConflict } from './lib/remoteMaps';
 import { equalJSON } from './lib/syncWire';
 import { accountActivityLog, createdSinceStatisticsReset, getAccountMapStats, hasNewProgressReset, mapAfterProgressReset, normalizeStatisticsReset } from './lib/progressReset';
 import { stableDrawingColors } from './lib/drawingColors';
@@ -4343,7 +4343,7 @@ export default function App() {
           return null;
         } catch (error) {
           if (map.collaboration) setSyncStatus('Сохранено на устройстве. Совместный прогресс отправится после восстановления связи.');
-          if (map.collaboration && (error.code === '40001' || error.message?.includes('map-changed'))) {
+          if (map.collaboration && (isRpcConflict(error) || error.message?.includes('map-changed'))) {
             try {
               const fresh = await collaborativeRpc('get_collaborative_map', { team_id: map.collaboration.id });
               await rememberSaveConflict(pending, fresh ? normalizeMap(collaborativeMap(fresh)) : null);

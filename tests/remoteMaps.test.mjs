@@ -9,8 +9,8 @@ const source=(await fs.readFile(new URL('../src/lib/remoteMaps.js',import.meta.u
 const remote=await import('data:text/javascript;base64,'+Buffer.from('const {supabase,readAccountCache,cacheAccountMaps,applySyncDelta,knownVersions,decodeWire,dataPatch,applyEventDelta,requestMapBundle,rebasePersonalMap}=globalThis.__mmRemoteTest;\n'+source).toString('base64'));
 delete globalThis.__mmRemoteTest;
 function seed(owner){const row={id:'map',user_id:owner,name:'Map',data:{colors:[null,'#fff'],versions:[]},sync_revision:7,fields:{colors:'color-hash',versions:[]}};cache.set('remote-v1:'+owner,{personal:[row],shared:[],objects:{},histories:{}});return row;}
-test('explicit restoration verifies that the server map is absent before recreating it',async()=>{
- calls.length=0;const row=seed('restore-owner');handle=async name=>name==='save_personal_map_patch_v2'?{error:{code:'40001'}}:name==='sync_map_bundle_v2'?wireResponse({personal:{ids:[],changes:[]},shared:{ids:[],changes:[]}}):{data:{id:'map',sync_revision:1,fields:row.fields}};
+for (const code of ['40001', 'PT409']) test(`explicit restoration verifies absence after ${code} before recreating`,async()=>{
+ calls.length=0;const row=seed('restore-owner-'+code);handle=async name=>name==='save_personal_map_patch_v2'?{error:{code}}:name==='sync_map_bundle_v2'?wireResponse({personal:{ids:[],changes:[]},shared:{ids:[],changes:[]}}):{data:{id:'map',sync_revision:1,fields:row.fields}};
  const result=await remote.upsertRemoteMap(row);assert.equal(result.error,null);assert.deepEqual(calls.map(c=>c.name),['save_personal_map_patch_v2','sync_map_bundle_v2','create_personal_map']);assert.deepEqual(calls[2].args.map_data,row.data);
 });
 
@@ -29,15 +29,15 @@ test('simultaneous refreshes reuse checked canonical data but notifications and 
  await remote.loadRemoteMaps('dedup-owner','team'); assert.equal(calls.length,3);
 });
 
-test('a revision conflict refreshes and replays only local edits instead of uploading a stale full map',async()=>{
- calls.length=0;const row=seed('conflict-owner');row.data={isGameMode:true,completed:[0,1,2],progressCompleted:[0],colors:['#fff','#fff','#fff'],activityLog:[],lastPaintedAt:'2026-10-04T10:00:00Z',versions:[]};
+for (const code of ['40001', 'PT409']) test(`a ${code} revision conflict refreshes and replays only local edits instead of uploading a stale full map`,async()=>{
+ calls.length=0;const row=seed('conflict-owner-'+code);row.data={isGameMode:true,completed:[0,1,2],progressCompleted:[0],colors:['#fff','#fff','#fff'],activityLog:[],lastPaintedAt:'2026-10-04T10:00:00Z',versions:[]};
  const base=structuredClone(row),local={...row,data:{...row.data,progressCompleted:[0,1],activityLog:[{date:'2026-10-05',cells:1}],lastPaintedAt:'2026-10-05T10:00:00Z'}};
  const latest={...row,name:'Renamed elsewhere',sync_revision:8,data:{...row.data,progressCompleted:[0,2],activityLog:[{date:'2026-10-05',cells:1}],lastPaintedAt:'2026-10-05T11:00:00Z'}};
  let patches=0;
  handle=async(name,args)=>{
   if(name==='sync_map_bundle_v2')return wireResponse({personal:{ids:['map'],changes:[{id:'map',user_id:row.user_id,name:latest.name,sync_revision:8,patch:{fields:Object.fromEntries(Object.keys(latest.data).map(key=>[key,'hash-'+key])),data:latest.data}}]},shared:{ids:[],changes:[]}});
   assert.equal(name,'save_personal_map_patch_v2');
-  if(++patches===1)return {error:{code:'40001'}};
+  if(++patches===1)return {error:{code}};
   assert.equal(args.expected_revision,8);assert.equal(args.map_name,latest.name);
   assert.deepEqual(new Set(args.patch.fields.progressCompleted),new Set([0,1,2]));
   assert.deepEqual(args.patch.fields.activityLog,[{date:'2026-10-05',cells:2}]);
@@ -99,11 +99,39 @@ test('an empty canonical cache fetches the existing map before any write',async(
  assert.deepEqual(calls.map(call=>call.name),['sync_map_bundle_v2','save_personal_map_patch_v2']);
 });
 
-test('a busy map requests automatic retry instead of blocking on a version choice',async()=>{
- calls.length=0;const row=seed('busy-owner');
- handle=async name=>name==='sync_map_bundle_v2'?wireResponse({personal:{ids:['map'],changes:[]},shared:{ids:[],changes:[]}}):{error:{code:'40001'}};
+for (const code of ['40001', 'PT409']) test(`a busy map bounds ${code} conflicts to three attempts`,async()=>{
+ calls.length=0;const row=seed('busy-owner-'+code);
+ handle=async name=>name==='sync_map_bundle_v2'?wireResponse({personal:{ids:['map'],changes:[]},shared:{ids:[],changes:[]}}):{error:{code}};
  const result=await remote.upsertRemoteMap(row,row);assert.equal(result.error.code,'MM_SYNC_RETRY');
  assert.equal(calls.filter(call=>call.name==='save_personal_map_patch_v2').length,3);
+});
+
+test('only legacy serialization and HTTP conflict codes trigger conflict handling',()=>{
+ assert.equal(remote.isRpcConflict({code:'PT409'}),true);
+ assert.equal(remote.isRpcConflict({code:'40001'}),true);
+ for(const error of [null,{}, {code:'42501'}, {code:'P0001'}, {code:'57014'}]) assert.equal(remote.isRpcConflict(error),false);
+});
+
+test('a PT409 progress reset preserves the new remote progress period during rebase',async()=>{
+ calls.length=0;const row=seed('reset-conflict-owner');
+ row.data={isGameMode:true,completed:[0,1,2],progressCompleted:[0],colors:['red','red','red'],activityLog:[],versions:[],statisticsReset:{at:'2026-10-08T10:00:00Z'}};
+ const base=structuredClone(row),local={...row,data:{...row.data,progressCompleted:[0,1],activityLog:[{date:'2026-10-09',cells:1}]}};
+ const latest={...row,sync_revision:8,data:{...row.data,progressCompleted:[2],activityLog:[],statisticsReset:{at:'2026-10-09T10:00:00Z'}}};
+ let patches=0;
+ handle=async(name,args)=>{
+  if(name==='sync_map_bundle_v2') return wireResponse({personal:{ids:['map'],changes:[{id:'map',user_id:row.user_id,name:row.name,sync_revision:8,patch:{fields:Object.fromEntries(Object.keys(latest.data).map(key=>[key,'reset-'+key])),data:latest.data}}]},shared:{ids:[],changes:[]}});
+  assert.equal(name,'save_personal_map_patch_v2');
+  if(++patches===1) return {error:{code:'PT409',message:'progress-reset'}};
+  assert.equal(args.expected_revision,8);
+  assert.equal(args.expected_owner,row.user_id);
+  assert.equal(args.expected_progress_reset,latest.data.statisticsReset.at);
+  assert.equal(Object.hasOwn(args.patch.fields,'statisticsReset'),false);
+  assert.equal(Object.hasOwn(args.patch.fields,'progressCompleted'),false);
+  return {data:{id:'map',sync_revision:9}};
+ };
+ const result=await remote.upsertRemoteMap(local,base);
+ assert.equal(result.error,null);assert.deepEqual(result.data.data.progressCompleted,[2]);
+ assert.deepEqual(result.data.data.activityLog,[]);assert.equal(patches,2);
 });
 test('a validated no-op receipt retains field manifests for the next small refresh',async()=>{
  calls.length=0;const row=seed('noop-owner');handle=async()=>({data:{id:'map',sync_revision:7,updated_at:'unchanged'}});await remote.upsertRemoteMap(row);

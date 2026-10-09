@@ -5,6 +5,10 @@ import { decodeWire, dataPatch, applyEventDelta, requestMapBundle } from './sync
 import { rebasePersonalMap } from './personalMapMerge';
 
 const accounts = new Map();
+// Accept legacy servers while deploying the non-retrying HTTP conflict code.
+export function isRpcConflict(error) {
+  return error?.code === 'PT409' || error?.code === '40001';
+}
 function account(owner) {
   if (!owner) throw new Error('login-required');
   if (!accounts.has(owner)) accounts.set(owner, { personal: [], shared: [], objects: {}, histories: {}, ready: false, queue: Promise.resolve() });
@@ -120,11 +124,11 @@ export function saveRemoteMap(owner, row, baseline) {
       result = old
         ? await requestRpc('save_personal_map_patch_v2', { map_id: String(row.id), map_name: candidate.name, patch: dataPatch(old.data, candidate.data), expected_revision: old.sync_revision, expected_owner: owner, expected_progress_reset: candidate.data.statisticsReset?.at || null })
         : await requestRpc('create_personal_map', { map_id: String(row.id), map_name: row.name, map_data: row.data, expected_owner: owner });
-      if (result.error?.code !== '40001') break;
+      if (!isRpcConflict(result.error)) break;
       await refreshRemoteState(state, owner);
       old = state.personal.find((item) => item.id === row.id);
     }
-    if (result.error?.code === '40001') throw Object.assign(new Error('personal-map-keeps-changing'), { code: 'MM_SYNC_RETRY' });
+    if (isRpcConflict(result.error)) throw Object.assign(new Error('personal-map-keeps-changing'), { code: 'MM_SYNC_RETRY' });
     if (result.error) throw result.error;
     const saved = { ...old, ...candidate, ...result.data };
     state.personal = [...state.personal.filter((item) => item.id !== row.id), saved];
